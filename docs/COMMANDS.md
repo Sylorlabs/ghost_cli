@@ -1,5 +1,15 @@
 # Commands
 
+### Default (no command)
+
+Running `ghost` with no arguments launches the interactive TUI console — the same as `ghost tui`.
+
+```bash
+ghost
+```
+
+This is a pure renderer/front-door path. No engine logic, Project Autopsy scanning, verifier execution, or pack mutation occurs on launch. The TUI presents an interactive prompt; the engine is only invoked when the user submits a query.
+
 ### `ghost chat`
 Conversational interface to task operator.
 Usage: `ghost chat --message="explain this project" --reasoning=balanced`
@@ -75,8 +85,21 @@ Export a reviewed candidate to a persistent knowledge pack.
 Usage: `ghost learn export my_candidate --project-shard=my-project --pack-id=my_pack --version=1.0.0 --approve`
 
 ### `ghost status`
-Show environment status and binary availability.
+Show engine availability/status and binary availability.
 Usage: `ghost status`
+
+### `ghost doctor`
+Run read-only environment diagnostics for first testers.
+Usage: `ghost doctor`
+Usage: `ghost doctor --json`
+Usage: `ghost doctor --debug`
+Usage: `ghost doctor --report`
+Usage: `ghost doctor --full`
+Usage: `ghost doctor --run-build-check`
+
+Default doctor is fast and non-mutating. It does not build the engine, run expensive tests, execute verifiers, mutate packs, or change negative knowledge. It reports the CLI version/path, current directory, `GHOST_ENGINE_ROOT`, resolved engine binaries, executable bits, Zig version, OS/arch, terminal, PATH resolution, and safe smoke checks.
+
+`ghost doctor --report` prints a copy-paste tester report with OS, arch, cheap CPU/RAM/GPU probes, Zig version, Ghost version, engine root, resolved binaries, doctor result, and suggested next commands.
 
 ### `ghost debug`
 Advanced user diagnostic tool. Bypasses JSON serialization or runs raw engine paths.
@@ -84,3 +107,38 @@ Usage: `ghost debug raw <engine-binary> [args...]`
 Example: `ghost debug raw ghost_knowledge_pack list`
 
 For rendered commands such as `ghost ask --debug`, debug output reports whether correction, negative-knowledge, and epistemic fields were detected without dumping large arrays.
+
+## First Tester Checklist
+
+1. Clone `ghost_engine`.
+2. Run `zig build`.
+3. Run `zig build test`.
+4. Run `zig build bench-serious-workflows`.
+5. Run `zig build test-parity`.
+6. Clone `ghost_cli`.
+7. Run `zig build`.
+8. Run `./zig-out/bin/ghost doctor`.
+9. Set `GHOST_ENGINE_ROOT`.
+10. Run `ghost status`.
+11. Run `ghost ask hello --debug`.
+12. Run `ghost tui`.
+
+## Copy-Paste Bug Report Template
+
+```text
+Ghost bug report
+
+What I ran:
+
+What I expected:
+
+What happened:
+
+Output from `ghost doctor --report`:
+
+Output from `ghost status`:
+
+Output from the failing command with `--debug`:
+
+Notes:
+```

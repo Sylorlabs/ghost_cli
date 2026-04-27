@@ -2,6 +2,7 @@ const std = @import("std");
 const paths = @import("config/paths.zig");
 const chat = @import("commands/chat.zig");
 const debug_cmd = @import("commands/debug.zig");
+const doctor = @import("commands/doctor.zig");
 const status = @import("commands/status.zig");
 const packs = @import("commands/packs.zig");
 const verify = @import("commands/verify.zig");
@@ -31,6 +32,9 @@ pub fn main() !void {
     var pack_id: ?[]const u8 = null;
     var approve = false;
     var version_flag = false;
+    var report = false;
+    var full = false;
+    var run_build_check = false;
 
     var cmd: ?[]const u8 = null;
     var leftover_args = std.ArrayList([]const u8).init(allocator);
@@ -45,6 +49,12 @@ pub fn main() !void {
             debug_mode = true;
         } else if (std.mem.eql(u8, arg, "--approve")) {
             approve = true;
+        } else if (std.mem.eql(u8, arg, "--report")) {
+            report = true;
+        } else if (std.mem.eql(u8, arg, "--full")) {
+            full = true;
+        } else if (std.mem.eql(u8, arg, "--run-build-check")) {
+            run_build_check = true;
         } else if (std.mem.eql(u8, arg, "--version")) {
             version_flag = true;
         } else if (std.mem.startsWith(u8, arg, "--reasoning=")) {
@@ -76,7 +86,16 @@ pub fn main() !void {
     }
 
     if (cmd == null) {
-        printHelp();
+        // No subcommand supplied — launch the TUI as the default interactive entrypoint.
+        // This is a pure renderer/front-door path.  No engine logic lives here.
+        var engine_paths_tui = try paths.discoverEngineRoot(allocator, explicit_engine_root);
+        defer if (engine_paths_tui) |*ep| ep.deinit(allocator);
+        const root_tui = if (engine_paths_tui) |ep| ep.root else null;
+        try tui.execute(allocator, root_tui, .{
+            .reasoning = reasoning_level,
+            .context_artifact = context_artifact,
+            .debug = debug_mode,
+        });
         return;
     }
 
@@ -152,6 +171,15 @@ pub fn main() !void {
         });
     } else if (std.mem.eql(u8, cmd.?, "status")) {
         try status.execute(allocator, root, debug_mode, "v0.1.0-hardened");
+    } else if (std.mem.eql(u8, cmd.?, "doctor")) {
+        try doctor.execute(allocator, root, .{
+            .json = json_out,
+            .debug = debug_mode,
+            .report = report,
+            .full = full,
+            .run_build_check = run_build_check,
+            .version = "v0.1.0-hardened",
+        });
     } else if (std.mem.eql(u8, cmd.?, "debug")) {
         try debug_cmd.execute(allocator, root, leftover_args.items, json_out);
     } else {
@@ -166,16 +194,20 @@ fn printHelp() void {
         \\
         \\Usage: ghost [command] [options]
         \\
+        \\  Running ghost with no arguments launches the interactive TUI console.
+        \\
         \\Commands:
         \\
+        \\  (none)   Launch interactive TUI console (default)
         \\  chat     Conversational interface to task operator
         \\  ask      Short one-shot question
         \\  fix      Propose or perform a fix
         \\  verify   Verify current workspace state
         \\  packs    Manage knowledge packs (list, inspect, mount, unmount)
         \\  learn    Feedback/distillation surface (candidates, show, export)
-        \\  tui      Interactive Ghost Console TUI
-        \\  status   Show environment status
+        \\  tui      Interactive Ghost Console TUI (same as default)
+        \\  status   Show engine availability/status
+        \\  doctor   Run read-only environment diagnostics
         \\  debug    Advanced debug commands
         \\
         \\Options:
@@ -188,6 +220,9 @@ fn printHelp() void {
         \\  --project-shard=<s>    Project shard ID for distillation
         \\  --pack-id=<id>         Target pack ID for export
         \\  --approve              Approve distillation export
+        \\  --report               Print copy-paste tester report for doctor
+        \\  --full                 Include optional doctor checks
+        \\  --run-build-check      Let doctor run `zig build --help`
         \\  --engine-root=<path>   Explicitly set path to ghost_engine binaries
         \\  --json                 Output in JSON format
         \\  --debug                Show debug information

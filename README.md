@@ -40,9 +40,14 @@ By default, the CLI looks for `ghost_engine` binaries in standard development pa
 - The `--engine-root=<path>` CLI flag.
 - The `GHOST_ENGINE_ROOT` environment variable.
 
+**Running `ghost` with no arguments launches the interactive TUI console.**
+
 ### Examples
 
 ```bash
+# Launch interactive TUI (default — no args needed)
+ghost
+
 # General chat
 ghost chat --message="explain this project" --reasoning=balanced
 
@@ -71,6 +76,10 @@ ghost learn export action_surface:candidate_local_guard --project-shard=my-proje
 
 # Check environment status
 ghost status
+
+# Full first-tester diagnostics
+ghost doctor
+ghost doctor --report
 ```
 
 ### Knowledge Lifecycle
@@ -98,6 +107,42 @@ Normal users specify `--reasoning=quick|balanced|deep|max`.
 
 ## Troubleshooting
 If `ghost_cli` encounters issues, use these commands to diagnose the problem:
-- **`ghost status`**: Checks if the CLI can find the required `ghost_engine` binaries.
+- **`ghost status`**: Checks engine availability/status.
+- **`ghost doctor`**: Runs read-only environment and tester diagnostics, including CLI path, engine binary resolution, Zig version, OS/arch, terminal, PATH, and safe smoke checks.
 - **`ghost <command> --debug`**: Prints the exact engine binary path, arguments, exit code, JSON parse result, and whether correction/negative-knowledge/epistemic fields were detected.
 - **`ghost debug raw <engine-binary> [args...]`**: Bypasses all CLI formatting to run an engine binary directly and print the raw text/JSON.
+
+## First Tester Checklist
+
+1. Clone `ghost_engine`.
+2. Run `zig build`.
+3. Run `zig build test`.
+4. Run `zig build bench-serious-workflows`.
+5. Run `zig build test-parity`.
+6. Clone `ghost_cli`.
+7. Run `zig build`.
+8. Run `./zig-out/bin/ghost doctor`.
+9. Set `GHOST_ENGINE_ROOT` to the `ghost_engine` repo root or `zig-out/bin`.
+10. Run `ghost status`.
+11. Run `ghost ask hello --debug`.
+12. Run `ghost tui`.
+
+## Bug Report Template
+
+```text
+Ghost bug report
+
+What I ran:
+
+What I expected:
+
+What happened:
+
+Output from `ghost doctor --report`:
+
+Output from `ghost status`:
+
+Output from the failing command with `--debug`:
+
+Notes:
+```
