@@ -37,6 +37,26 @@ Usage: `ghost packs mount zig_runtime_sync`
 Unmount a knowledge pack.
 Usage: `ghost packs unmount zig_runtime_sync`
 
+### `ghost tui`
+Interactive Ghost Console TUI. Provides a live cockpit view for interacting with the engine.
+
+Usage: `ghost tui [--reasoning=quick|balanced|deep|max] [--context-artifact=<path>]`
+
+#### Keybindings
+- `Ctrl+C`: Quit
+- `Ctrl+R`: Cycle reasoning level (quick → balanced → deep → max)
+- `Ctrl+D`: Toggle debug mode
+- `Ctrl+L`: Clear history area
+- `Esc`: Quit
+- `q`: Quit (only when input is empty)
+
+#### Slash Commands
+- `/quit`: Exit TUI
+- `/help`: Show help text
+- `/status`: Show session turn count and settings
+- `/reasoning <level>`: Change reasoning level
+- `/context <path>`: Set context artifact path
+
 ### `ghost learn`
 Feedback/distillation surface for managing knowledge growth.
 

@@ -56,6 +56,9 @@ ghost fix "make the failing runtime test pass" --reasoning=deep
 ghost verify --reasoning=deep
 ghost verify --context-artifact=src/main.zig --reasoning=max
 
+# Interactive TUI Console
+ghost tui
+
 # List knowledge packs
 ghost packs list
 ghost packs inspect zig_runtime_sync

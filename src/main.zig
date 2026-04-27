@@ -6,6 +6,7 @@ const status = @import("commands/status.zig");
 const packs = @import("commands/packs.zig");
 const verify = @import("commands/verify.zig");
 const learn = @import("commands/learn.zig");
+const tui = @import("commands/tui.zig");
 const json_contracts = @import("engine/json_contracts.zig");
 
 pub fn main() !void {
@@ -143,6 +144,12 @@ pub fn main() !void {
             .json = json_out,
             .debug = debug_mode,
         });
+    } else if (std.mem.eql(u8, cmd.?, "tui")) {
+        try tui.execute(allocator, root, .{
+            .reasoning = reasoning_level,
+            .context_artifact = context_artifact,
+            .debug = debug_mode,
+        });
     } else if (std.mem.eql(u8, cmd.?, "status")) {
         try status.execute(allocator, root, debug_mode, "v0.1.0-hardened");
     } else if (std.mem.eql(u8, cmd.?, "debug")) {
@@ -167,6 +174,7 @@ fn printHelp() void {
         \\  verify   Verify current workspace state
         \\  packs    Manage knowledge packs (list, inspect, mount, unmount)
         \\  learn    Feedback/distillation surface (candidates, show, export)
+        \\  tui      Interactive Ghost Console TUI
         \\  status   Show environment status
         \\  debug    Advanced debug commands
         \\
