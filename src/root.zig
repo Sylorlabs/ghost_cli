@@ -5,24 +5,37 @@ const paths = @import("config/paths.zig");
 const locator = @import("engine/locator.zig");
 const json_contracts = @import("engine/json_contracts.zig");
 const terminal = @import("render/terminal.zig");
+const stats = @import("tui/stats.zig");
+const state = @import("tui/state.zig");
+const tui_render = @import("tui/render.zig");
+
+fn renderEngineJson(allocator: std.mem.Allocator, json: []const u8) ![]u8 {
+    var parsed = try json_contracts.parseEngineJson(allocator, json);
+    defer parsed.deinit();
+
+    var out_buf = std.ArrayList(u8).init(allocator);
+    errdefer out_buf.deinit();
+    try terminal.printEngineOutput(out_buf.writer(), parsed.value);
+    return try out_buf.toOwnedSlice();
+}
 
 test "engine path resolution order - explicit flag" {
     var engine_paths = try paths.discoverEngineRoot(testing.allocator, "/opt/custom/engine");
     defer if (engine_paths) |*ep| ep.deinit(testing.allocator);
-    
+
     try testing.expect(engine_paths != null);
     try testing.expectEqualStrings("/opt/custom/engine", engine_paths.?.root);
 }
 
 test "JSON parsing with extra fields" {
-    const json = 
+    const json =
         \\{
         \\  "status": "ok",
         \\  "is_draft": true,
         \\  "unknown_field": 123
         \\}
     ;
-    
+
     var parsed = try json_contracts.parseEngineJson(testing.allocator, json);
     defer parsed.deinit();
     const val = parsed.value;
@@ -31,57 +44,57 @@ test "JSON parsing with extra fields" {
 }
 
 test "draft rendering is labeled unverified" {
-    const json = 
+    const json =
         \\{
         \\  "is_draft": true
         \\}
     ;
-    
+
     var parsed = try json_contracts.parseEngineJson(testing.allocator, json);
     defer parsed.deinit();
     const val = parsed.value;
-    
+
     var out_buf = std.ArrayList(u8).init(testing.allocator);
     defer out_buf.deinit();
-    
+
     try terminal.printEngineOutput(out_buf.writer(), val);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "Draft / unverified") != null);
 }
 
 test "verified rendering is labeled verified" {
-    const json = 
+    const json =
         \\{
         \\  "verification_state": "verified"
         \\}
     ;
-    
+
     var parsed = try json_contracts.parseEngineJson(testing.allocator, json);
     defer parsed.deinit();
     const val = parsed.value;
-    
+
     var out_buf = std.ArrayList(u8).init(testing.allocator);
     defer out_buf.deinit();
-    
+
     try terminal.printEngineOutput(out_buf.writer(), val);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "Verified") != null);
 }
 
 test "unresolved rendering includes missing obligations" {
-    const json = 
+    const json =
         \\{
         \\  "verification_state": "unresolved",
         \\  "unresolved_reason": "Missing facts",
         \\  "missing_obligations": ["fact A", "fact B"]
         \\}
     ;
-    
+
     var parsed = try json_contracts.parseEngineJson(testing.allocator, json);
     defer parsed.deinit();
     const val = parsed.value;
-    
+
     var out_buf = std.ArrayList(u8).init(testing.allocator);
     defer out_buf.deinit();
-    
+
     try terminal.printEngineOutput(out_buf.writer(), val);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "Unresolved") != null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "Missing facts") != null);
@@ -89,59 +102,259 @@ test "unresolved rendering includes missing obligations" {
 }
 
 test "budget exhausted rendering" {
-    const json = 
+    const json =
         \\{
         \\  "stop_reason": "budget_exhausted"
         \\}
     ;
-    
+
     var parsed = try json_contracts.parseEngineJson(testing.allocator, json);
     defer parsed.deinit();
     const val = parsed.value;
-    
+
     var out_buf = std.ArrayList(u8).init(testing.allocator);
     defer out_buf.deinit();
-    
+
     try terminal.printEngineOutput(out_buf.writer(), val);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "Budget Exhausted") != null);
 }
 
 test "summary and suggested action rendering" {
-    const json = 
+    const json =
         \\{
         \\  "summary": "This is a summary.",
         \\  "suggested_action": "Run with more budget."
         \\}
     ;
-    
+
     var parsed = try json_contracts.parseEngineJson(testing.allocator, json);
     defer parsed.deinit();
     const val = parsed.value;
-    
+
     var out_buf = std.ArrayList(u8).init(testing.allocator);
     defer out_buf.deinit();
-    
+
     try terminal.printEngineOutput(out_buf.writer(), val);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "Summary:") != null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "This is a summary.") != null);
-    try testing.expect(std.mem.indexOf(u8, out_buf.items, "Suggested Action:") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "Next Action:") != null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "Run with more budget.") != null);
 }
 
+test "epistemic render shows state label and authority statement" {
+    const rendered = try renderEngineJson(testing.allocator,
+        \\{
+        \\  "epistemic_render": {
+        \\    "state_label": "unresolved",
+        \\    "authority_statement": "not enough evidence for support"
+        \\  }
+        \\}
+    );
+    defer testing.allocator.free(rendered);
+
+    try testing.expect(std.mem.indexOf(u8, rendered, "Epistemic State:") != null);
+    try testing.expect(std.mem.indexOf(u8, rendered, "Engine Label: unresolved") != null);
+    try testing.expect(std.mem.indexOf(u8, rendered, "Engine Authority: not enough evidence for support") != null);
+    try testing.expect(std.mem.indexOf(u8, rendered, "Does not prove support") != null);
+}
+
+test "correction item renders as correction not apology" {
+    const rendered = try renderEngineJson(testing.allocator,
+        \\{
+        \\  "corrections": {
+        \\    "summary": "Prior answer overstated support",
+        \\    "items": [
+        \\      { "id": "corr-1", "text": "Replace supported with unresolved" }
+        \\    ]
+        \\  }
+        \\}
+    );
+    defer testing.allocator.free(rendered);
+
+    try testing.expect(std.mem.indexOf(u8, rendered, "Correction Recorded:") != null);
+    try testing.expect(std.mem.indexOf(u8, rendered, "Prior answer overstated support") != null);
+    try testing.expect(std.mem.indexOf(u8, rendered, "apology") == null);
+    try testing.expect(std.mem.indexOf(u8, rendered, "Does not prove support") != null);
+}
+
+test "NK candidate renders as proposed and review needed" {
+    const rendered = try renderEngineJson(testing.allocator,
+        \\{
+        \\  "negative_knowledge": {
+        \\    "proposed_candidates": [
+        \\      { "id": "nk-cand-1", "reason": "failed pattern" }
+        \\    ]
+        \\  }
+        \\}
+    );
+    defer testing.allocator.free(rendered);
+
+    try testing.expect(std.mem.indexOf(u8, rendered, "Negative Knowledge Candidate Proposed:") != null);
+    try testing.expect(std.mem.indexOf(u8, rendered, "Candidate only") != null);
+    try testing.expect(std.mem.indexOf(u8, rendered, "Requires review") != null);
+}
+
+test "accepted NK influence renders as prior failure influence" {
+    const rendered = try renderEngineJson(testing.allocator,
+        \\{
+        \\  "negative_knowledge": {
+        \\    "influence_summary": "accepted record lowered rank for repeated failed path",
+        \\    "applied_records": [
+        \\      { "id": "nk-accepted-1", "scope": "local" }
+        \\    ]
+        \\  }
+        \\}
+    );
+    defer testing.allocator.free(rendered);
+
+    try testing.expect(std.mem.indexOf(u8, rendered, "Negative Knowledge Applied:") != null);
+    try testing.expect(std.mem.indexOf(u8, rendered, "prior failure influence") != null);
+    try testing.expect(std.mem.indexOf(u8, rendered, "Non-authorizing") != null);
+}
+
+test "stronger verifier requirement renders" {
+    const rendered = try renderEngineJson(testing.allocator,
+        \\{
+        \\  "negative_knowledge": {
+        \\    "items": [
+        \\      { "kind": "stronger_verifier_required", "verifier": "integration" }
+        \\    ]
+        \\  }
+        \\}
+    );
+    defer testing.allocator.free(rendered);
+
+    try testing.expect(std.mem.indexOf(u8, rendered, "Stronger Verifier Required:") != null);
+    try testing.expect(std.mem.indexOf(u8, rendered, "Does not prove support") != null);
+}
+
+test "exact repeat suppression renders" {
+    const rendered = try renderEngineJson(testing.allocator,
+        \\{
+        \\  "negative_knowledge": {
+        \\    "items": [
+        \\      { "kind": "exact_repeat_suppressed", "pattern": "same failed command" }
+        \\    ]
+        \\  }
+        \\}
+    );
+    defer testing.allocator.free(rendered);
+
+    try testing.expect(std.mem.indexOf(u8, rendered, "Exact Repeat Suppressed:") != null);
+    try testing.expect(std.mem.indexOf(u8, rendered, "Non-authorizing prior failure influence") != null);
+}
+
+test "routing warning renders" {
+    const rendered = try renderEngineJson(testing.allocator,
+        \\{
+        \\  "negative_knowledge": {
+        \\    "items": [
+        \\      { "kind": "routing_warning", "message": "route was penalized" }
+        \\    ]
+        \\  }
+        \\}
+    );
+    defer testing.allocator.free(rendered);
+
+    try testing.expect(std.mem.indexOf(u8, rendered, "Routing Warning:") != null);
+    try testing.expect(std.mem.indexOf(u8, rendered, "Non-authorizing routing warning") != null);
+}
+
+test "trust decay candidate renders as candidate only" {
+    const rendered = try renderEngineJson(testing.allocator,
+        \\{
+        \\  "negative_knowledge": {
+        \\    "trust_decay_candidates": [
+        \\      { "id": "decay-1", "trust_decay": "review stale pack" }
+        \\    ]
+        \\  }
+        \\}
+    );
+    defer testing.allocator.free(rendered);
+
+    try testing.expect(std.mem.indexOf(u8, rendered, "Trust Decay Candidate Proposed:") != null);
+    try testing.expect(std.mem.indexOf(u8, rendered, "Candidate only") != null);
+    try testing.expect(std.mem.indexOf(u8, rendered, "Requires review") != null);
+}
+
+test "missing correction NK epistemic fields do not crash" {
+    const rendered = try renderEngineJson(testing.allocator,
+        \\{
+        \\  "verification_state": "unresolved",
+        \\  "summary": "No optional fields here"
+        \\}
+    );
+    defer testing.allocator.free(rendered);
+
+    try testing.expect(std.mem.indexOf(u8, rendered, "Unresolved") != null);
+    try testing.expect(std.mem.indexOf(u8, rendered, "No optional fields here") != null);
+}
+
+test "debug reports correction NK epistemic field detection" {
+    var parsed = try json_contracts.parseEngineJson(testing.allocator,
+        \\{
+        \\  "corrections": { "items": [{ "id": "c1" }] },
+        \\  "negative_knowledge": { "proposed_candidates": [{ "id": "n1" }] },
+        \\  "epistemic_render": { "state_label": "draft" }
+        \\}
+    );
+    defer parsed.deinit();
+
+    var out_buf = std.ArrayList(u8).init(testing.allocator);
+    defer out_buf.deinit();
+    try terminal.printDebugFieldDetection(out_buf.writer(), parsed.value);
+
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "corrections=yes") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "negative_knowledge=yes") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "epistemic_render=yes") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "nk_candidates=1") != null);
+}
+
+test "TUI render helper handles correction NK sections" {
+    const rendered = try renderEngineJson(testing.allocator,
+        \\{
+        \\  "corrections": { "summary": "Corrected prior label" },
+        \\  "negative_knowledge": {
+        \\    "proposed_candidates": [{ "id": "nk-cand-2" }]
+        \\  }
+        \\}
+    );
+    defer testing.allocator.free(rendered);
+
+    var out_buf = std.ArrayList(u8).init(testing.allocator);
+    defer out_buf.deinit();
+    const turn = state.Turn{
+        .index = 1,
+        .input = "hello",
+        .reasoning = .balanced,
+        .context_artifact = null,
+        .response = null,
+        .raw_output = "{}",
+        .rendered_output = rendered,
+        .elapsed_ms = 1,
+        .input_runes = 5,
+        .output_runes = stats.countRunes(rendered),
+        .json_ok = true,
+    };
+    try tui_render.renderTurn(out_buf.writer(), turn);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "Correction Recorded:") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "Negative Knowledge Candidate Proposed:") != null);
+}
+
 test "pack list rendering" {
-    const json = 
+    const json =
         \\[
         \\    {"id": "test_pack", "version": "1.0.0", "status": "mounted", "domain": "test"},
         \\    {"id": "other_pack", "is_mounted": false}
         \\]
     ;
-    
+
     var parsed = try json_contracts.parsePackListJson(testing.allocator, json);
     defer parsed.deinit();
-    
+
     var out_buf = std.ArrayList(u8).init(testing.allocator);
     defer out_buf.deinit();
-    
+
     try terminal.printPackList(out_buf.writer(), parsed.value);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "test_pack") != null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "mounted") != null);
@@ -149,7 +362,7 @@ test "pack list rendering" {
 }
 
 test "pack info rendering" {
-    const json = 
+    const json =
         \\{
         \\  "id": "full_pack",
         \\  "version": "2.1.0",
@@ -158,13 +371,13 @@ test "pack info rendering" {
         \\  "content_summary": "Provides core types."
         \\}
     ;
-    
+
     var parsed = try json_contracts.parsePackInfoJson(testing.allocator, json);
     defer parsed.deinit();
-    
+
     var out_buf = std.ArrayList(u8).init(testing.allocator);
     defer out_buf.deinit();
-    
+
     try terminal.printPackInfo(out_buf.writer(), parsed.value);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "Pack ID:") != null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "full_pack") != null);
@@ -173,19 +386,19 @@ test "pack info rendering" {
 }
 
 test "candidate list rendering" {
-    const json = 
+    const json =
         \\[
         \\    {"id": "cand_1", "type": "fix", "is_eligible": true, "success_count": 5},
         \\    {"id": "cand_2", "type": "feat", "is_eligible": false}
         \\]
     ;
-    
+
     var parsed = try json_contracts.parseCandidateListJson(testing.allocator, json);
     defer parsed.deinit();
-    
+
     var out_buf = std.ArrayList(u8).init(testing.allocator);
     defer out_buf.deinit();
-    
+
     try terminal.printCandidateList(out_buf.writer(), parsed.value);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "cand_1") != null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "Eligible") != null);
@@ -194,7 +407,7 @@ test "candidate list rendering" {
 }
 
 test "candidate detail rendering" {
-    const json = 
+    const json =
         \\{
         \\    "id": "cand_detail",
         \\    "type": "refactor",
@@ -205,13 +418,13 @@ test "candidate detail rendering" {
         \\    "failure_count": 4
         \\}
     ;
-    
+
     var parsed = try json_contracts.parseCandidateInfoJson(testing.allocator, json);
     defer parsed.deinit();
-    
+
     var out_buf = std.ArrayList(u8).init(testing.allocator);
     defer out_buf.deinit();
-    
+
     try terminal.printCandidateDetail(out_buf.writer(), parsed.value);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "Candidate ID:") != null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "cand_detail") != null);
@@ -221,7 +434,7 @@ test "candidate detail rendering" {
 }
 
 test "export result rendering" {
-    const json = 
+    const json =
         \\{
         \\    "success": true,
         \\    "candidate_id": "cand_x",
@@ -229,20 +442,20 @@ test "export result rendering" {
         \\    "version": "1.0.1"
         \\}
     ;
-    
+
     var parsed = try json_contracts.parseExportResultJson(testing.allocator, json);
     defer parsed.deinit();
-    
+
     var out_buf = std.ArrayList(u8).init(testing.allocator);
     defer out_buf.deinit();
-    
+
     try terminal.printExportResult(out_buf.writer(), parsed.value);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "Export Successful") != null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "Target Pack: pack_y (v1.0.1)") != null);
 }
 
 test "actual engine chat JSON rendering" {
-    const json = 
+    const json =
         \\{
         \\  "formatVersion": "ghost_conversation_session_v1",
         \\  "sessionId": "conv-test",
@@ -258,14 +471,14 @@ test "actual engine chat JSON rendering" {
         \\  ]
         \\}
     ;
-    
+
     var parsed = try json_contracts.parseEngineJson(testing.allocator, json);
     defer parsed.deinit();
     const val = parsed.value;
-    
+
     var out_buf = std.ArrayList(u8).init(testing.allocator);
     defer out_buf.deinit();
-    
+
     try terminal.printEngineOutput(out_buf.writer(), val);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "Status:") != null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "Unresolved") != null);
@@ -275,19 +488,19 @@ test "actual engine chat JSON rendering" {
 }
 
 test "unrecognized contract rendering" {
-    const json = 
+    const json =
         \\{
         \\  "something_weird": true
         \\}
     ;
-    
+
     var parsed = try json_contracts.parseEngineJson(testing.allocator, json);
     defer parsed.deinit();
     const val = parsed.value;
-    
+
     var out_buf = std.ArrayList(u8).init(testing.allocator);
     defer out_buf.deinit();
-    
+
     try terminal.printEngineOutput(out_buf.writer(), val);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "unrecognized contract") != null);
 }
@@ -308,13 +521,70 @@ test "reasoning level string conversion" {
     try testing.expectEqualStrings("deep", json_contracts.ReasoningLevel.deep.toStr());
 }
 
+test "rune counting handles ASCII and Unicode" {
+    try testing.expectEqual(@as(usize, 5), stats.countRunes("hello"));
+    try testing.expectEqual(@as(usize, 1), stats.countRunes("👻"));
+    try testing.expectEqual(@as(usize, 13), stats.countRunes("hello 👻 world"));
+}
+
+test "reasoning cycling" {
+    var s = state.SessionState.init(testing.allocator);
+    defer s.deinit();
+
+    try testing.expect(s.reasoning == .balanced);
+    s.cycleReasoning();
+    try testing.expect(s.reasoning == .deep);
+    s.cycleReasoning();
+    try testing.expect(s.reasoning == .max);
+    s.cycleReasoning();
+    try testing.expect(s.reasoning == .quick);
+}
+
+test "stats RAM formatting" {
+    const s1 = try stats.formatBytes(testing.allocator, 512);
+    defer testing.allocator.free(s1);
+    try testing.expectEqualStrings("512B", s1);
+
+    const s2 = try stats.formatBytes(testing.allocator, 1024 * 10);
+    defer testing.allocator.free(s2);
+    try testing.expectEqualStrings("10KB", s2);
+
+    const s3 = try stats.formatBytes(testing.allocator, 1024 * 1024 * 5);
+    defer testing.allocator.free(s3);
+    try testing.expectEqualStrings("5MB", s3);
+}
+
+test "TUI session state clear history" {
+    var s = state.SessionState.init(testing.allocator);
+    defer s.deinit();
+
+    const turn = state.Turn{
+        .index = 1,
+        .input = try testing.allocator.dupe(u8, "hello"),
+        .reasoning = .balanced,
+        .context_artifact = null,
+        .response = null,
+        .raw_output = try testing.allocator.dupe(u8, "raw"),
+        .rendered_output = try testing.allocator.dupe(u8, "rendered"),
+        .elapsed_ms = 10,
+        .input_runes = 5,
+        .output_runes = 8,
+        .json_ok = true,
+    };
+    try s.history.append(turn);
+
+    try testing.expectEqual(@as(usize, 1), s.history.items.len);
+    s.clearHistory();
+    try testing.expectEqual(@as(usize, 0), s.history.items.len);
+}
+
 test "locator candidate paths - with engine_root" {
     const candidates = try locator.getCandidatePaths(testing.allocator, "/opt/ghost", .ghost_task_operator);
     defer {
         for (candidates) |c| testing.allocator.free(c);
         testing.allocator.free(candidates);
     }
-    
+
     try testing.expect(candidates.len >= 4);
     try testing.expectEqualStrings("/opt/ghost/ghost_task_operator", candidates[0]);
     try testing.expectEqualStrings("/opt/ghost/zig-out/bin/ghost_task_operator", candidates[1]);
@@ -328,7 +598,7 @@ test "locator candidate paths - no engine_root" {
         for (candidates) |c| testing.allocator.free(c);
         testing.allocator.free(candidates);
     }
-    
+
     try testing.expectEqual(@as(usize, 2), candidates.len);
     try testing.expectEqualStrings("../ghost_engine/zig-out/bin/ghost_task_operator", candidates[0]);
     try testing.expectEqualStrings("ghost_task_operator", candidates[1]);

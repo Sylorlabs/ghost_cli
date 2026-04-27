@@ -145,6 +145,8 @@ fn handleSubmit(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *stat
     if (json_contracts.parseEngineJson(allocator, res.stdout)) |parsed| {
         // defer parsed.deinit(); // We'd need to copy the response if we deinit here
         // For now, let's just render it into our buffer
+        s.last_counters = json_contracts.renderCounters(parsed.value);
+        if (s.debug) try terminal_render.printDebugFieldDetection(rendered_buf.writer(), parsed.value);
         try terminal_render.printEngineOutput(rendered_buf.writer(), parsed.value);
         json_ok = true;
         parsed.deinit();

@@ -39,7 +39,7 @@ pub const CandidateInfo = struct {
     reuse_scope: ?[]const u8 = null,
     provenance_summary: ?[]const u8 = null,
     source_feedback_refs: ?[]const []const u8 = null,
-     what_it_influences: ?[]const u8 = null,
+    what_it_influences: ?[]const u8 = null,
 };
 
 pub const ExportResult = struct {
@@ -57,13 +57,13 @@ pub const EngineResponse = struct {
     status: ?[]const u8 = null,
     permission: ?[]const u8 = null,
     claim_status: ?[]const u8 = null,
-    
+
     // Draft/Verification state
     isDraft: ?bool = null,
     is_draft: ?bool = null,
     verificationState: ?[]const u8 = null,
     verification_state: ?[]const u8 = null,
-    
+
     // Execution metadata
     selected_response_mode: ?[]const u8 = null,
     selectedResponseMode: ?[]const u8 = null,
@@ -71,13 +71,13 @@ pub const EngineResponse = struct {
     requestedReasoningLevel: ?[]const u8 = null,
     effective_compute_budget_tier: ?[]const u8 = null,
     effectiveComputeBudgetTier: ?[]const u8 = null,
-    
+
     // Stop reasons
     stopReason: ?[]const u8 = null,
     stop_reason: ?[]const u8 = null,
     unresolvedReason: ?[]const u8 = null,
     unresolved_reason: ?[]const u8 = null,
-    
+
     // Content
     summary: ?[]const u8 = null,
     detail: ?[]const u8 = null,
@@ -85,13 +85,13 @@ pub const EngineResponse = struct {
     message: ?[]const u8 = null,
     suggested_action: ?[]const u8 = null,
     suggestedAction: ?[]const u8 = null,
-    
+
     // Nested results (ghost_task_operator chat style)
     lastResult: ?LastResult = null,
     last_result: ?LastResult = null,
     currentIntent: ?CurrentIntent = null,
     current_intent: ?CurrentIntent = null,
-    
+
     // Blockers / Obligations
     pendingObligations: ?std.json.Value = null,
     pending_obligations: ?std.json.Value = null,
@@ -101,7 +101,7 @@ pub const EngineResponse = struct {
     pending_ambiguities: ?std.json.Value = null,
     ambiguity_sets: ?std.json.Value = null,
     ambiguity_choices: ?std.json.Value = null,
-    
+
     // Draft contract specific
     assumptions: ?std.json.Value = null,
     missingInformation: ?std.json.Value = null,
@@ -114,7 +114,14 @@ pub const EngineResponse = struct {
     // Findings
     partial_findings: ?std.json.Value = null,
     verifier_summaries: ?std.json.Value = null,
-    
+
+    // Correction / negative-knowledge / epistemic renderer fields.
+    // Keep these as raw JSON values: the CLI renders labels only and does not
+    // reinterpret engine proof, support, verifier, or mutation semantics.
+    corrections: ?std.json.Value = null,
+    negative_knowledge: ?std.json.Value = null,
+    epistemic_render: ?std.json.Value = null,
+
     pub const LastResult = struct {
         kind: ?[]const u8 = null,
         status: ?[]const u8 = null,
@@ -124,6 +131,9 @@ pub const EngineResponse = struct {
         stopReason: ?[]const u8 = null,
         summary: ?[]const u8 = null,
         detail: ?[]const u8 = null,
+        corrections: ?std.json.Value = null,
+        negative_knowledge: ?std.json.Value = null,
+        epistemic_render: ?std.json.Value = null,
     };
 
     pub const CurrentIntent = struct {
@@ -215,7 +225,113 @@ pub const EngineResponse = struct {
         if (self.ambiguity_choices) |val| return val;
         return null;
     }
+
+    pub fn getCorrections(self: EngineResponse) ?std.json.Value {
+        if (self.corrections) |val| return val;
+        if (self.last_result) |lr| if (lr.corrections) |val| return val;
+        if (self.lastResult) |lr| if (lr.corrections) |val| return val;
+        return null;
+    }
+
+    pub fn getNegativeKnowledge(self: EngineResponse) ?std.json.Value {
+        if (self.negative_knowledge) |val| return val;
+        if (self.last_result) |lr| if (lr.negative_knowledge) |val| return val;
+        if (self.lastResult) |lr| if (lr.negative_knowledge) |val| return val;
+        return null;
+    }
+
+    pub fn getEpistemicRender(self: EngineResponse) ?std.json.Value {
+        if (self.epistemic_render) |val| return val;
+        if (self.last_result) |lr| if (lr.epistemic_render) |val| return val;
+        if (self.lastResult) |lr| if (lr.epistemic_render) |val| return val;
+        return null;
+    }
 };
+
+pub const RenderCounters = struct {
+    corrections: usize = 0,
+    nk_applied: usize = 0,
+    nk_candidates: usize = 0,
+    verifier_requirements: usize = 0,
+    suppressions: usize = 0,
+    routing_warnings: usize = 0,
+    trust_decay_candidates: usize = 0,
+};
+
+pub fn renderCounters(response: EngineResponse) RenderCounters {
+    var counters = RenderCounters{};
+    if (response.getCorrections()) |corrections| {
+        counters.corrections = countItems(corrections);
+    }
+    if (response.getNegativeKnowledge()) |nk| {
+        counters.nk_applied += countObjectFieldItems(nk, "applied_records");
+        counters.nk_candidates += countObjectFieldItems(nk, "proposed_candidates");
+        counters.nk_candidates += countObjectFieldItems(nk, "items");
+        counters.trust_decay_candidates += countObjectFieldItems(nk, "trust_decay_candidates");
+        counters.verifier_requirements += countMatchingItems(nk, "stronger_verifier");
+        counters.suppressions += countMatchingItems(nk, "repeat_suppress");
+        counters.routing_warnings += countMatchingItems(nk, "routing_warning");
+    }
+    return counters;
+}
+
+fn countObjectFieldItems(value: std.json.Value, field: []const u8) usize {
+    return switch (value) {
+        .object => |obj| if (obj.get(field)) |child| countItems(child) else 0,
+        else => 0,
+    };
+}
+
+fn countItems(value: std.json.Value) usize {
+    return switch (value) {
+        .array => |arr| arr.items.len,
+        .object => |obj| if (obj.get("items")) |items| countItems(items) else 1,
+        .null => 0,
+        else => 1,
+    };
+}
+
+fn countMatchingItems(value: std.json.Value, needle: []const u8) usize {
+    return switch (value) {
+        .array => |arr| blk: {
+            var count: usize = 0;
+            for (arr.items) |item| count += countMatchingItems(item, needle);
+            break :blk count;
+        },
+        .object => |obj| blk: {
+            var self_matches = false;
+            var nested_count: usize = 0;
+            var it = obj.iterator();
+            while (it.next()) |entry| {
+                if (containsNoCase(entry.key_ptr.*, needle) or valueContainsNoCase(entry.value_ptr.*, needle)) {
+                    self_matches = true;
+                }
+                nested_count += countMatchingItems(entry.value_ptr.*, needle);
+            }
+            break :blk nested_count + @as(usize, if (self_matches) 1 else 0);
+        },
+        else => 0,
+    };
+}
+
+fn valueContainsNoCase(value: std.json.Value, needle: []const u8) bool {
+    return switch (value) {
+        .string => |s| containsNoCase(s, needle),
+        else => false,
+    };
+}
+
+fn containsNoCase(haystack: []const u8, needle: []const u8) bool {
+    if (needle.len == 0) return true;
+    if (haystack.len < needle.len) return false;
+    var i: usize = 0;
+    while (i + needle.len <= haystack.len) : (i += 1) {
+        var j: usize = 0;
+        while (j < needle.len and std.ascii.toLower(haystack[i + j]) == std.ascii.toLower(needle[j])) : (j += 1) {}
+        if (j == needle.len) return true;
+    }
+    return false;
+}
 
 pub fn parseEngineJson(allocator: std.mem.Allocator, json_str: []const u8) !std.json.Parsed(EngineResponse) {
     return try std.json.parseFromSlice(EngineResponse, allocator, json_str, .{ .ignore_unknown_fields = true });

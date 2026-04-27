@@ -41,34 +41,24 @@ test "engine root resolution - repo root case" {
     const mock_bin = mock_root ++ "/zig-out/bin/ghost_task_operator";
     const file = try std.fs.cwd().createFile(mock_bin, .{});
     file.close();
-    
-    const res = try runCmd(testing.allocator, &[_][]const u8{ 
-        "./zig-out/bin/ghost", 
-        "status", 
-        "--engine-root=" ++ mock_root, 
-        "--debug" 
-    });
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "status", "--engine-root=" ++ mock_root, "--debug" });
     defer {
         testing.allocator.free(res.stdout);
         testing.allocator.free(res.stderr);
         std.fs.cwd().deleteTree(mock_root) catch {};
     }
-    
+
     try testing.expect(std.mem.indexOf(u8, res.stdout, "[FOUND]    " ++ mock_bin) != null);
 }
 
 test "status debug mode shows candidate paths" {
-    const res = try runCmd(testing.allocator, &[_][]const u8{ 
-        "./zig-out/bin/ghost", 
-        "status", 
-        "--engine-root=/tmp/nonexistent", 
-        "--debug" 
-    });
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "status", "--engine-root=/tmp/nonexistent", "--debug" });
     defer {
         testing.allocator.free(res.stdout);
         testing.allocator.free(res.stderr);
     }
-    
+
     try testing.expect(std.mem.indexOf(u8, res.stdout, "/tmp/nonexistent/ghost_task_operator") != null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "/tmp/nonexistent/zig-out/bin/ghost_task_operator") != null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "ghost_task_operator") != null);
@@ -92,4 +82,32 @@ test "missing required pack args fail clearly" {
     }
     try testing.expect(res.term.Exited != 0);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "Usage: ghost packs inspect <pack-id>") != null);
+}
+
+test "json mode preserves raw engine stdout" {
+    const mock_root = "/tmp/ghost-cli-json-preserve";
+    try std.fs.cwd().makePath(mock_root);
+    const mock_bin = mock_root ++ "/ghost_task_operator";
+    const raw_json = "{\"summary\":\"raw engine json\",\"negative_knowledge\":{\"proposed_candidates\":[{\"id\":\"nk1\"}]}}";
+
+    const file = try std.fs.cwd().createFile(mock_bin, .{ .mode = 0o755 });
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+    try file.writeAll("#!/bin/sh\nprintf '%s' '");
+    try file.writeAll(raw_json);
+    try file.writeAll("'\n");
+    file.close();
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "ask",
+        "--engine-root=" ++ mock_root,
+        "--json",
+        "hello",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqualStrings(raw_json, res.stdout);
 }

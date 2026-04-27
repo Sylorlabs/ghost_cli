@@ -10,84 +10,225 @@ const blue = "\x1b[34m";
 
 pub fn printEngineOutput(writer: anytype, response: json_contracts.EngineResponse) !void {
     // 1. Status Line
-    try writer.print("{s}Status:{s} ", .{bold, reset});
+    try writer.print("{s}Status:{s} ", .{ bold, reset });
     if (response.isDraftStatus()) {
-        try writer.print("{s}Draft / unverified{s}\n", .{yellow, reset});
+        try writer.print("{s}Draft / unverified{s}\n", .{ yellow, reset });
     } else if (response.getVerificationState()) |state| {
         if (std.mem.eql(u8, state, "verified") or std.mem.eql(u8, state, "supported")) {
-            try writer.print("{s}Verified{s}\n", .{green, reset});
+            try writer.print("{s}Verified{s}\n", .{ green, reset });
         } else if (std.mem.eql(u8, state, "unresolved")) {
-            try writer.print("{s}Unresolved{s}\n", .{yellow, reset});
+            try writer.print("{s}Unresolved{s}\n", .{ yellow, reset });
         } else if (std.mem.eql(u8, state, "failed")) {
-            try writer.print("{s}Failed{s}\n", .{red, reset});
+            try writer.print("{s}Failed{s}\n", .{ red, reset });
         } else {
-            try writer.print("{s}{s}{s}\n", .{blue, state, reset});
+            try writer.print("{s}{s}{s}\n", .{ blue, state, reset });
         }
     } else {
-        try writer.print("{s}Parsed JSON, unrecognized contract{s}\n", .{yellow, reset});
+        try writer.print("{s}Parsed JSON, unrecognized contract{s}\n", .{ yellow, reset });
     }
 
     // 2. Metadata
     if (response.requested_reasoning_level orelse response.requestedReasoningLevel) |level| {
-        try writer.print("{s}Reasoning:{s} {s}\n", .{bold, reset, level});
+        try writer.print("{s}Reasoning:{s} {s}\n", .{ bold, reset, level });
     }
     if (response.selected_response_mode orelse response.selectedResponseMode) |mode| {
-        try writer.print("{s}Internal Mode:{s} {s}\n", .{bold, reset, mode});
+        try writer.print("{s}Internal Mode:{s} {s}\n", .{ bold, reset, mode });
     }
     if (response.effective_compute_budget_tier orelse response.effectiveComputeBudgetTier) |tier| {
-        try writer.print("{s}Budget Tier:{s} {s}\n", .{bold, reset, tier});
+        try writer.print("{s}Budget Tier:{s} {s}\n", .{ bold, reset, tier });
     }
 
     try writer.print("\n", .{});
 
     // 3. Content
     if (response.getSummary()) |summary| {
-        try writer.print("{s}Summary:{s}\n{s}\n\n", .{bold, reset, summary});
+        try writer.print("{s}Summary:{s}\n{s}\n\n", .{ bold, reset, summary });
     }
     if (response.getDetail()) |detail| {
-        try writer.print("{s}Detail:{s}\n{s}\n\n", .{bold, reset, detail});
+        try writer.print("{s}Detail:{s}\n{s}\n\n", .{ bold, reset, detail });
     }
+
+    try printEpistemicRender(writer, response);
+    try printCorrections(writer, response);
+    try printNegativeKnowledge(writer, response);
 
     // 4. Issues / Blockers
     if (response.getUnresolvedReason()) |reason| {
-        try writer.print("{s}Unresolved Reason:{s} {s}\n", .{bold, reset, reason});
+        try writer.print("{s}Unresolved Reason:{s} {s}\n", .{ bold, reset, reason });
     }
 
     if (response.getStopReason()) |reason| {
         if (std.mem.eql(u8, reason, "budget_exhausted")) {
-            try writer.print("{s}Stop Reason:{s} {s}Budget Exhausted{s}\n", .{bold, reset, red, reset});
+            try writer.print("{s}Stop Reason:{s} {s}Budget Exhausted{s}\n", .{ bold, reset, red, reset });
         } else {
-            try writer.print("{s}Stop Reason:{s} {s}\n", .{bold, reset, reason});
+            try writer.print("{s}Stop Reason:{s} {s}\n", .{ bold, reset, reason });
         }
     }
 
     if (response.getObligations()) |obligations| {
-        try writer.print("{s}Pending Obligations:{s}\n", .{bold, reset});
+        try writer.print("{s}Pending Obligations:{s}\n", .{ bold, reset });
         try printObligations(writer, obligations, 2);
         try writer.print("\n", .{});
     }
 
     if (response.getAmbiguities()) |choices| {
-        try writer.print("{s}Ambiguities:{s}\n", .{bold, reset});
+        try writer.print("{s}Ambiguities:{s}\n", .{ bold, reset });
         try printJsonValue(writer, choices, 2);
         try writer.print("\n", .{});
     }
 
     if (response.verifier_summaries) |summaries| {
-        try writer.print("{s}Verifier Summaries:{s}\n", .{bold, reset});
+        try writer.print("{s}Verifier Summaries:{s}\n", .{ bold, reset });
         try printJsonValue(writer, summaries, 2);
         try writer.print("\n", .{});
     }
 
     // 5. Next Steps
     if (response.getSuggestedAction()) |action| {
-        try writer.print("{s}Suggested Action:{s} {s}\n", .{bold, reset, action});
+        try writer.print("{s}Next Action:{s} {s}\n", .{ bold, reset, action });
     }
 
     // 6. Escalation hint if draft
     if (response.isDraftStatus()) {
-        try writer.print("\n{s}Note:{s} This is an unverified draft. Run with {s}--reasoning=deep{s} or ask to {s}verify{s} to confirm.\n", .{yellow, reset, bold, reset, bold, reset});
+        try writer.print("\n{s}Note:{s} This is an unverified draft. Run with {s}--reasoning=deep{s} or ask to {s}verify{s} to confirm.\n", .{ yellow, reset, bold, reset, bold, reset });
     }
+}
+
+pub fn printDebugFieldDetection(writer: anytype, response: json_contracts.EngineResponse) !void {
+    const counters = json_contracts.renderCounters(response);
+    try writer.print("[DEBUG] Field Detection: corrections={s} negative_knowledge={s} epistemic_render={s}\n", .{
+        if (response.getCorrections() != null) "yes" else "no",
+        if (response.getNegativeKnowledge() != null) "yes" else "no",
+        if (response.getEpistemicRender() != null) "yes" else "no",
+    });
+    try writer.print("[DEBUG] Render Counts: corrections={d} nk_applied={d} nk_candidates={d} verifier_requirements={d} suppressions={d} routing_warnings={d} trust_decay_candidates={d}\n", .{
+        counters.corrections,
+        counters.nk_applied,
+        counters.nk_candidates,
+        counters.verifier_requirements,
+        counters.suppressions,
+        counters.routing_warnings,
+        counters.trust_decay_candidates,
+    });
+}
+
+fn printEpistemicRender(writer: anytype, response: json_contracts.EngineResponse) !void {
+    const epistemic = response.getEpistemicRender() orelse return;
+
+    try writer.print("{s}Epistemic State:{s}\n", .{ bold, reset });
+    try writer.print("  Renderer: {s}Non-authorizing display only{s}\n", .{ yellow, reset });
+    try writer.print("  Authority: Does not prove support.\n", .{});
+
+    switch (epistemic) {
+        .object => |obj| {
+            if (getStringField(obj, "state_label") orelse getStringField(obj, "label") orelse getStringField(obj, "state")) |label| {
+                try writer.print("  Engine Label: {s}\n", .{label});
+            }
+            if (getStringField(obj, "authority_statement") orelse getStringField(obj, "authority") orelse getStringField(obj, "support_statement")) |statement| {
+                try writer.print("  Engine Authority: {s}\n", .{statement});
+            }
+            try printOptionalJsonField(writer, obj, "next_action", "  Next Action");
+            try printOptionalJsonField(writer, obj, "reason", "  Reason");
+        },
+        else => {
+            try writer.print("  Engine Render: ", .{});
+            try printJsonValue(writer, epistemic, 2);
+            try writer.print("\n", .{});
+        },
+    }
+    try writer.print("\n", .{});
+}
+
+fn printCorrections(writer: anytype, response: json_contracts.EngineResponse) !void {
+    const corrections = response.getCorrections() orelse return;
+
+    try writer.print("{s}Correction Recorded:{s} {s}Non-authorizing{s}\n", .{ bold, reset, yellow, reset });
+    switch (corrections) {
+        .object => |obj| {
+            if (obj.get("summary")) |summary| {
+                try writer.print("  Summary: ", .{});
+                try printJsonValue(writer, summary, 2);
+                try writer.print("\n", .{});
+            }
+            if (obj.get("items")) |items| {
+                try printLabeledItems(writer, items, "  - ");
+            }
+        },
+        else => try printLabeledItems(writer, corrections, "  - "),
+    }
+    try writer.print("  Note: Correction record only. Does not prove support.\n\n", .{});
+}
+
+fn printNegativeKnowledge(writer: anytype, response: json_contracts.EngineResponse) !void {
+    const nk = response.getNegativeKnowledge() orelse return;
+
+    switch (nk) {
+        .object => |obj| {
+            if (obj.get("influence_summary")) |summary| {
+                try writer.print("{s}Negative Knowledge Applied:{s} prior failure influence; {s}Non-authorizing{s}\n", .{ bold, reset, yellow, reset });
+                try writer.print("  Influence Summary: ", .{});
+                try printJsonValue(writer, summary, 2);
+                try writer.print("\n  Note: Does not prove support.\n\n", .{});
+            }
+            if (obj.get("applied_records")) |records| {
+                try writer.print("{s}Negative Knowledge Applied:{s} prior failure influence; {s}Non-authorizing{s}\n", .{ bold, reset, yellow, reset });
+                try printLabeledItems(writer, records, "  - ");
+                try writer.print("  Note: Does not prove support.\n\n", .{});
+            }
+            if (obj.get("proposed_candidates")) |candidates| {
+                try writer.print("{s}Negative Knowledge Candidate Proposed:{s} {s}Candidate only; Requires review; Non-authorizing{s}\n", .{ bold, reset, yellow, reset });
+                try printLabeledItems(writer, candidates, "  - ");
+                try writer.print("\n", .{});
+            }
+            if (obj.get("items")) |items| {
+                try printNkItems(writer, items);
+            }
+            if (obj.get("trust_decay_candidates")) |candidates| {
+                try writer.print("{s}Trust Decay Candidate Proposed:{s} {s}Candidate only; Requires review; Non-authorizing{s}\n", .{ bold, reset, yellow, reset });
+                try printLabeledItems(writer, candidates, "  - ");
+                try writer.print("\n", .{});
+            }
+        },
+        else => {
+            try writer.print("{s}Negative Knowledge Applied:{s} {s}Non-authorizing{s}\n", .{ bold, reset, yellow, reset });
+            try printLabeledItems(writer, nk, "  - ");
+            try writer.print("  Note: Does not prove support.\n\n", .{});
+        },
+    }
+}
+
+fn printNkItems(writer: anytype, value: std.json.Value) !void {
+    switch (value) {
+        .array => |arr| {
+            for (arr.items) |item| try printNkItem(writer, item);
+        },
+        else => try printNkItem(writer, value),
+    }
+}
+
+fn printNkItem(writer: anytype, item: std.json.Value) !void {
+    const label = nkItemLabel(item);
+    try writer.print("{s}{s}:{s} ", .{ bold, label, reset });
+    if (std.mem.eql(u8, label, "Stronger Verifier Required")) {
+        try writer.print("{s}Requires review; Does not prove support{s}\n", .{ yellow, reset });
+    } else if (std.mem.eql(u8, label, "Exact Repeat Suppressed")) {
+        try writer.print("{s}Non-authorizing prior failure influence{s}\n", .{ yellow, reset });
+    } else if (std.mem.eql(u8, label, "Routing Warning")) {
+        try writer.print("{s}Non-authorizing routing warning{s}\n", .{ yellow, reset });
+    } else {
+        try writer.print("{s}Candidate only; Requires review; Non-authorizing{s}\n", .{ yellow, reset });
+    }
+    try writer.print("  - ", .{});
+    try printJsonValue(writer, item, 4);
+    try writer.print("\n\n", .{});
+}
+
+fn nkItemLabel(item: std.json.Value) []const u8 {
+    if (jsonValueContainsNoCase(item, "stronger_verifier")) return "Stronger Verifier Required";
+    if (jsonValueContainsNoCase(item, "exact_repeat_suppressed") or jsonValueContainsNoCase(item, "repeat_suppress")) return "Exact Repeat Suppressed";
+    if (jsonValueContainsNoCase(item, "routing_warning")) return "Routing Warning";
+    if (jsonValueContainsNoCase(item, "trust_decay")) return "Trust Decay Candidate Proposed";
+    return "Negative Knowledge Candidate Proposed";
 }
 
 pub fn printPackList(writer: anytype, packs: []json_contracts.PackInfo) !void {
@@ -140,7 +281,7 @@ pub fn printCandidateList(writer: anytype, candidates: []json_contracts.Candidat
     for (candidates) |cand| {
         const eligibility_color = if (cand.is_eligible) green else red;
         const status_label = if (cand.is_eligible) "Eligible" else "Ineligible";
-        
+
         try writer.print("{s:<30} {s:<15} {s}{s:<12}{s} {s:<10}\n", .{
             cand.id,
             cand.type orelse "-",
@@ -155,28 +296,28 @@ pub fn printCandidateList(writer: anytype, candidates: []json_contracts.Candidat
 pub fn printCandidateDetail(writer: anytype, cand: json_contracts.CandidateInfo) !void {
     try writer.print("{s}Candidate ID:{s} {s}\n", .{ bold, reset, cand.id });
     try writer.print("{s}Type:{s}         {s}\n", .{ bold, reset, cand.type orelse "-" });
-    
+
     const eligibility_color = if (cand.is_eligible) green else red;
     try writer.print("{s}Eligibility:{s}  {s}{s}{s}\n", .{ bold, reset, eligibility_color, if (cand.is_eligible) "Eligible" else "Ineligible", reset });
-    
+
     if (cand.eligibility_reason) |reason| {
         try writer.print("{s}Reason:{s}       {s}\n", .{ bold, reset, reason });
     }
-    
+
     try writer.print("\n{s}Metrics:{s}\n", .{ bold, reset });
-    try writer.print("  Successes:      {d}\n", .{ cand.success_count orelse 0 });
-    try writer.print("  Failures:       {d}\n", .{ cand.failure_count orelse 0 });
-    try writer.print("  Contradictions: {d}\n", .{ cand.contradiction_count orelse 0 });
-    try writer.print("  Independent:    {d}\n", .{ cand.independent_case_count orelse 0 });
-    
+    try writer.print("  Successes:      {d}\n", .{cand.success_count orelse 0});
+    try writer.print("  Failures:       {d}\n", .{cand.failure_count orelse 0});
+    try writer.print("  Contradictions: {d}\n", .{cand.contradiction_count orelse 0});
+    try writer.print("  Independent:    {d}\n", .{cand.independent_case_count orelse 0});
+
     try writer.print("\n{s}Analysis:{s}\n", .{ bold, reset });
-    try writer.print("  Trust Rec:      {s}\n", .{ cand.trust_recommendation orelse "-" });
-    try writer.print("  Reuse Scope:    {s}\n", .{ cand.reuse_scope orelse "-" });
-    
+    try writer.print("  Trust Rec:      {s}\n", .{cand.trust_recommendation orelse "-"});
+    try writer.print("  Reuse Scope:    {s}\n", .{cand.reuse_scope orelse "-"});
+
     if (cand.provenance_summary) |prov| {
         try writer.print("\n{s}Provenance:{s} {s}\n", .{ bold, reset, prov });
     }
-    
+
     if (cand.source_feedback_refs) |refs| {
         if (refs.len > 0) {
             try writer.print("\n{s}Source Feedback:{s}\n", .{ bold, reset });
@@ -185,11 +326,11 @@ pub fn printCandidateDetail(writer: anytype, cand: json_contracts.CandidateInfo)
             }
         }
     }
-    
+
     if (cand.what_it_influences) |inf| {
         try writer.print("\n{s}Impact:{s} {s}\n", .{ bold, reset, inf });
     }
-    
+
     if (!cand.is_eligible) {
         try writer.print("\n{s}Note:{s} Review required. This candidate cannot be exported yet.\n", .{ yellow, reset });
     } else {
@@ -200,16 +341,16 @@ pub fn printCandidateDetail(writer: anytype, cand: json_contracts.CandidateInfo)
 pub fn printExportResult(writer: anytype, res: json_contracts.ExportResult) !void {
     if (res.success) {
         try writer.print("{s}Export Successful{s}\n", .{ green, reset });
-        try writer.print("Candidate: {s}\n", .{ res.candidate_id });
+        try writer.print("Candidate: {s}\n", .{res.candidate_id});
         try writer.print("Target Pack: {s} (v{s})\n", .{ res.pack_id, res.version });
         if (res.is_non_authorizing) {
             try writer.print("{s}Status: Non-authorizing (hint mode){s}\n", .{ yellow, reset });
         }
-        try writer.print("\nNext: ghost packs inspect {s}\n", .{ res.pack_id });
+        try writer.print("\nNext: ghost packs inspect {s}\n", .{res.pack_id});
     } else {
         try writer.print("{s}Export Failed{s}\n", .{ red, reset });
         if (res.message) |msg| {
-            try writer.print("Error: {s}\n", .{ msg });
+            try writer.print("Error: {s}\n", .{msg});
         }
     }
 }
@@ -227,7 +368,7 @@ fn printObligations(writer: anytype, value: std.json.Value, indent: usize) !void
                         } else {
                             try writer.print("\n", .{});
                         }
-                        
+
                         var it = obj.iterator();
                         while (it.next()) |entry| {
                             if (std.mem.eql(u8, entry.key_ptr.*, "id")) continue;
@@ -272,6 +413,83 @@ fn printJsonValue(writer: anytype, value: std.json.Value, indent: usize) !void {
         },
         else => try writer.print("{}", .{value}),
     }
+}
+
+fn printLabeledItems(writer: anytype, value: std.json.Value, prefix: []const u8) !void {
+    switch (value) {
+        .array => |arr| {
+            for (arr.items) |item| {
+                try writer.print("{s}", .{prefix});
+                try printJsonValue(writer, item, prefix.len + 2);
+                try writer.print("\n", .{});
+            }
+        },
+        .object => |obj| {
+            if (obj.get("items")) |items| {
+                try printLabeledItems(writer, items, prefix);
+            } else {
+                try writer.print("{s}", .{prefix});
+                try printJsonValue(writer, value, prefix.len + 2);
+                try writer.print("\n", .{});
+            }
+        },
+        .null => {},
+        else => {
+            try writer.print("{s}", .{prefix});
+            try printJsonValue(writer, value, prefix.len + 2);
+            try writer.print("\n", .{});
+        },
+    }
+}
+
+fn getStringField(obj: std.json.ObjectMap, field: []const u8) ?[]const u8 {
+    const value = obj.get(field) orelse return null;
+    return switch (value) {
+        .string => |s| s,
+        else => null,
+    };
+}
+
+fn printOptionalJsonField(writer: anytype, obj: std.json.ObjectMap, field: []const u8, label: []const u8) !void {
+    if (obj.get(field)) |value| {
+        try writer.print("{s}: ", .{label});
+        try printJsonValue(writer, value, 2);
+        try writer.print("\n", .{});
+    }
+}
+
+fn jsonValueContainsNoCase(value: std.json.Value, needle: []const u8) bool {
+    return switch (value) {
+        .string => |s| containsNoCase(s, needle),
+        .array => |arr| blk: {
+            for (arr.items) |item| {
+                if (jsonValueContainsNoCase(item, needle)) break :blk true;
+            }
+            break :blk false;
+        },
+        .object => |obj| blk: {
+            var it = obj.iterator();
+            while (it.next()) |entry| {
+                if (containsNoCase(entry.key_ptr.*, needle) or jsonValueContainsNoCase(entry.value_ptr.*, needle)) {
+                    break :blk true;
+                }
+            }
+            break :blk false;
+        },
+        else => false,
+    };
+}
+
+fn containsNoCase(haystack: []const u8, needle: []const u8) bool {
+    if (needle.len == 0) return true;
+    if (haystack.len < needle.len) return false;
+    var i: usize = 0;
+    while (i + needle.len <= haystack.len) : (i += 1) {
+        var j: usize = 0;
+        while (j < needle.len and std.ascii.toLower(haystack[i + j]) == std.ascii.toLower(needle[j])) : (j += 1) {}
+        if (j == needle.len) return true;
+    }
+    return false;
 }
 
 fn printIndent(writer: anytype, indent: usize) !void {

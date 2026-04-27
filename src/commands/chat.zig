@@ -17,9 +17,9 @@ pub fn execute(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: 
     const aa = arena.allocator();
 
     var argv = std.ArrayList([]const u8).init(aa);
-    
+
     try argv.append("chat");
-    
+
     if (options.message) |msg| {
         try argv.append("--message");
         try argv.append(msg);
@@ -48,8 +48,8 @@ pub fn execute(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: 
     defer res.deinit();
 
     if (options.json) {
-        std.debug.print("{s}\n", .{res.stdout});
-        if (res.stderr.len > 0) std.debug.print("{s}\n", .{res.stderr});
+        try std.io.getStdOut().writer().writeAll(res.stdout);
+        if (res.stderr.len > 0) try std.io.getStdErr().writer().writeAll(res.stderr);
         if (res.exit_code != 0) std.process.exit(res.exit_code);
         return;
     }
@@ -62,6 +62,7 @@ pub fn execute(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: 
         if (json_contracts.parseEngineJson(allocator, res.stdout)) |parsed| {
             defer parsed.deinit();
             if (options.debug) std.debug.print("[DEBUG] JSON Parse: SUCCESS\n", .{});
+            if (options.debug) try terminal.printDebugFieldDetection(std.io.getStdErr().writer(), parsed.value);
             try terminal.printEngineOutput(std.io.getStdOut().writer(), parsed.value);
         } else |err| {
             if (options.debug) std.debug.print("[DEBUG] JSON Parse: FAILED ({})\n", .{err});

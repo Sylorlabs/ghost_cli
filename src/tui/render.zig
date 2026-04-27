@@ -46,10 +46,16 @@ pub fn render(writer: anytype, s: *state.SessionState) !void {
     const ram_str = if (s.last_ram_bytes) |b| try stats.formatBytes(s.allocator, b) else try s.allocator.dupe(u8, "n/a");
     defer s.allocator.free(ram_str);
 
-    try writer.print(" reasoning={s} | in={d} runes | ram={s} | debug={s} | context={s}", .{
+    try writer.print(" reasoning={s} | in={d} runes | ram={s} | corr={d} nk={d}/{d} verifiers={d} suppress={d} route={d} | debug={s} | context={s}", .{
         s.reasoning.toStr(),
         stats.countRunes(s.current_input.items),
         ram_str,
+        s.last_counters.corrections,
+        s.last_counters.nk_applied,
+        s.last_counters.nk_candidates,
+        s.last_counters.verifier_requirements,
+        s.last_counters.suppressions,
+        s.last_counters.routing_warnings,
         if (s.debug) "on" else "off",
         s.context_artifact orelse "none",
     });

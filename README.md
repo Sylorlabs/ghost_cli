@@ -76,7 +76,7 @@ ghost status
 ### Knowledge Lifecycle
 - **Reinforcement**: Local experience gathered during chat and task sessions.
 - **Distillation Candidates**: Reviewed and aggregated knowledge ready for promotion.
-- **Exported Packs**: Verified knowledge units that act as non-authorizing hints for future reasoning.
+- **Exported Packs**: User-approved knowledge units that act as non-authorizing hints for future reasoning.
 - **Truth**: Proof and support gates in the engine still decide final validity of any claim.
 
 
@@ -92,9 +92,12 @@ Normal users specify `--reasoning=quick|balanced|deep|max`.
 - **Draft / unverified**: Fast output, assumptions are made, no verification steps ran.
 - **Verified**: Result has been verified via the engine's verifiers (compilation, tests).
 - **Unresolved**: The engine could not resolve the task (e.g., budget exhaustion, missing facts).
+- **Correction Recorded**: Engine reported a correction record. The CLI labels it non-authorizing and does not present it as proof.
+- **Negative Knowledge Applied/Candidate Proposed**: Engine reported prior-failure influence or review-needed candidates. The CLI labels these as non-authorizing and does not mutate negative knowledge.
+- **Epistemic State**: Engine-provided epistemic render metadata, displayed without upgrading draft/unresolved/support status.
 
 ## Troubleshooting
 If `ghost_cli` encounters issues, use these commands to diagnose the problem:
 - **`ghost status`**: Checks if the CLI can find the required `ghost_engine` binaries.
-- **`ghost <command> --debug`**: Prints the exact engine binary path, arguments, exit code, and raw JSON before parsing.
+- **`ghost <command> --debug`**: Prints the exact engine binary path, arguments, exit code, JSON parse result, and whether correction/negative-knowledge/epistemic fields were detected.
 - **`ghost debug raw <engine-binary> [args...]`**: Bypasses all CLI formatting to run an engine binary directly and print the raw text/JSON.

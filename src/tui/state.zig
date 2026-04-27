@@ -24,6 +24,7 @@ pub const SessionState = struct {
     debug: bool,
     engine_found: bool,
     last_ram_bytes: ?usize,
+    last_counters: json_contracts.RenderCounters,
 
     pub fn init(allocator: std.mem.Allocator) SessionState {
         return .{
@@ -35,6 +36,7 @@ pub const SessionState = struct {
             .debug = false,
             .engine_found = false,
             .last_ram_bytes = null,
+            .last_counters = .{},
         };
     }
 

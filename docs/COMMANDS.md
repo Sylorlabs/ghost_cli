@@ -42,6 +42,8 @@ Interactive Ghost Console TUI. Provides a live cockpit view for interacting with
 
 Usage: `ghost tui [--reasoning=quick|balanced|deep|max] [--context-artifact=<path>]`
 
+History output uses the same renderer as terminal chat/ask output, including correction, negative-knowledge, and epistemic sections when the engine reports them. The status bar includes compact counters for corrections, applied/proposed negative knowledge, verifier requirements, suppressions, and routing warnings.
+
 #### Keybindings
 - `Ctrl+C`: Quit
 - `Ctrl+R`: Cycle reasoning level (quick → balanced → deep → max)
@@ -80,3 +82,5 @@ Usage: `ghost status`
 Advanced user diagnostic tool. Bypasses JSON serialization or runs raw engine paths.
 Usage: `ghost debug raw <engine-binary> [args...]`
 Example: `ghost debug raw ghost_knowledge_pack list`
+
+For rendered commands such as `ghost ask --debug`, debug output reports whether correction, negative-knowledge, and epistemic fields were detected without dumping large arrays.
