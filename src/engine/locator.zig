@@ -6,6 +6,7 @@ pub const EngineBinaries = enum {
     ghost_code_intel,
     ghost_patch_candidates,
     ghost_knowledge_pack,
+    ghost_project_autopsy,
 
     pub fn toStr(self: EngineBinaries) []const u8 {
         return switch (self) {
@@ -13,6 +14,7 @@ pub const EngineBinaries = enum {
             .ghost_code_intel => "ghost_code_intel",
             .ghost_patch_candidates => "ghost_patch_candidates",
             .ghost_knowledge_pack => "ghost_knowledge_pack",
+            .ghost_project_autopsy => "ghost_project_autopsy",
         };
     }
 };
@@ -67,7 +69,7 @@ pub fn getCandidatePaths(allocator: std.mem.Allocator, engine_root: ?[]const u8,
 pub fn checkBinaryExists(path: []const u8) bool {
     if (std.mem.indexOfScalar(u8, path, std.fs.path.sep) == null) {
         // PATH lookup candidate - we don't check existence here, assume it might exist in PATH.
-        return false; 
+        return false;
     }
     var file = std.fs.cwd().openFile(path, .{}) catch return false;
     file.close();

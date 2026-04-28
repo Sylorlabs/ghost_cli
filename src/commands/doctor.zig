@@ -2,13 +2,17 @@ const std = @import("std");
 const builtin = @import("builtin");
 const locator = @import("../engine/locator.zig");
 
+// Core binaries: their absence sets ok=false.
+// Non-core (index >= 4): tracked but do not affect ok.
 const engine_binary_names = [_][]const u8{
     "ghost_task_operator",
     "ghost_code_intel",
     "ghost_patch_candidates",
     "ghost_knowledge_pack",
     "ghost_gip",
+    "ghost_project_autopsy",
 };
+const engine_core_count = 4; // ghost_task_operator .. ghost_knowledge_pack
 
 pub const Options = struct {
     json: bool = false,
@@ -58,6 +62,8 @@ const DoctorReport = struct {
     zig_build_check: CommandProbe,
     task_operator_smoke: CommandProbe,
     gip_status_smoke: CommandProbe,
+    /// Smoke: ghost_project_autopsy --version (read-only, bounded, labeled smoke only).
+    autopsy_smoke: CommandProbe,
     cpu: []u8,
     ram: []u8,
     gpu: []u8,
@@ -75,6 +81,7 @@ const DoctorReport = struct {
         self.zig_build_check.deinit(allocator);
         self.task_operator_smoke.deinit(allocator);
         self.gip_status_smoke.deinit(allocator);
+        self.autopsy_smoke.deinit(allocator);
         allocator.free(self.cpu);
         allocator.free(self.ram);
         allocator.free(self.gpu);
@@ -115,7 +122,8 @@ fn collectReport(allocator: std.mem.Allocator, engine_root: ?[]const u8, options
     var all_core_ok = true;
     for (engine_binary_names, 0..) |name, index| {
         const binary = try collectBinaryReport(allocator, engine_root, name);
-        if (index < 4 and !binary.executable) all_core_ok = false;
+        // Only the first engine_core_count binaries determine ok.
+        if (index < engine_core_count and !binary.executable) all_core_ok = false;
         try binaries.append(binary);
     }
 
@@ -137,6 +145,14 @@ fn collectReport(allocator: std.mem.Allocator, engine_root: ?[]const u8, options
     else
         CommandProbe{ .available = false, .output = try allocator.dupe(u8, "ghost_gip not available") };
 
+    // Smoke only: ghost_project_autopsy --version
+    // Read-only, bounded, labeled.  Does NOT run a scan; does NOT treat output as proof.
+    const autopsy_path = findBinaryPath(binaries.items, "ghost_project_autopsy");
+    const autopsy_smoke = if (autopsy_path) |path|
+        try probeCommand(allocator, &[_][]const u8{ path, "--version" })
+    else
+        CommandProbe{ .available = false, .output = try allocator.dupe(u8, "ghost_project_autopsy not available") };
+
     const cpu = try detectCpu(allocator);
     const ram = try detectRam(allocator);
     const gpu = try detectGpu(allocator);
@@ -157,6 +173,7 @@ fn collectReport(allocator: std.mem.Allocator, engine_root: ?[]const u8, options
         .zig_build_check = zig_build_check,
         .task_operator_smoke = task_operator_smoke,
         .gip_status_smoke = gip_status_smoke,
+        .autopsy_smoke = autopsy_smoke,
         .cpu = cpu,
         .ram = ram,
         .gpu = gpu,
@@ -206,6 +223,7 @@ fn getCandidatePathsForName(allocator: std.mem.Allocator, engine_root: ?[]const 
     if (std.mem.eql(u8, name, "ghost_code_intel")) return locator.getCandidatePaths(allocator, engine_root, .ghost_code_intel);
     if (std.mem.eql(u8, name, "ghost_patch_candidates")) return locator.getCandidatePaths(allocator, engine_root, .ghost_patch_candidates);
     if (std.mem.eql(u8, name, "ghost_knowledge_pack")) return locator.getCandidatePaths(allocator, engine_root, .ghost_knowledge_pack);
+    if (std.mem.eql(u8, name, "ghost_project_autopsy")) return locator.getCandidatePaths(allocator, engine_root, .ghost_project_autopsy);
 
     var list = std.ArrayList([]u8).init(allocator);
     errdefer {
@@ -251,10 +269,11 @@ fn printHuman(report: DoctorReport, debug: bool, full: bool, run_build_check: bo
         }
     }
 
-    try out.print("\nSmoke Checks:\n", .{});
+    try out.print("\nSmoke Checks (read-only, no scanning performed):\n", .{});
     try out.print("  - ghost_task_operator --help: {s}\n", .{if (report.task_operator_smoke.available) "ok" else "unavailable/failed"});
     try out.print("  - ghost_gip engine.status: {s}\n", .{if (report.gip_status_smoke.available) "ok" else "unavailable/failed"});
-    try out.print("\nNo mutation performed. {s}\n", .{if (run_build_check) "`zig build --help` was run; no build artifacts were requested." else "No build was run."});
+    try out.print("  - ghost_project_autopsy --version [smoke only]: {s}\n", .{if (report.autopsy_smoke.available) "ok" else "unavailable/not-installed"});
+    try out.print("\nNo mutation performed. No scan was run. {s}\n", .{if (run_build_check) "`zig build --help` was run; no build artifacts were requested." else "No build was run."});
     if (!report.ok) {
         try out.print("\nSuggested next steps:\n", .{});
         try out.print("  1. Build ghost_engine: cd <ghost_engine> && zig build\n", .{});
@@ -286,6 +305,7 @@ fn printTesterReport(report: DoctorReport, debug: bool) !void {
             for (binary.candidates) |candidate| try out.print("  candidate: {s}\n", .{candidate});
         }
     }
+    try out.print("ghost_project_autopsy: {s}\n", .{if (report.autopsy_smoke.available) "available" else "not-installed"});
     try out.print("\nSuggested next commands:\n", .{});
     try out.print("1. ghost status\n", .{});
     try out.print("2. ghost ask hello --debug\n", .{});
@@ -326,7 +346,7 @@ fn printJson(report: DoctorReport, debug: bool) !void {
         try out.writeAll("}");
     }
     try out.writeAll("]");
-    try out.print(",\"smoke\":{{\"ghost_task_operator_help\":{},\"ghost_gip_engine_status\":{}}}", .{ report.task_operator_smoke.available, report.gip_status_smoke.available });
+    try out.print(",\"smoke\":{{\"ghost_task_operator_help\":{},\"ghost_gip_engine_status\":{},\"ghost_project_autopsy_version_smoke\":{}}}", .{ report.task_operator_smoke.available, report.gip_status_smoke.available, report.autopsy_smoke.available });
     try out.writeAll("}\n");
 }
 

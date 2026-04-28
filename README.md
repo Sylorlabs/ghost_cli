@@ -107,8 +107,8 @@ Normal users specify `--reasoning=quick|balanced|deep|max`.
 
 ## Troubleshooting
 If `ghost_cli` encounters issues, use these commands to diagnose the problem:
-- **`ghost status`**: Checks engine availability/status.
-- **`ghost doctor`**: Runs read-only environment and tester diagnostics, including CLI path, engine binary resolution, Zig version, OS/arch, terminal, PATH, and safe smoke checks.
+- **`ghost status`**: Checks engine availability/status, including `ghost_project_autopsy`.
+- **`ghost doctor`**: Runs read-only environment and tester diagnostics, including CLI path, engine binary resolution (all binaries including `ghost_project_autopsy`), Zig version, OS/arch, terminal, PATH, and safe smoke checks. A bounded `--version` smoke check confirms autopsy binary responds; **no scan is run**.
 - **`ghost <command> --debug`**: Prints the exact engine binary path, arguments, exit code, JSON parse result, and whether correction/negative-knowledge/epistemic fields were detected.
 - **`ghost debug raw <engine-binary> [args...]`**: Bypasses all CLI formatting to run an engine binary directly and print the raw text/JSON.
 

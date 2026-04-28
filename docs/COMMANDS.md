@@ -99,6 +99,19 @@ Usage: `ghost doctor --run-build-check`
 
 Default doctor is fast and non-mutating. It does not build the engine, run expensive tests, execute verifiers, mutate packs, or change negative knowledge. It reports the CLI version/path, current directory, `GHOST_ENGINE_ROOT`, resolved engine binaries, executable bits, Zig version, OS/arch, terminal, PATH resolution, and safe smoke checks.
 
+Engine binaries tracked by `ghost doctor` and `ghost status`:
+
+| Binary | Role | Core? |
+|--------|------|-------|
+| `ghost_task_operator` | Task/chat operator | Yes |
+| `ghost_code_intel` | Code intelligence | Yes |
+| `ghost_patch_candidates` | Patch candidate generation | Yes |
+| `ghost_knowledge_pack` | Knowledge pack management | Yes |
+| `ghost_gip` | GIP protocol / engine status | No |
+| `ghost_project_autopsy` | Project Autopsy pass | No |
+
+`ghost_project_autopsy` is detected and reported by `doctor`/`status`. Doctor also runs a **bounded, labeled, read-only smoke check** (`ghost_project_autopsy --version`) to confirm the binary responds. **No scan is ever run automatically.** Autopsy output is never treated as proof by the CLI.
+
 `ghost doctor --report` prints a copy-paste tester report with OS, arch, cheap CPU/RAM/GPU probes, Zig version, Ghost version, engine root, resolved binaries, doctor result, and suggested next commands.
 
 ### `ghost debug`
