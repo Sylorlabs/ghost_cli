@@ -415,3 +415,105 @@ test "doctor json includes ghost_project_autopsy in binaries array" {
     const smoke = parsed.value.object.get("smoke") orelse return error.MissingField;
     try testing.expect(smoke.object.contains("ghost_project_autopsy_version_smoke"));
 }
+
+test "autopsy command is listed in help" {
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "--help" });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "autopsy") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "Project Autopsy pass") != null);
+}
+
+test "autopsy json mode preserves raw engine stdout" {
+    const mock_root = "/tmp/ghost-autopsy-json-preserve";
+    try std.fs.cwd().makePath(mock_root);
+    const mock_bin = mock_root ++ "/ghost_project_autopsy";
+    const raw_json = "{\"state\":\"draft\",\"non_authorizing\":true,\"project_profile\":{\"workspace_root\":\".\"}}";
+
+    const file = try std.fs.cwd().createFile(mock_bin, .{ .mode = 0o755 });
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+    try file.writeAll("#!/bin/sh\nprintf '%s' '");
+    try file.writeAll(raw_json);
+    try file.writeAll("'\n");
+    file.close();
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "autopsy",
+        "--engine-root=" ++ mock_root,
+        "--json",
+        ".",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqualStrings(raw_json, res.stdout);
+}
+
+test "autopsy human mode renders draft notice" {
+    const mock_root = "/tmp/ghost-autopsy-human-notice";
+    try std.fs.cwd().makePath(mock_root);
+    const mock_bin = mock_root ++ "/ghost_project_autopsy";
+    const raw_json = "{\"state\":\"draft\",\"non_authorizing\":true,\"project_profile\":{\"workspace_root\":\".\"}}";
+
+    const file = try std.fs.cwd().createFile(mock_bin, .{ .mode = 0o755 });
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+    try file.writeAll("#!/bin/sh\nprintf '%s' '");
+    try file.writeAll(raw_json);
+    try file.writeAll("'\n");
+    file.close();
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "autopsy",
+        "--engine-root=" ++ mock_root,
+        ".",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "DRAFT and NON-AUTHORIZING") != null);
+}
+
+test "doctor and status do not run autopsy scans" {
+    const mock_root = "/tmp/ghost-no-auto-scan";
+    try std.fs.cwd().makePath(mock_root);
+    const mock_bin = mock_root ++ "/ghost_project_autopsy";
+    const marker = mock_root ++ "/scan-marker";
+
+    const file = try std.fs.cwd().createFile(mock_bin, .{ .mode = 0o755 });
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+    // If it receives any arg other than --version, it touches the marker
+    try file.writeAll("#!/bin/sh\nfor arg in \"$@\"; do if [ \"$arg\" != \"--version\" ]; then touch '" ++ marker ++ "'; fi; done\n");
+    file.close();
+
+    // Test doctor
+    const res_doctor = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "doctor",
+        "--engine-root=" ++ mock_root,
+    });
+    defer {
+        testing.allocator.free(res_doctor.stdout);
+        testing.allocator.free(res_doctor.stderr);
+    }
+    try testing.expectError(error.FileNotFound, std.fs.cwd().access(marker, .{}));
+
+    // Test status
+    const res_status = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "status",
+        "--engine-root=" ++ mock_root,
+    });
+    defer {
+        testing.allocator.free(res_status.stdout);
+        testing.allocator.free(res_status.stderr);
+    }
+    try testing.expectError(error.FileNotFound, std.fs.cwd().access(marker, .{}));
+}

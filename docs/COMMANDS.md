@@ -114,6 +114,15 @@ Engine binaries tracked by `ghost doctor` and `ghost status`:
 
 `ghost doctor --report` prints a copy-paste tester report with OS, arch, cheap CPU/RAM/GPU probes, Zig version, Ghost version, engine root, resolved binaries, doctor result, and suggested next commands.
 
+### `ghost autopsy`
+Run an explicit Project Autopsy scan using `ghost_project_autopsy`. This command is for explicit user execution only and is never run automatically by other commands.
+
+Usage: `ghost autopsy [path]`
+Usage: `ghost autopsy --json [path]`
+Usage: `ghost autopsy --debug [path]`
+
+The human-readable output provides a concise summary of detected languages, build systems, safe command candidates, verifier plan candidates, and gaps/unknowns. All output is marked as **DRAFT** and **NON-AUTHORIZING**.
+
 ### `ghost debug`
 Advanced user diagnostic tool. Bypasses JSON serialization or runs raw engine paths.
 Usage: `ghost debug raw <engine-binary> [args...]`

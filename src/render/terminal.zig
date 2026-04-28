@@ -355,6 +355,110 @@ pub fn printExportResult(writer: anytype, res: json_contracts.ExportResult) !voi
     }
 }
 
+pub fn printAutopsyResult(writer: anytype, res: json_contracts.AutopsyResult) !void {
+    try writer.print("{s}Project Autopsy Result{s}\n", .{ bold, reset });
+
+    if (res.project_profile) |profile| {
+        if (profile.workspace_root) |root| {
+            try writer.print("Workspace: {s}\n", .{root});
+        }
+        try writer.print("\n", .{});
+
+        // 1. Detected Languages
+        if (profile.detected_languages) |langs| {
+            if (langs.len > 0) {
+                try writer.print("{s}Detected Languages:{s}\n", .{ bold, reset });
+                for (langs) |lang| {
+                    try writer.print("  - {s}\n", .{lang.name});
+                }
+                try writer.print("\n", .{});
+            }
+        }
+
+        // 2. Build Systems
+        if (profile.build_systems) |builds| {
+            if (builds.len > 0) {
+                try writer.print("{s}Build Systems:{s}\n", .{ bold, reset });
+                for (builds) |b| {
+                    try writer.print("  - {s}\n", .{b.name});
+                }
+                try writer.print("\n", .{});
+            }
+        }
+
+        // 3. Safe Command Candidates
+        if (profile.safe_command_candidates) |cmds| {
+            if (cmds.len > 0) {
+                try writer.print("{s}Safe Command Candidates:{s}\n", .{ bold, reset });
+                for (cmds) |c| {
+                    try writer.print("  - {s}: ", .{c.id});
+                    for (c.argv, 0..) |arg, i| {
+                        try writer.print("{s}{s}", .{ arg, if (i < c.argv.len - 1) " " else "" });
+                    }
+                    try writer.print("\n", .{});
+                }
+                try writer.print("\n", .{});
+            }
+        }
+    }
+
+    // 4. Verifier Plan Candidates
+    if (res.verifier_plan_candidates) |plans| {
+        if (plans.len > 0) {
+            try writer.print("{s}Verifier Plan Candidates:{s}\n", .{ bold, reset });
+            for (plans) |p| {
+                try writer.print("  - {s}: ", .{p.id});
+                for (p.argv, 0..) |arg, i| {
+                    try writer.print("{s}{s}", .{ arg, if (i < p.argv.len - 1) " " else "" });
+                }
+                if (p.purpose) |purpose| {
+                    try writer.print(" ({s})", .{purpose});
+                }
+                try writer.print("\n", .{});
+            }
+            try writer.print("\n", .{});
+        }
+    }
+
+    // 5. Gaps / Unknowns
+    var has_gaps = false;
+    if (res.project_gap_report) |report| {
+        if (report.missing_ci != null or report.missing_test_command != null or report.missing_build_command != null or (report.missing_verifier_adapters != null and report.missing_verifier_adapters.?.len > 0)) {
+            has_gaps = true;
+            try writer.print("{s}Gaps Detected:{s}\n", .{ bold, reset });
+            if (report.missing_ci != null) try writer.print("  - CI configuration missing\n", .{});
+            if (report.missing_test_command != null) try writer.print("  - Test command missing\n", .{});
+            if (report.missing_build_command != null) try writer.print("  - Build command missing\n", .{});
+            if (report.missing_verifier_adapters) |adapters| {
+                for (adapters) |a| {
+                    try writer.print("  - Missing Verifier Adapter: {s}\n", .{a.name});
+                }
+            }
+        }
+    }
+
+    if (res.project_profile) |profile| {
+        if (profile.unknowns) |unknowns| {
+            if (unknowns.len > 0) {
+                if (!has_gaps) {
+                    try writer.print("{s}Unknowns:{s}\n", .{ bold, reset });
+                }
+                for (unknowns) |u| {
+                    try writer.print("  - ", .{});
+                    try printJsonValue(writer, u, 4);
+                    try writer.print("\n", .{});
+                }
+                has_gaps = true;
+            }
+        }
+    }
+    if (has_gaps) try writer.print("\n", .{});
+
+    // 6. Non-authorizing notice
+    try writer.print("{s}Notice: This output is a DRAFT and NON-AUTHORIZING.{s}\n", .{ yellow, reset });
+    try writer.print("Project Autopsy candidates are proposals only and do not constitute evidence of correctness or support.\n", .{});
+}
+
 fn printObligations(writer: anytype, value: std.json.Value, indent: usize) !void {
     switch (value) {
         .array => |arr| {

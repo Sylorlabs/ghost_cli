@@ -77,6 +77,9 @@ ghost learn export action_surface:candidate_local_guard --project-shard=my-proje
 # Check environment status
 ghost status
 
+# Run project autopsy scan
+ghost autopsy .
+
 # Full first-tester diagnostics
 ghost doctor
 ghost doctor --report
@@ -109,6 +112,7 @@ Normal users specify `--reasoning=quick|balanced|deep|max`.
 If `ghost_cli` encounters issues, use these commands to diagnose the problem:
 - **`ghost status`**: Checks engine availability/status, including `ghost_project_autopsy`.
 - **`ghost doctor`**: Runs read-only environment and tester diagnostics, including CLI path, engine binary resolution (all binaries including `ghost_project_autopsy`), Zig version, OS/arch, terminal, PATH, and safe smoke checks. A bounded `--version` smoke check confirms autopsy binary responds; **no scan is run**.
+- **`ghost autopsy`**: Runs an explicit project structure analysis scan.
 - **`ghost <command> --debug`**: Prints the exact engine binary path, arguments, exit code, JSON parse result, and whether correction/negative-knowledge/epistemic fields were detected.
 - **`ghost debug raw <engine-binary> [args...]`**: Bypasses all CLI formatting to run an engine binary directly and print the raw text/JSON.
 

@@ -51,6 +51,53 @@ pub const ExportResult = struct {
     is_non_authorizing: bool = true,
 };
 
+pub const AutopsyResult = struct {
+    project_profile: ?ProjectProfile = null,
+    project_gap_report: ?ProjectGapReport = null,
+    verifier_plan_candidates: ?[]const VerifierPlanCandidate = null,
+    state: ?[]const u8 = null,
+    non_authorizing: bool = true,
+
+    pub const ProjectProfile = struct {
+        workspace_root: ?[]const u8 = null,
+        detected_languages: ?[]const NamedSignal = null,
+        build_systems: ?[]const NamedSignal = null,
+        safe_command_candidates: ?[]const CommandCandidate = null,
+        unknowns: ?[]const std.json.Value = null,
+        confidence_summary: ?[]const u8 = null,
+    };
+
+    pub const NamedSignal = struct {
+        name: []const u8,
+        path: ?[]const u8 = null,
+        kind: ?[]const u8 = null,
+        confidence: ?[]const u8 = null,
+        reason: ?[]const u8 = null,
+    };
+
+    pub const CommandCandidate = struct {
+        id: []const u8,
+        argv: []const []const u8,
+        reason: ?[]const u8 = null,
+        risk_level: ?[]const u8 = null,
+    };
+
+    pub const VerifierPlanCandidate = struct {
+        id: []const u8,
+        argv: []const []const u8,
+        purpose: ?[]const u8 = null,
+        risk_level: ?[]const u8 = null,
+        why_candidate_exists: ?[]const u8 = null,
+    };
+
+    pub const ProjectGapReport = struct {
+        missing_ci: ?std.json.Value = null,
+        missing_test_command: ?std.json.Value = null,
+        missing_build_command: ?std.json.Value = null,
+        missing_verifier_adapters: ?[]const NamedSignal = null,
+    };
+};
+
 // Unified response struct that handles multiple engine JSON shapes
 pub const EngineResponse = struct {
     // Top-level status/permission
@@ -355,4 +402,8 @@ pub fn parseCandidateInfoJson(allocator: std.mem.Allocator, json_str: []const u8
 
 pub fn parseExportResultJson(allocator: std.mem.Allocator, json_str: []const u8) !std.json.Parsed(ExportResult) {
     return try std.json.parseFromSlice(ExportResult, allocator, json_str, .{ .ignore_unknown_fields = true });
+}
+
+pub fn parseAutopsyJson(allocator: std.mem.Allocator, json_str: []const u8) !std.json.Parsed(AutopsyResult) {
+    return try std.json.parseFromSlice(AutopsyResult, allocator, json_str, .{ .ignore_unknown_fields = true });
 }

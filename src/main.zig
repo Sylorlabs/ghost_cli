@@ -7,6 +7,7 @@ const status = @import("commands/status.zig");
 const packs = @import("commands/packs.zig");
 const verify = @import("commands/verify.zig");
 const learn = @import("commands/learn.zig");
+const autopsy = @import("commands/autopsy.zig");
 const tui = @import("commands/tui.zig");
 const json_contracts = @import("engine/json_contracts.zig");
 
@@ -182,6 +183,13 @@ pub fn main() !void {
         });
     } else if (std.mem.eql(u8, cmd.?, "debug")) {
         try debug_cmd.execute(allocator, root, leftover_args.items, json_out);
+    } else if (std.mem.eql(u8, cmd.?, "autopsy")) {
+        const path = if (leftover_args.items.len > 0) leftover_args.items[0] else null;
+        try autopsy.execute(allocator, root, .{
+            .path = path,
+            .json = json_out,
+            .debug = debug_mode,
+        });
     } else {
         std.debug.print("Unknown command: {s}\n", .{cmd.?});
         printHelp();
@@ -208,6 +216,7 @@ fn printHelp() void {
         \\  tui      Interactive Ghost Console TUI (same as default)
         \\  status   Show engine availability/status
         \\  doctor   Run read-only environment diagnostics
+        \\  autopsy  Project Autopsy pass (explicit scan only)
         \\  debug    Advanced debug commands
         \\
         \\Options:
