@@ -153,7 +153,7 @@ fn handleSlash(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *state
                 try render.renderCommandMessage(writer, style, "reasoning={s}", .{level.toStr()});
             } else {
                 s.last_command_status = "invalid reasoning";
-                try render.renderSystemMessage(writer, style, "Invalid reasoning level: {s}. Use quick|balanced|deep|max", .{level_str});
+                try render.renderErrorMessage(writer, style, "Invalid reasoning level: {s}. Use quick|balanced|deep|max", .{level_str});
             }
         },
         .debug => {
@@ -184,7 +184,7 @@ fn handleSlash(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *state
             const path = command.arg orelse "";
             if (path.len == 0) {
                 s.last_command_status = "autopsy path required";
-                try render.renderSystemMessage(writer, style, "/autopsy requires an explicit path", .{});
+                try render.renderErrorMessage(writer, style, "/autopsy requires an explicit path", .{});
             } else {
                 s.last_command_status = "autopsy requested";
                 try render.renderCommandMessage(writer, style, "autopsy: explicit scan: {s}", .{path});
@@ -195,7 +195,7 @@ fn handleSlash(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *state
             const path = command.arg orelse "";
             if (path.len == 0) {
                 s.last_command_status = "context path required";
-                try render.renderSystemMessage(writer, style, "/context requires a path", .{});
+                try render.renderErrorMessage(writer, style, "/context requires a path", .{});
             } else {
                 if (s.context_artifact) |ca| allocator.free(ca);
                 s.context_artifact = try allocator.dupe(u8, path);
@@ -241,7 +241,7 @@ fn handleSubmit(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *stat
         .json = true,
         .debug = s.debug,
     }) catch |err| {
-        try render.renderSystemMessage(writer, style, "Failed to run engine: {}", .{err});
+        try render.renderErrorMessage(writer, style, "Failed to run engine: {}", .{err});
         return;
     };
     defer res.deinit();

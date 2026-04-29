@@ -38,6 +38,10 @@ pub const Style = struct {
     pub fn yellow(self: Style) []const u8 {
         return self.code("\x1b[33m");
     }
+
+    pub fn red(self: Style) []const u8 {
+        return self.code("\x1b[31m");
+    }
 };
 
 pub fn getTerminalSize() TerminalSize {
@@ -233,27 +237,39 @@ pub fn renderTurn(writer: anytype, turn: state.Turn, style: Style) !void {
 
     try writer.print("\x1b[{d};1H", .{historyBottomRow(size, 0)});
 
-    try writer.print("{s}---- TURN {d} | {s} | {d}ms | json={s} ----{s}\n", .{ style.dim(), turn.index, turn.reasoning.toStr(), turn.elapsed_ms, if (turn.json_ok) "ok" else "raw", style.reset() });
-    try writer.print("{s}YOU{s}\n{s}\n", .{ style.cyan(), style.reset(), turn.input });
-    try writer.print("{s}GHOST{s}\n", .{ style.cyan(), style.reset() });
+    try writer.print("{s}+-- TURN {d} | {s} | {d}ms | json={s} --+{s}\n", .{ style.dim(), turn.index, turn.reasoning.toStr(), turn.elapsed_ms, if (turn.json_ok) "ok" else "raw", style.reset() });
+    try writer.print("{s}[YOU]  {s}{s}\n", .{ style.cyan(), style.reset(), turn.input });
+    try writer.print("{s}[GHOST]{s}\n", .{ style.cyan(), style.reset() });
     try writer.writeAll(turn.rendered_output);
     try writer.writeAll("\n");
 }
 
 pub fn renderCommandMessage(writer: anytype, style: Style, comptime fmt: []const u8, args: anytype) !void {
-    try writer.print("\n{s}COMMAND{s} ", .{ style.cyan(), style.reset() });
+    try writer.print("\n{s}[COMMAND]{s} ", .{ style.cyan(), style.reset() });
     try writer.print(fmt, args);
     try writer.writeAll("\n");
 }
 
 pub fn renderSystemMessage(writer: anytype, style: Style, comptime fmt: []const u8, args: anytype) !void {
-    try writer.print("\n{s}SYSTEM{s} ", .{ style.yellow(), style.reset() });
+    try writer.print("\n{s}[SYSTEM]{s} ", .{ style.cyan(), style.reset() });
+    try writer.print(fmt, args);
+    try writer.writeAll("\n");
+}
+
+pub fn renderErrorMessage(writer: anytype, style: Style, comptime fmt: []const u8, args: anytype) !void {
+    try writer.print("\n{s}[ERROR] {s}", .{ style.red(), style.reset() });
+    try writer.print(fmt, args);
+    try writer.writeAll("\n");
+}
+
+pub fn renderWarningMessage(writer: anytype, style: Style, comptime fmt: []const u8, args: anytype) !void {
+    try writer.print("\n{s}[WARN]  {s}", .{ style.yellow(), style.reset() });
     try writer.print(fmt, args);
     try writer.writeAll("\n");
 }
 
 pub fn renderInvalidSlashCommand(writer: anytype, style: Style, command: []const u8) !void {
-    try renderSystemMessage(writer, style, "Not a valid command: {s}\nType /help for available commands", .{command});
+    try renderErrorMessage(writer, style, "Not a valid command: {s}\nType /help for available commands", .{command});
 }
 
 pub fn clearHistoryArea(writer: anytype) !void {
@@ -278,21 +294,30 @@ pub fn renderSlashSuggestions(writer: anytype, input_text: []const u8, panel_bot
 
     const token = slash.suggestionToken(input_text);
     const count = slash.matchingCount(token);
+    const size = getTerminalSize();
+    const width = panelWidth(size);
     if (count == 0) {
-        try writer.print("\x1b[{d};1H{s}COMMAND{s} no matching slash commands | Type /help for available commands", .{ top, style.yellow(), style.reset() });
+        try printPanelBorder(writer, top, width, " slash commands ");
+        try writer.print("\x1b[{d};1H| {s}[WARN]{s} no matching slash commands | Type /help for available commands", .{ top + 1, style.yellow(), style.reset() });
+        try printPanelBorder(writer, top + 2, width, "");
         return;
     }
 
-    try writer.print("\x1b[{d};1H{s}COMMAND{s} slash commands ({d})", .{ top, style.cyan(), style.reset(), count });
+    try printPanelBorder(writer, top, width, " slash commands ");
     var emitted: usize = 0;
     var row = top + 1;
+    const row_limit = panel_bottom - 1;
     for (slash.commands) |command| {
         if (!std.mem.startsWith(u8, command.name, token)) continue;
-        if (row > panel_bottom) break;
-        try writer.print("\x1b[{d};1H  {s}{s} - {s}", .{ row, command.name, command.args, command.help });
+        if (row > row_limit) break;
+        try writer.print("\x1b[{d};1H| {s}{s:<21}{s} {s}", .{ row, style.cyan(), commandDisplay(command), style.reset(), command.help });
         emitted += 1;
         row += 1;
     }
+    if (emitted < count and row <= row_limit) {
+        try writer.print("\x1b[{d};1H| {s}[WARN]{s} {d} more command(s) hidden by terminal height", .{ row, style.yellow(), style.reset(), count - emitted });
+    }
+    try printPanelBorder(writer, panel_bottom, width, "");
 }
 
 pub fn suggestionHeight(input_text: []const u8, size: TerminalSize, compact: bool) u16 {
@@ -310,13 +335,13 @@ fn suggestionHeightForPanel(input_text: []const u8, panel_bottom: u16) u16 {
 
     const token = slash.suggestionToken(input_text);
     const count = slash.matchingCount(token);
-    const wanted: u16 = if (count == 0) 1 else @as(u16, @intCast(count + 1));
+    const wanted: u16 = if (count == 0) 3 else @as(u16, @intCast(count + 2));
     return @min(wanted, available);
 }
 
 fn maxSuggestionHeight(panel_bottom: u16) u16 {
     if (panel_bottom <= 2) return 0;
-    return @min(@as(u16, slash.commands.len + 1), panel_bottom - 1);
+    return @min(@as(u16, slash.commands.len + 2), panel_bottom - 1);
 }
 
 fn clearSuggestionPanel(writer: anytype, panel_bottom: u16) !void {
@@ -335,4 +360,37 @@ fn historyBottomRow(size: TerminalSize, suggestion_height: u16) u16 {
     if (suggestion_height == 0) return base_bottom;
     if (base_bottom <= suggestion_height) return 1;
     return base_bottom - suggestion_height;
+}
+
+fn commandDisplay(command: slash.SlashCommandSpec) []const u8 {
+    return switch (command.kind) {
+        .reasoning => "/reasoning <level>",
+        .debug => "/debug on|off",
+        .json => "/json on|off",
+        .autopsy => "/autopsy <path>",
+        .context => "/context <path>",
+        else => command.name,
+    };
+}
+
+fn panelWidth(size: TerminalSize) u16 {
+    if (size.cols < 48) return size.cols;
+    return @min(size.cols, 96);
+}
+
+fn printPanelBorder(writer: anytype, row: u16, width: u16, title: []const u8) !void {
+    try writer.print("\x1b[{d};1H+", .{row});
+    const usable = if (width > 2) width - 2 else 0;
+    var written: u16 = 0;
+    if (title.len > 0 and usable > 4) {
+        try writer.writeAll("--");
+        written += 2;
+        const title_len: u16 = @min(@as(u16, @intCast(title.len)), usable - written);
+        try writer.writeAll(title[0..title_len]);
+        written += title_len;
+    }
+    while (written < usable) : (written += 1) {
+        try writer.writeAll("-");
+    }
+    try writer.writeAll("+");
 }

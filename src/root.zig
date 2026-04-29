@@ -380,9 +380,9 @@ test "TUI render helper handles correction NK sections" {
         .json_ok = true,
     };
     try tui_render.renderTurn(out_buf.writer(), turn, .{ .color = false });
-    try testing.expect(std.mem.indexOf(u8, out_buf.items, "YOU") != null);
-    try testing.expect(std.mem.indexOf(u8, out_buf.items, "GHOST") != null);
-    try testing.expect(std.mem.indexOf(u8, out_buf.items, "---- TURN 1") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "[YOU]") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "[GHOST]") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "+-- TURN 1") != null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "Correction Recorded:") != null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "Negative Knowledge Candidate Proposed:") != null);
 }
@@ -654,11 +654,12 @@ test "TUI slash command suggestions use prefix matching" {
     var out_buf = std.ArrayList(u8).init(testing.allocator);
     defer out_buf.deinit();
     try tui_render.renderSlashSuggestions(out_buf.writer(), "/", 20, .{ .color = false });
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "+-- slash commands ") != null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "/help") != null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "/context") != null);
-    try testing.expectEqual(@as(u16, 11), tui_render.suggestionHeight("/", .{ .rows = 24, .cols = 80 }, false));
-    try testing.expectEqual(@as(u16, 2), tui_render.suggestionHeight("/r", .{ .rows = 24, .cols = 80 }, false));
-    try testing.expectEqual(@as(u16, 1), tui_render.suggestionHeight("/notreal", .{ .rows = 24, .cols = 80 }, false));
+    try testing.expectEqual(@as(u16, 12), tui_render.suggestionHeight("/", .{ .rows = 24, .cols = 80 }, false));
+    try testing.expectEqual(@as(u16, 3), tui_render.suggestionHeight("/r", .{ .rows = 24, .cols = 80 }, false));
+    try testing.expectEqual(@as(u16, 3), tui_render.suggestionHeight("/notreal", .{ .rows = 24, .cols = 80 }, false));
     try testing.expectEqual(@as(u16, 0), tui_render.suggestionHeight("normal prompt", .{ .rows = 24, .cols = 80 }, false));
 
     out_buf.clearRetainingCapacity();
@@ -673,6 +674,7 @@ test "TUI slash command suggestions use prefix matching" {
 
     out_buf.clearRetainingCapacity();
     try tui_render.renderSlashSuggestions(out_buf.writer(), "/notreal", 20, .{ .color = false });
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "[WARN]") != null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "no matching slash commands") != null);
 }
 
@@ -685,7 +687,7 @@ test "TUI invalid slash command is explicit and not engine-submitted" {
     var out_buf = std.ArrayList(u8).init(testing.allocator);
     defer out_buf.deinit();
     try tui_render.renderInvalidSlashCommand(out_buf.writer(), .{ .color = false }, invalid.arg.?);
-    try testing.expect(std.mem.indexOf(u8, out_buf.items, "SYSTEM") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "[ERROR]") != null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "Not a valid command: /notreal") != null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "Type /help for available commands") != null);
 }
@@ -696,9 +698,13 @@ test "TUI command and system render labels are distinguishable" {
 
     try tui_render.renderCommandMessage(out_buf.writer(), .{ .color = false }, "debug={s}", .{"on"});
     try tui_render.renderSystemMessage(out_buf.writer(), .{ .color = false }, "status={s}", .{"ready"});
+    try tui_render.renderWarningMessage(out_buf.writer(), .{ .color = false }, "match={s}", .{"none"});
+    try tui_render.renderErrorMessage(out_buf.writer(), .{ .color = false }, "bad={s}", .{"command"});
 
-    try testing.expect(std.mem.indexOf(u8, out_buf.items, "COMMAND debug=on") != null);
-    try testing.expect(std.mem.indexOf(u8, out_buf.items, "SYSTEM status=ready") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "[COMMAND] debug=on") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "[SYSTEM] status=ready") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "[WARN]") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "[ERROR]") != null);
 }
 
 test "locator candidate paths - with engine_root" {
