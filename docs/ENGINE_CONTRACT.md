@@ -78,7 +78,10 @@ When present, correction, negative-knowledge, and epistemic fields are displayed
 - `Trust Decay Candidate Proposed`
 - `Next Action`
 
-These sections are display-only. The CLI does not execute verifiers, corrections, negative-knowledge review/mutation APIs, pack mutation, or MCP calls.
+These sections are display-only. Rendering them does not execute verifiers,
+corrections, negative-knowledge review/mutation APIs, pack mutation, or MCP
+calls. Explicit user commands may still invoke engine binaries according to
+their command contract.
 
 ### Rules
 1. The CLI must never reinterpret verification results.

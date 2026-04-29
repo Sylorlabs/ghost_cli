@@ -44,7 +44,8 @@ Binary resolution is explicit: candidates are reported as engine-root, engine-ro
 
 **Running `ghost` with no arguments launches the interactive TUI console.**
 In a non-interactive pipe or script, the TUI path exits cleanly and reports that
-no engine command, doctor check, autopsy scan, verifier, or pack mutation ran.
+no CLI-owned TUI command, doctor check, context/project autopsy scan, verifier,
+or pack mutation was started from that fallback path.
 
 ### Examples
 
@@ -127,8 +128,10 @@ does not have a safe timeout contract yet.
 
 The native TUI is terminal-only Zig code. It has a Ghost status header, engine
 root/context footer, reasoning/debug/json indicators, and draft/verified/
-unresolved counters from parsed engine output. Launching it does not run doctor,
-autopsy, verifiers, scans, or pack mutation.
+unresolved counters from parsed engine output. Launching it and leaving it idle
+does not run doctor, status, context/project autopsy, verifiers, scans, pack
+mutation, or negative-knowledge mutation. Explicit slash commands and submitted
+prompts may invoke engine binaries according to their command contract.
 
 Typing `/` shows lightweight native slash-command suggestions. Prefix matches
 stay first, and compact fuzzy fragments such as `/rsn`, `/dbg`, `/ast`, and
@@ -143,9 +146,10 @@ The TUI reads the live terminal dimensions on each frame, redraws periodically
 while idle so resizes are picked up without another keypress, and clips command
 panel rows to the current width.
 
-History entries are separated by turn and labeled as `YOU`, `GHOST`, `SYSTEM`,
-`COMMAND`, or `ERROR` so user input, Ghost responses, local command output, and
-local errors remain distinct.
+Engine prompt/response turns are persisted in TUI session history and rendered
+with `YOU` and `GHOST` labels. `SYSTEM`, `COMMAND`, and `ERROR` labels are
+render-only local messages for session status, local command output, and local
+errors; they are not persisted as structured turn history entries.
 
 Slash commands:
 

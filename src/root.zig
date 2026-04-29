@@ -562,6 +562,23 @@ test "help text does not contain old name" {
     try testing.expect(std.mem.indexOf(u8, readme, "ghost_cli binary path") == null);
 }
 
+test "docs avoid global side-effect safety claims" {
+    const commands = try std.fs.cwd().readFileAlloc(testing.allocator, "docs/COMMANDS.md", 1024 * 1024);
+    defer testing.allocator.free(commands);
+    const readme = try std.fs.cwd().readFileAlloc(testing.allocator, "README.md", 1024 * 1024);
+    defer testing.allocator.free(readme);
+    const contract = try std.fs.cwd().readFileAlloc(testing.allocator, "docs/ENGINE_CONTRACT.md", 1024 * 1024);
+    defer testing.allocator.free(contract);
+    const architecture = try std.fs.cwd().readFileAlloc(testing.allocator, "docs/ARCHITECTURE.md", 1024 * 1024);
+    defer testing.allocator.free(architecture);
+
+    try testing.expect(std.mem.indexOf(u8, commands, "No engine logic, Project Autopsy scanning, verifier execution, or pack mutation occurs on launch") == null);
+    try testing.expect(std.mem.indexOf(u8, commands, "No scan is ever run automatically") == null);
+    try testing.expect(std.mem.indexOf(u8, readme, "Launching it does not run doctor,\nautopsy, verifiers, scans, or pack mutation") == null);
+    try testing.expect(std.mem.indexOf(u8, contract, "The CLI does not execute verifiers, corrections, negative-knowledge review/mutation APIs, pack mutation, or MCP calls.") == null);
+    try testing.expect(std.mem.indexOf(u8, architecture, "The CLI must never calculate paths") == null);
+}
+
 test "reasoning level string conversion" {
     try testing.expectEqualStrings("quick", json_contracts.ReasoningLevel.quick.toStr());
     try testing.expectEqualStrings("deep", json_contracts.ReasoningLevel.deep.toStr());

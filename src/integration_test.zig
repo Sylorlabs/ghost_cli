@@ -49,6 +49,8 @@ test "subcommand help works without resolving engine" {
     try testing.expectEqual(@as(u32, 0), tui_res.term.Exited);
     try testing.expect(std.mem.indexOf(u8, tui_res.stderr, "Usage: ghost tui") != null);
     try testing.expect(std.mem.indexOf(u8, tui_res.stderr, "/autopsy <path>") != null);
+    try testing.expect(std.mem.indexOf(u8, tui_res.stderr, "prefix-first fuzzy suggestions") != null);
+    try testing.expect(std.mem.indexOf(u8, tui_res.stderr, "Explicit slash commands and submitted prompts may invoke engine binaries") != null);
 
     const autopsy_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "autopsy", "--help", "--engine-root=/tmp/ghost-help-missing" });
     defer {
@@ -397,7 +399,8 @@ test "no-arg invocation routes to graceful non-tty TUI without scan" {
 
     try testing.expectEqual(@as(u32, 0), res.term.Exited);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "requires an interactive TTY") != null);
-    try testing.expect(std.mem.indexOf(u8, res.stderr, "No engine command was run") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "No CLI-owned TUI command was run") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "context/project autopsy scan") != null);
     try testing.expectError(error.FileNotFound, std.fs.cwd().access(marker, .{}));
 }
 
@@ -687,6 +690,6 @@ test "no-arg ghost routes through TUI preflight and does not run autopsy scan" {
     }
 
     try testing.expect(std.mem.indexOf(u8, res.stderr, "requires an interactive TTY") != null);
-    try testing.expect(std.mem.indexOf(u8, res.stderr, "No engine command was run") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "No CLI-owned TUI command was run") != null);
     try testing.expectError(error.FileNotFound, std.fs.cwd().access(marker, .{}));
 }

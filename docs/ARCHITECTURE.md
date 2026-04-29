@@ -21,6 +21,6 @@ The architecture strictly adheres to separating product UX from engine reasoning
    - Ensure states like `Draft`, `Verified`, and `Unresolved` are unambiguously printed.
 
 ## Forbidden Patterns
-- **No Engine Logic**: The CLI must never calculate paths, perform proofs, or interpret human-readable engine texts when a JSON contract exists.
+- **No Engine Logic**: The CLI may resolve engine binary paths for dispatch and diagnostics, but it must not perform proofs, run hidden reasoning, or interpret human-readable engine texts when a JSON contract exists.
 - **No Direct Mutation**: Modifying knowledge packs must be requested via `ghost_knowledge_pack`.
 - **Honest Rendering**: Drafts must never be visually promoted to Verified. Unresolved must never be suppressed.

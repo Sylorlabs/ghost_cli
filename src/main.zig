@@ -413,10 +413,12 @@ fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
             \\Slash commands:
             \\  /help, /quit, /status, /reasoning <level>, /debug on|off, /json on|off
             \\  /clear, /doctor, /autopsy <path>, /context <path>
-            \\  Typing / shows matching commands. Invalid slash commands are rejected locally.
+            \\  Typing / shows prefix-first fuzzy suggestions. Invalid slash commands are rejected locally.
             \\
             \\Safety:
-            \\  Launching the TUI does not run doctor, autopsy, verifiers, scans, or pack mutation.
+            \\  Launching or idling in the TUI does not start doctor/status, context/project autopsy,
+            \\  verifiers, scans, pack mutation, or negative-knowledge mutation.
+            \\  Explicit slash commands and submitted prompts may invoke engine binaries.
             \\
         , .{}),
         .doctor => try writer.print(
