@@ -707,6 +707,17 @@ test "TUI command and system render labels are distinguishable" {
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "[ERROR]") != null);
 }
 
+test "TUI help renders visible command block" {
+    var out_buf = std.ArrayList(u8).init(testing.allocator);
+    defer out_buf.deinit();
+
+    try tui_render.renderHelp(out_buf.writer(), .{ .color = false });
+
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "[COMMAND] Ghost TUI Help") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "/reasoning <level>") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "Ctrl+C quit") != null);
+}
+
 test "locator candidate paths - with engine_root" {
     const candidates = try locator.getCandidatePaths(testing.allocator, "/opt/ghost", .ghost_task_operator);
     defer {

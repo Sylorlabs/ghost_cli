@@ -172,17 +172,14 @@ pub fn renderFrame(writer: anytype, s: *state.SessionState, style: Style) !void 
 }
 
 pub fn renderHelp(writer: anytype, style: Style) !void {
-    try writer.print(
-        \\
-        \\{s}Ghost TUI Help{s}
-        \\{s}COMMAND{s}
-    , .{ style.cyan(), style.reset(), style.cyan(), style.reset() });
+    const size = getTerminalSize();
+    try writer.print("\x1b[{d};1H", .{historyBottomRow(size, 0)});
+    try writer.print("\n{s}[COMMAND]{s} Ghost TUI Help\n", .{ style.cyan(), style.reset() });
     for (slash.commands) |command| {
-        try writer.print("  {s}{s:<18} {s}\n", .{ command.name, command.args, command.help });
+        try writer.print("  {s:<21} {s}\n", .{ commandDisplay(command), command.help });
     }
     try writer.print(
-        \\
-        \\Keyboard: Ctrl+C quit | Ctrl+L clear | Ctrl+R reasoning | Ctrl+D debug | Esc quit
+        \\  keys                 Ctrl+C quit | Ctrl+L clear | Ctrl+R reasoning | Ctrl+D debug | Esc quit
         \\
     , .{});
 }
