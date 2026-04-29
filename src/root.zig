@@ -646,10 +646,17 @@ test "TUI slash command parser covers operator commands" {
     try testing.expectEqualStrings("src/main.zig", context.arg.?);
 }
 
-test "TUI slash command suggestions use prefix matching" {
+test "TUI slash command suggestions use prefix and fuzzy matching" {
     try testing.expectEqual(@as(usize, tui_slash.commands.len), tui_slash.matchingCount("/"));
     try testing.expectEqual(@as(usize, 1), tui_slash.matchingCount("/r"));
     try testing.expectEqual(@as(usize, 2), tui_slash.matchingCount("/d"));
+    try testing.expectEqualStrings("/reasoning", tui_slash.findFirstMatch("/r").?);
+    try testing.expectEqualStrings("/reasoning", tui_slash.findFirstMatch("/rsn").?);
+    try testing.expectEqualStrings("/debug", tui_slash.findFirstMatch("/dbg").?);
+    try testing.expectEqualStrings("/autopsy", tui_slash.findFirstMatch("/ast").?);
+    try testing.expectEqualStrings("/context", tui_slash.findFirstMatch("/ctx").?);
+    try testing.expectEqualStrings("/status", tui_slash.findNthMatch("/st", 0).?);
+    try testing.expectEqualStrings("/autopsy", tui_slash.findNthMatch("/st", 1).?);
     try testing.expectEqual(@as(usize, 0), tui_slash.matchingCount("/notreal"));
 
     var out_buf = std.ArrayList(u8).init(testing.allocator);
@@ -702,6 +709,37 @@ test "TUI slash command suggestions use prefix matching" {
     try tui_render.renderSlashSuggestions(out_buf.writer(), &session, 20, .{ .color = false });
     try testing.expectEqual(@as(u16, 0), session.previous_suggestion_height);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "\x1b[9;1H\x1b[K") == null);
+}
+
+test "TUI fuzzy slash command suggestions render from live table" {
+    var out_buf = std.ArrayList(u8).init(testing.allocator);
+    defer out_buf.deinit();
+    var session = state.SessionState.init(testing.allocator, "test", null, false);
+    defer session.deinit();
+
+    try session.current_input.appendSlice("/rsn");
+    try tui_render.renderSlashSuggestions(out_buf.writer(), &session, 20, .{ .color = false });
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "/reasoning <level>") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "Set quick|balanced|deep|max") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "no matching slash commands") == null);
+
+    out_buf.clearRetainingCapacity();
+    session.current_input.clearRetainingCapacity();
+    try session.current_input.appendSlice("/dbg");
+    try tui_render.renderSlashSuggestions(out_buf.writer(), &session, 20, .{ .color = false });
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "/debug on|off") != null);
+
+    out_buf.clearRetainingCapacity();
+    session.current_input.clearRetainingCapacity();
+    try session.current_input.appendSlice("/ast");
+    try tui_render.renderSlashSuggestions(out_buf.writer(), &session, 20, .{ .color = false });
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "/autopsy <path>") != null);
+
+    out_buf.clearRetainingCapacity();
+    session.current_input.clearRetainingCapacity();
+    try session.current_input.appendSlice("/ctx");
+    try tui_render.renderSlashSuggestions(out_buf.writer(), &session, 20, .{ .color = false });
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "/context <path>") != null);
 }
 
 test "TUI invalid slash command is explicit and not engine-submitted" {

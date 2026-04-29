@@ -168,7 +168,7 @@ fn renderInputLine(writer: anytype, s: *state.SessionState, row: u16, style: Sty
 
     if (std.mem.indexOfAny(u8, s.current_input.items, " \t") == null) {
         if (slash.findNthMatch(s.current_input.items, s.suggestion_index)) |matched| {
-            if (matched.len > s.current_input.items.len) {
+            if (slash.isPrefixMatch(s.current_input.items, matched) and matched.len > s.current_input.items.len) {
                 try writer.print("{s}{s}{s}", .{
                     style.dim(),
                     matched[s.current_input.items.len..],
@@ -325,11 +325,11 @@ pub fn renderSlashSuggestions(writer: anytype, s: *state.SessionState, panel_bot
     if (s.suggestion_index >= count) s.suggestion_index = 0;
 
     try printPanelBorder(writer, top, width, " slash commands ");
-    var matching_idx: usize = 0;
     var row = top + 1;
     const row_limit = panel_bottom - 1;
-    for (slash.commands) |command| {
-        if (!std.mem.startsWith(u8, command.name, token)) continue;
+    var matching_idx: usize = 0;
+    while (matching_idx < count) : (matching_idx += 1) {
+        const command = slash.findNthMatchingCommand(token, matching_idx) orelse break;
         if (row > row_limit) break;
 
         const is_selected = (matching_idx == s.suggestion_index);
@@ -340,7 +340,6 @@ pub fn renderSlashSuggestions(writer: anytype, s: *state.SessionState, panel_bot
         try writer.print("{s} ", .{style.reset()});
         try writeTruncated(writer, command.help, panelHelpWidth(width));
 
-        matching_idx += 1;
         row += 1;
     }
     if (matching_idx < count and row <= row_limit) {

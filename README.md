@@ -130,9 +130,11 @@ root/context footer, reasoning/debug/json indicators, and draft/verified/
 unresolved counters from parsed engine output. Launching it does not run doctor,
 autopsy, verifiers, scans, or pack mutation.
 
-Typing `/` shows lightweight native slash-command suggestions using simple prefix
-matching. Invalid slash commands are rejected in the TUI with a clear `ERROR`
-message and are not sent to the engine as normal prompts.
+Typing `/` shows lightweight native slash-command suggestions. Prefix matches
+stay first, and compact fuzzy fragments such as `/rsn`, `/dbg`, `/ast`, and
+`/ctx` suggest `/reasoning`, `/debug`, `/autopsy`, and `/context`. Invalid slash
+commands are rejected in the TUI with a clear `ERROR` message and are not sent
+to the engine as normal prompts.
 The suggestion area grows upward from the lower command region when more matches
 are visible, shrinks again as matches narrow, and reserves terminal rows so
 history stays separate. Native ANSI color stays restrained: errors are red,

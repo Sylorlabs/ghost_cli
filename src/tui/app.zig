@@ -104,8 +104,12 @@ pub fn run(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: RunO
             .right => {
                 if (std.mem.indexOfAny(u8, s.current_input.items, " \t") == null) {
                     if (slash.findNthMatch(s.current_input.items, s.suggestion_index)) |matched| {
-                        if (matched.len > s.current_input.items.len) {
+                        if (slash.isPrefixMatch(s.current_input.items, matched) and matched.len > s.current_input.items.len) {
                             try s.current_input.appendSlice(matched[s.current_input.items.len..]);
+                            s.suggestion_index = 0;
+                        } else if (!slash.isPrefixMatch(s.current_input.items, matched)) {
+                            s.current_input.clearRetainingCapacity();
+                            try s.current_input.appendSlice(matched);
                             s.suggestion_index = 0;
                         }
                     }
@@ -121,8 +125,12 @@ pub fn run(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: RunO
             .tab => {
                 if (std.mem.indexOfAny(u8, s.current_input.items, " \t") == null) {
                     if (slash.findNthMatch(s.current_input.items, s.suggestion_index)) |matched| {
-                        if (matched.len > s.current_input.items.len) {
+                        if (slash.isPrefixMatch(s.current_input.items, matched) and matched.len > s.current_input.items.len) {
                             try s.current_input.appendSlice(matched[s.current_input.items.len..]);
+                            s.suggestion_index = 0;
+                        } else if (!slash.isPrefixMatch(s.current_input.items, matched)) {
+                            s.current_input.clearRetainingCapacity();
+                            try s.current_input.appendSlice(matched);
                             s.suggestion_index = 0;
                         }
                     }

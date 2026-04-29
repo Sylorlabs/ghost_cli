@@ -65,7 +65,11 @@ pub fn matchingCount(prefix: []const u8) usize {
     if (token.len == 0 or token[0] != '/') return 0;
     var count: usize = 0;
     for (commands) |command| {
-        if (std.mem.startsWith(u8, command.name, token)) count += 1;
+        if (isPrefixMatch(token, command.name)) count += 1;
+    }
+    for (commands) |command| {
+        if (isPrefixMatch(token, command.name)) continue;
+        if (isFuzzyMatch(token, command.name)) count += 1;
     }
     return count;
 }
@@ -75,12 +79,31 @@ pub fn findFirstMatch(prefix: []const u8) ?[]const u8 {
 }
 
 pub fn findNthMatch(prefix: []const u8, n: usize) ?[]const u8 {
+    if (findNthMatchingCommand(prefix, n)) |command| return command.name;
+    return null;
+}
+
+pub fn findNthMatchingCommand(prefix: []const u8, n: usize) ?SlashCommandSpec {
     const token = suggestionToken(prefix);
     if (token.len == 0 or token[0] != '/') return null;
     var count: usize = 0;
     for (commands) |command| {
-        if (std.mem.startsWith(u8, command.name, token)) {
-            if (count == n) return command.name;
+        if (isPrefixMatch(token, command.name)) {
+            if (count == n) return command;
+            count += 1;
+        }
+    }
+    for (commands) |command| {
+        if (isPrefixMatch(token, command.name)) continue;
+        if (isStrongFuzzyMatch(token, command.name)) {
+            if (count == n) return command;
+            count += 1;
+        }
+    }
+    for (commands) |command| {
+        if (isPrefixMatch(token, command.name) or isStrongFuzzyMatch(token, command.name)) continue;
+        if (isWeakFuzzyMatch(token, command.name)) {
+            if (count == n) return command;
             count += 1;
         }
     }
@@ -94,4 +117,67 @@ pub fn hasMatches(prefix: []const u8) bool {
 pub fn suggestionToken(input: []const u8) []const u8 {
     const token_end = std.mem.indexOfAny(u8, input, " \t") orelse input.len;
     return input[0..token_end];
+}
+
+pub fn isPrefixMatch(token: []const u8, command_name: []const u8) bool {
+    return std.mem.startsWith(u8, command_name, token);
+}
+
+pub fn isFuzzyMatch(token: []const u8, command_name: []const u8) bool {
+    return isStrongFuzzyMatch(token, command_name) or isWeakFuzzyMatch(token, command_name);
+}
+
+fn isStrongFuzzyMatch(token: []const u8, command_name: []const u8) bool {
+    if (!isWeakFuzzyMatch(token, command_name)) return false;
+    const query = token[1..];
+    const candidate = command_name[1..];
+    return query.len > 0 and candidate.len > 0 and query[0] == candidate[0];
+}
+
+fn isWeakFuzzyMatch(token: []const u8, command_name: []const u8) bool {
+    if (token.len == 0 or token[0] != '/') return false;
+    if (isPrefixMatch(token, command_name)) return true;
+    if (token.len > command_name.len) return false;
+
+    const query = token[1..];
+    const candidate = command_name[1..];
+    if (query.len == 0) return true;
+    if (query.len < 2) return false;
+    if (isSubsequence(query, candidate)) return true;
+    return isSubsequenceWithOneAdjacentQuerySwap(query, candidate);
+}
+
+fn isSubsequence(query: []const u8, candidate: []const u8) bool {
+    var query_index: usize = 0;
+    for (candidate) |char| {
+        if (query_index < query.len and query[query_index] == char) {
+            query_index += 1;
+            if (query_index == query.len) return true;
+        }
+    }
+    return query_index == query.len;
+}
+
+fn isSubsequenceWithOneAdjacentQuerySwap(query: []const u8, candidate: []const u8) bool {
+    if (query.len < 2) return false;
+
+    var swap_index: usize = 0;
+    while (swap_index + 1 < query.len) : (swap_index += 1) {
+        var query_index: usize = 0;
+        for (candidate) |char| {
+            if (query_index >= query.len) break;
+            const expected = if (query_index == swap_index)
+                query[swap_index + 1]
+            else if (query_index == swap_index + 1)
+                query[swap_index]
+            else
+                query[query_index];
+
+            if (expected == char) {
+                query_index += 1;
+                if (query_index == query.len) return true;
+            }
+        }
+    }
+    return false;
 }

@@ -77,10 +77,15 @@ with a message. No engine command is run in that fallback path.
 - `q`: Quit (only when input is empty)
 
 #### Slash Commands
-Typing `/` in the TUI shows matching slash commands. Matching is simple prefix matching:
+Typing `/` in the TUI shows matching slash commands. Prefix matches remain first,
+with lightweight fuzzy matches for compact command fragments:
 
 - `/` shows all commands
 - `/r` shows `/reasoning`
+- `/rsn` shows `/reasoning`
+- `/dbg` shows `/debug`
+- `/ast` shows `/autopsy`
+- `/ctx` shows `/context`
 - unknown prefixes show `no matching slash commands`
 
 The suggestion area grows upward from the lower command region as more commands match, shrinks as fewer commands match, and reserves terminal rows so history does not overlap the command list. Errors render red, warnings render yellow, and labels remain plain ASCII when color is disabled.
