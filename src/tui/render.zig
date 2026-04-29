@@ -125,7 +125,7 @@ pub fn render(writer: anytype, s: *state.SessionState, style: Style) !void {
         style.reset(),
     });
 
-    try renderSlashSuggestions(writer, s.current_input.items, suggestion_panel_bottom, style);
+    try renderSlashSuggestions(writer, s.current_input.items, suggestion_panel_bottom, &s.previous_suggestion_height, style);
 
     try writer.print("\x1b[{d};1H\x1b[K{s}ghost>{s} {s}", .{
         input_row,
@@ -154,7 +154,7 @@ pub fn renderCompact(writer: anytype, s: *state.SessionState, style: Style) !voi
         s.context_artifact orelse "none",
         style.reset(),
     });
-    try renderSlashSuggestions(writer, s.current_input.items, suggestion_panel_bottom, style);
+    try renderSlashSuggestions(writer, s.current_input.items, suggestion_panel_bottom, &s.previous_suggestion_height, style);
     try writer.print("\x1b[{d};1H\x1b[K{s}ghost>{s} {s}", .{
         size.rows,
         style.cyan(),
@@ -281,10 +281,11 @@ pub fn clearHistoryArea(writer: anytype) !void {
     try writer.writeAll("\x1b[1;1H");
 }
 
-pub fn renderSlashSuggestions(writer: anytype, input_text: []const u8, panel_bottom: u16, style: Style) !void {
-    try clearSuggestionPanel(writer, panel_bottom);
-
+pub fn renderSlashSuggestions(writer: anytype, input_text: []const u8, panel_bottom: u16, previous_height: *u16, style: Style) !void {
     const height = suggestionHeightForPanel(input_text, panel_bottom);
+    try clearSuggestionPanel(writer, panel_bottom, @max(height, previous_height.*));
+    previous_height.* = height;
+
     if (height == 0) return;
 
     const top = panel_bottom - height + 1;
@@ -348,8 +349,7 @@ fn maxSuggestionHeight(panel_bottom: u16) u16 {
     return @min(@as(u16, slash.commands.len + 2), panel_bottom - 1);
 }
 
-fn clearSuggestionPanel(writer: anytype, panel_bottom: u16) !void {
-    const height = maxSuggestionHeight(panel_bottom);
+fn clearSuggestionPanel(writer: anytype, panel_bottom: u16, height: u16) !void {
     if (height == 0) return;
 
     const top = panel_bottom - height + 1;

@@ -34,6 +34,7 @@ pub const SessionState = struct {
     draft_count: usize,
     verified_count: usize,
     unresolved_count: usize,
+    previous_suggestion_height: u16,
 
     pub fn init(allocator: std.mem.Allocator, version: []const u8, engine_root_label: ?[]const u8, compact: bool) SessionState {
         return .{
@@ -55,6 +56,7 @@ pub const SessionState = struct {
             .draft_count = 0,
             .verified_count = 0,
             .unresolved_count = 0,
+            .previous_suggestion_height = 0,
         };
     }
 
