@@ -513,6 +513,12 @@ pub fn printContextAutopsyResult(writer: anytype, envelope: json_contracts.Conte
     try printContextSection(writer, autopsy_obj, "evidenceExpectations", "evidence_expectations", "Evidence Expectations");
     try printContextSection(writer, autopsy_obj, "packInfluences", "pack_influences", "Pack Influence");
 
+    if (result_obj.get("inputCoverage") orelse result_obj.get("input_coverage") orelse autopsy_obj.get("inputCoverage") orelse autopsy_obj.get("input_coverage")) |coverage| {
+        try writer.print("{s}Input Coverage:{s}\n", .{ bold, reset });
+        try printJsonValue(writer, coverage, 2);
+        try writer.print("\n", .{});
+    }
+
     if (result_obj.get("packGuidanceTrace") orelse result_obj.get("pack_guidance_trace")) |trace| {
         try writer.print("{s}Pack Guidance Trace:{s}\n", .{ bold, reset });
         try printJsonValue(writer, trace, 2);

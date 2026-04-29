@@ -47,17 +47,31 @@ Run an explicit Context Autopsy GIP request using `ghost_gip`.
 Usage: `ghost context autopsy "I need marketing advice for a launch"`
 Usage: `ghost context autopsy --json "I need marketing advice for a launch"`
 Usage: `ghost context autopsy --debug "I need marketing advice for a launch"`
+Usage: `ghost context autopsy "Summarize this context" --input-file logs/failure.log`
+Usage: `ghost context autopsy "Summarize this context" --input-file logs/failure.log --input-max-bytes 65536`
 
 This command sends a minimal `context.autopsy` request only when explicitly
-invoked. It does not add artifact refs, run hidden project/context scans,
-execute verifiers, mutate packs, or mutate negative knowledge.
+invoked. File inputs are explicit: `--input-file <path>` adds a bounded
+file-backed `context.input_refs` entry for the engine to read inside the CLI's
+current workspace root. The CLI passes that root to `ghost_gip --workspace`; it
+does not read and embed file contents itself. Repeated `--input-file` flags are
+allowed; `--input-max-bytes <bytes>` applies the same `maxBytes` value to every
+input ref. Optional shared metadata flags are `--input-label`,
+`--input-purpose`, and `--input-reason`.
+
+It does not add hidden artifact refs, run hidden project/context scans, execute
+verifiers, mutate packs, or mutate negative knowledge.
 
 Human-readable output is labeled **DRAFT** and **NON-AUTHORIZING** and renders
 signals, unknowns, risks, candidate actions, check candidates, pending
-obligations, evidence expectations, pack influence, artifact coverage, and pack
-guidance trace fields when the engine returns them. `--json` preserves raw
-engine stdout exactly. `--debug` writes the engine binary path, GIP kind, exit
-code, and parse status to stderr.
+obligations, evidence expectations, pack influence, input coverage, artifact
+coverage, and pack guidance trace fields when the engine returns them. Coverage
+may report inputs requested, inputs read, bytes read, skipped inputs,
+truncation/budget hits, and unknowns caused by unread or truncated regions. No
+full-content claim is made when coverage reports truncation, skips, or unread
+regions. `--json` preserves raw engine stdout exactly. `--debug` writes the
+engine binary path, GIP kind, argv/stdin payload summary, input file ref count,
+exit code, and parse status to stderr.
 
 ### `ghost packs`
 Manage knowledge packs via `ghost_knowledge_pack`.
@@ -209,12 +223,17 @@ Run an explicit Context Autopsy request through `ghost_gip`.
 Usage: `ghost context autopsy <description>`
 Usage: `ghost context autopsy --json <description>`
 Usage: `ghost context autopsy --debug <description>`
+Usage: `ghost context autopsy <description> --input-file <path> [--input-file <path>] [--input-max-bytes <bytes>]`
 
 The CLI constructs only the minimal GIP request with
-`kind=context.autopsy` and the supplied description. It does not attach artifact
-refs automatically and does not run hidden scans, verifiers, pack mutation, or
+`kind=context.autopsy` and the supplied description, plus explicit
+`context.input_refs` entries when `--input-file` is supplied. File refs are read
+by the engine through bounded refs under the CLI current workspace root; the CLI
+does not read and embed file contents. It does not attach hidden artifact refs
+automatically and does not run hidden scans, verifiers, pack mutation, or
 negative-knowledge mutation. Human rendering is marked **DRAFT** and
-**NON-AUTHORIZING**.
+**NON-AUTHORIZING**. When input coverage reports truncation, skips, or unread
+regions, the output is not a full-content claim.
 
 ### `ghost debug`
 Advanced user diagnostic tool. Bypasses JSON serialization or runs raw engine paths.

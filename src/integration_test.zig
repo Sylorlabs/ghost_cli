@@ -9,6 +9,29 @@ fn runCmd(allocator: std.mem.Allocator, args: []const []const u8) !std.process.C
     });
 }
 
+fn runCmdWithInput(allocator: std.mem.Allocator, args: []const []const u8, stdin_payload: []const u8) !std.process.Child.RunResult {
+    var child = std.process.Child.init(args, allocator);
+    child.stdin_behavior = .Pipe;
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Pipe;
+
+    try child.spawn();
+    try child.stdin.?.writeAll(stdin_payload);
+    child.stdin.?.close();
+    child.stdin = null;
+
+    const stdout = try child.stdout.?.reader().readAllAlloc(allocator, 10 * 1024 * 1024);
+    errdefer allocator.free(stdout);
+    const stderr = try child.stderr.?.reader().readAllAlloc(allocator, 10 * 1024 * 1024);
+    errdefer allocator.free(stderr);
+    const term = try child.wait();
+    return .{
+        .stdout = stdout,
+        .stderr = stderr,
+        .term = term,
+    };
+}
+
 fn writeMockExecutable(path: []const u8, body: []const u8) !void {
     const file = try std.fs.cwd().createFile(path, .{ .mode = 0o755 });
     defer file.close();
@@ -70,6 +93,8 @@ test "subcommand help works without resolving engine" {
     try testing.expectEqual(@as(u32, 0), context_res.term.Exited);
     try testing.expect(std.mem.indexOf(u8, context_res.stderr, "Usage: ghost context autopsy") != null);
     try testing.expect(std.mem.indexOf(u8, context_res.stderr, "context.autopsy GIP request") != null);
+    try testing.expect(std.mem.indexOf(u8, context_res.stderr, "--input-file <path>") != null);
+    try testing.expect(std.mem.indexOf(u8, context_res.stderr, "DRAFT / NON-AUTHORIZING") != null);
 }
 
 test "advanced renderer options parse consistently" {
@@ -362,6 +387,94 @@ test "context autopsy renders draft non-authorizing human output" {
     try testing.expect(std.mem.indexOf(u8, res.stdout, "Pack Influence:") != null);
 }
 
+test "context autopsy single input file creates context input refs payload" {
+    const mock_root = "/tmp/ghost-cli-context-input-single";
+    const payload_path = mock_root ++ "/payload.json";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\n" ++
+            "cat > '" ++ payload_path ++ "'\n" ++
+            "printf '%s' '{\"gipVersion\":\"gip.v0.1\",\"kind\":\"context.autopsy\",\"status\":\"ok\",\"result\":{\"contextAutopsy\":{\"state\":\"draft\",\"nonAuthorizing\":true}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "context",
+        "autopsy",
+        "--engine-root=" ++ mock_root,
+        "Summarize this context",
+        "--input-file",
+        "logs/failure.log",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    const payload = try std.fs.cwd().readFileAlloc(testing.allocator, payload_path, 1024 * 1024);
+    defer testing.allocator.free(payload);
+    var parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, payload, .{});
+    defer parsed.deinit();
+
+    const context = parsed.value.object.get("context").?.object;
+    const refs = context.get("input_refs").?.array;
+    try testing.expectEqual(@as(usize, 1), refs.items.len);
+    try testing.expectEqualStrings("file", refs.items[0].object.get("kind").?.string);
+    try testing.expectEqualStrings("logs/failure.log", refs.items[0].object.get("path").?.string);
+    try testing.expect(std.mem.indexOf(u8, payload, "failure log contents") == null);
+}
+
+test "context autopsy repeated input files and max bytes map to refs" {
+    const mock_root = "/tmp/ghost-cli-context-input-repeat";
+    const payload_path = mock_root ++ "/payload.json";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\n" ++
+            "cat > '" ++ payload_path ++ "'\n" ++
+            "printf '%s' '{\"gipVersion\":\"gip.v0.1\",\"kind\":\"context.autopsy\",\"status\":\"ok\",\"result\":{\"contextAutopsy\":{\"state\":\"draft\",\"nonAuthorizing\":true}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "context",
+        "autopsy",
+        "--engine-root=" ++ mock_root,
+        "--input-file",
+        "logs/one.log",
+        "--input-file=logs/two.log",
+        "--input-max-bytes",
+        "65536",
+        "--input-purpose",
+        "bounded transcript/log context",
+        "--input-reason=operator supplied",
+        "Summarize this context",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    const payload = try std.fs.cwd().readFileAlloc(testing.allocator, payload_path, 1024 * 1024);
+    defer testing.allocator.free(payload);
+    var parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, payload, .{});
+    defer parsed.deinit();
+
+    const refs = parsed.value.object.get("context").?.object.get("input_refs").?.array;
+    try testing.expectEqual(@as(usize, 2), refs.items.len);
+    try testing.expectEqualStrings("logs/one.log", refs.items[0].object.get("path").?.string);
+    try testing.expectEqualStrings("logs/two.log", refs.items[1].object.get("path").?.string);
+    try testing.expectEqual(@as(i64, 65536), refs.items[0].object.get("maxBytes").?.integer);
+    try testing.expectEqual(@as(i64, 65536), refs.items[1].object.get("maxBytes").?.integer);
+    try testing.expectEqualStrings("bounded transcript/log context", refs.items[0].object.get("purpose").?.string);
+    try testing.expectEqualStrings("operator supplied", refs.items[1].object.get("reason").?.string);
+}
+
 test "context autopsy json preserves raw GIP stdout" {
     const mock_root = "/tmp/ghost-cli-context-json";
     try std.fs.cwd().makePath(mock_root);
@@ -381,6 +494,8 @@ test "context autopsy json preserves raw GIP stdout" {
         "--engine-root=" ++ mock_root,
         "--json",
         "I need marketing advice for a launch",
+        "--input-file",
+        "README.md",
     });
     defer {
         testing.allocator.free(res.stdout);
@@ -388,6 +503,46 @@ test "context autopsy json preserves raw GIP stdout" {
     }
 
     try testing.expectEqualStrings(raw_json, res.stdout);
+}
+
+test "context autopsy json byte matches direct ghost gip for equivalent payload" {
+    const mock_root = "/tmp/ghost-cli-context-json-direct";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+    const raw_json = "{\"gipVersion\":\"gip.v0.1\",\"kind\":\"context.autopsy\",\"status\":\"ok\",\"result\":{\"contextAutopsy\":{\"state\":\"draft\",\"nonAuthorizing\":true},\"inputCoverage\":{\"inputsRequested\":1,\"inputsRead\":1,\"bytesRead\":42}}}";
+
+    const file = try std.fs.cwd().createFile(mock_root ++ "/ghost_gip", .{ .mode = 0o755 });
+    try file.writeAll("#!/bin/sh\ncat >/dev/null\nprintf '%s' '");
+    try file.writeAll(raw_json);
+    try file.writeAll("'\n");
+    file.close();
+
+    const equivalent_payload =
+        \\{"gipVersion":"gip.v0.1","kind":"context.autopsy","context":{"summary":"Summarize this context","intakeType":"context","input_refs":[{"kind":"file","path":"README.md","maxBytes":65536}]}}
+    ;
+    const direct = try runCmdWithInput(testing.allocator, &[_][]const u8{ mock_root ++ "/ghost_gip", "--stdin" }, equivalent_payload);
+    defer {
+        testing.allocator.free(direct.stdout);
+        testing.allocator.free(direct.stderr);
+    }
+
+    const cli = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "context",
+        "autopsy",
+        "--engine-root=" ++ mock_root,
+        "--json",
+        "--input-file",
+        "README.md",
+        "--input-max-bytes=65536",
+        "Summarize this context",
+    });
+    defer {
+        testing.allocator.free(cli.stdout);
+        testing.allocator.free(cli.stderr);
+    }
+
+    try testing.expectEqualStrings(direct.stdout, cli.stdout);
 }
 
 test "context autopsy debug stays on stderr" {
@@ -408,6 +563,8 @@ test "context autopsy debug stays on stderr" {
         "autopsy",
         "--engine-root=" ++ mock_root,
         "--debug",
+        "--input-file",
+        "README.md",
         "I need marketing advice for a launch",
     });
     defer {
@@ -418,8 +575,46 @@ test "context autopsy debug stays on stderr" {
     try testing.expect(std.mem.indexOf(u8, res.stdout, "Context Autopsy Result") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Engine Binary:") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] GIP Kind: context.autopsy") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Stdin Payload Summary:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "input_file_refs=1") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Input File Refs: 1") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Exit Code: 0") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] JSON Parse: SUCCESS") != null);
+}
+
+test "context autopsy human output renders input coverage" {
+    const mock_root = "/tmp/ghost-cli-context-input-coverage";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\n" ++
+            "cat >/dev/null\n" ++
+            "printf '%s' '{\"gipVersion\":\"gip.v0.1\",\"kind\":\"context.autopsy\",\"status\":\"ok\",\"result\":{\"contextAutopsy\":{\"state\":\"draft\",\"nonAuthorizing\":true},\"inputCoverage\":{\"inputsRequested\":2,\"inputsRead\":1,\"bytesRead\":65536,\"skippedInputs\":[{\"path\":\"missing.log\"}],\"truncatedInputs\":[{\"path\":\"README.md\"}],\"unknowns\":[\"unread region after byte budget\"]}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "context",
+        "autopsy",
+        "--engine-root=" ++ mock_root,
+        "--input-file",
+        "README.md",
+        "Summarize this context",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Input Coverage:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "inputsRequested: 2") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "inputsRead: 1") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "bytesRead: 65536") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "skippedInputs:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "truncatedInputs:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "unread region after byte budget") != null);
 }
 
 test "doctor status and no-arg TUI do not invoke context autopsy" {

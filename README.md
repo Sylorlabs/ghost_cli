@@ -68,6 +68,7 @@ ghost verify --context-artifact=src/main.zig --reasoning=max
 
 # Explicit Context Autopsy through GIP
 ghost context autopsy "I need marketing advice for a launch"
+ghost context autopsy "Summarize this context" --input-file logs/failure.log --input-max-bytes 65536
 ghost context autopsy --json "I need marketing advice for a launch"
 ghost context autopsy --debug "I need marketing advice for a launch"
 
@@ -184,7 +185,7 @@ If `ghost_cli` encounters issues, use these commands to diagnose the problem:
 - **`ghost status`**: Checks engine availability/status, including `ghost_project_autopsy`.
 - **`ghost doctor`**: Runs read-only environment and tester diagnostics, including CLI path, engine binary resolution (all binaries including `ghost_project_autopsy`), Zig version, OS/arch, terminal, PATH, and safe smoke checks. A bounded `--version` smoke check confirms autopsy binary responds; **no scan is run**.
 - **`ghost autopsy`**: Runs an explicit project structure analysis scan.
-- **`ghost context autopsy`**: Runs an explicit `context.autopsy` GIP request. Human output is labeled **DRAFT** and **NON-AUTHORIZING**; `--json` preserves raw engine stdout exactly.
+- **`ghost context autopsy`**: Runs an explicit `context.autopsy` GIP request. `--input-file <path>` adds explicit bounded file refs under `context.input_refs`; the engine reads those refs inside the CLI current workspace root and the CLI does not embed file contents. Human output is labeled **DRAFT** and **NON-AUTHORIZING** and renders input coverage when present; `--json` preserves raw engine stdout exactly.
 - **`ghost <command> --debug`**: Prints the exact engine binary path, arguments, exit code, JSON parse result, and whether correction/negative-knowledge/epistemic fields were detected.
 - **`ghost <command> --json`**: Preserves raw engine stdout exactly; debug diagnostics and engine stderr are written to stderr.
 - **`ghost debug raw <engine-binary> [args...]`**: Bypasses all CLI formatting to run an engine binary directly and print the raw text/JSON.
