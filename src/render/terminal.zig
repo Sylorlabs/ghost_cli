@@ -464,6 +464,86 @@ pub fn printAutopsyResult(writer: anytype, res: json_contracts.AutopsyResult) !v
     try writer.print("Project Autopsy candidates are proposals only and do not constitute evidence of correctness or support.\n", .{});
 }
 
+pub fn printContextAutopsyResult(writer: anytype, envelope: json_contracts.ContextAutopsyEnvelope) !void {
+    try writer.print("{s}Context Autopsy Result{s}\n", .{ bold, reset });
+    try writer.print("{s}State:{s} DRAFT\n", .{ bold, reset });
+    try writer.print("{s}Authority:{s} NON-AUTHORIZING\n\n", .{ bold, reset });
+
+    if (envelope.@"error") |err| {
+        try writer.print("{s}Engine Error:{s}\n", .{ bold, reset });
+        try printJsonValue(writer, err, 2);
+        try writer.print("\n", .{});
+        return;
+    }
+
+    const result = envelope.result orelse {
+        try writer.print("No context autopsy result payload was present.\n", .{});
+        return;
+    };
+    const result_obj = switch (result) {
+        .object => |obj| obj,
+        else => {
+            try printJsonValue(writer, result, 2);
+            try writer.print("\n", .{});
+            return;
+        },
+    };
+    const autopsy = result_obj.get("contextAutopsy") orelse result_obj.get("context_autopsy") orelse result;
+    const autopsy_obj = switch (autopsy) {
+        .object => |obj| obj,
+        else => {
+            try printJsonValue(writer, autopsy, 2);
+            try writer.print("\n", .{});
+            return;
+        },
+    };
+
+    if (autopsy_obj.get("contextCase") orelse autopsy_obj.get("context_case")) |case_value| {
+        try writer.print("{s}Context Case:{s}\n", .{ bold, reset });
+        try printJsonValue(writer, case_value, 2);
+        try writer.print("\n", .{});
+    }
+
+    try printContextSection(writer, autopsy_obj, "detectedSignals", "detected_signals", "Signals");
+    try printContextSection(writer, autopsy_obj, "suggestedUnknowns", "suggested_unknowns", "Unknowns");
+    try printContextSection(writer, autopsy_obj, "riskSurfaces", "risk_surfaces", "Risks");
+    try printContextSection(writer, autopsy_obj, "candidateActions", "candidate_actions", "Candidate Actions");
+    try printContextSection(writer, autopsy_obj, "checkCandidates", "check_candidates", "Check Candidates");
+    try printContextSection(writer, autopsy_obj, "pendingEvidenceObligations", "pending_evidence_obligations", "Pending Obligations");
+    try printContextSection(writer, autopsy_obj, "evidenceExpectations", "evidence_expectations", "Evidence Expectations");
+    try printContextSection(writer, autopsy_obj, "packInfluences", "pack_influences", "Pack Influence");
+
+    if (result_obj.get("packGuidanceTrace") orelse result_obj.get("pack_guidance_trace")) |trace| {
+        try writer.print("{s}Pack Guidance Trace:{s}\n", .{ bold, reset });
+        try printJsonValue(writer, trace, 2);
+        try writer.print("\n", .{});
+    }
+
+    if (result_obj.get("artifactCoverage") orelse result_obj.get("artifact_coverage")) |coverage| {
+        try writer.print("{s}Artifact Coverage:{s}\n", .{ bold, reset });
+        try printJsonValue(writer, coverage, 2);
+        try writer.print("\n", .{});
+    }
+
+    try writer.print("{s}Notice: This output is a DRAFT and NON-AUTHORIZING.{s}\n", .{ yellow, reset });
+    try writer.print("Context Autopsy signals, unknowns, risks, actions, checks, obligations, and pack influence are candidates only and do not constitute proof or supported output.\n", .{});
+}
+
+fn printContextSection(writer: anytype, obj: std.json.ObjectMap, camel: []const u8, snake: []const u8, label: []const u8) !void {
+    const value = obj.get(camel) orelse obj.get(snake) orelse return;
+    if (isEmptyJsonList(value)) return;
+    try writer.print("{s}{s}:{s}\n", .{ bold, label, reset });
+    try printJsonValue(writer, value, 2);
+    try writer.print("\n", .{});
+}
+
+fn isEmptyJsonList(value: std.json.Value) bool {
+    return switch (value) {
+        .array => |arr| arr.items.len == 0,
+        else => false,
+    };
+}
+
 fn printObligations(writer: anytype, value: std.json.Value, indent: usize) !void {
     switch (value) {
         .array => |arr| {
@@ -503,6 +583,10 @@ fn printObligations(writer: anytype, value: std.json.Value, indent: usize) !void
 fn printJsonValue(writer: anytype, value: std.json.Value, indent: usize) !void {
     switch (value) {
         .string => |s| try writer.print("{s}", .{s}),
+        .integer => |i| try writer.print("{d}", .{i}),
+        .float => |f| try writer.print("{d}", .{f}),
+        .bool => |b| try writer.print("{s}", .{if (b) "true" else "false"}),
+        .null => try writer.print("null", .{}),
         .array => |arr| {
             for (arr.items) |item| {
                 try printIndent(writer, indent);

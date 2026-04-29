@@ -8,6 +8,7 @@ const packs = @import("commands/packs.zig");
 const verify = @import("commands/verify.zig");
 const learn = @import("commands/learn.zig");
 const autopsy = @import("commands/autopsy.zig");
+const context_cmd = @import("commands/context.zig");
 const tui = @import("commands/tui.zig");
 const json_contracts = @import("engine/json_contracts.zig");
 
@@ -25,6 +26,7 @@ const CommandKind = enum {
     doctor,
     debug,
     autopsy,
+    context,
 };
 
 const CommandGroup = enum {
@@ -59,6 +61,7 @@ const command_registry = [_]CommandDef{
     .{ .name = "fix", .kind = .fix, .group = .core, .help = "Ask Ghost for a fix-oriented response", .usage = "ghost fix [options] <message>" },
     .{ .name = "verify", .kind = .verify, .group = .core, .help = "Ask the engine to verify current workspace state", .usage = "ghost verify [options]" },
     .{ .name = "autopsy", .kind = .autopsy, .group = .inspection, .help = "Project Autopsy pass (explicit scan only)", .usage = "ghost autopsy [--json] [--debug] [path]" },
+    .{ .name = "context", .kind = .context, .group = .inspection, .help = "Context Autopsy pass (explicit GIP request only)", .usage = "ghost context autopsy [--json] [--debug] <description>" },
     .{ .name = "status", .kind = .status, .group = .inspection, .help = "Show engine availability/status", .usage = "ghost status [--debug]" },
     .{ .name = "doctor", .kind = .doctor, .group = .inspection, .help = "Run read-only environment diagnostics", .usage = "ghost doctor [--json|--report] [--debug] [--full] [--run-build-check]" },
     .{ .name = "packs", .kind = .packs, .group = .knowledge, .help = "Manage knowledge packs", .usage = "ghost packs <list|inspect|mount|unmount> [options]" },
@@ -176,6 +179,7 @@ pub fn main() !void {
             .json = parsed.options.json_out,
             .debug = parsed.options.debug_mode,
         }),
+        .context => try runContext(allocator, root, parsed),
     }
 }
 
@@ -319,6 +323,23 @@ fn runLearn(allocator: std.mem.Allocator, root: ?[]const u8, parsed: ParsedCli) 
     });
 }
 
+fn runContext(allocator: std.mem.Allocator, root: ?[]const u8, parsed: ParsedCli) !void {
+    const sub = if (parsed.leftover_args.items.len > 0) parsed.leftover_args.items[0] else {
+        try std.io.getStdErr().writer().print("Usage: ghost context autopsy [--json] [--debug] <description>\n", .{});
+        std.process.exit(1);
+    };
+    if (!std.mem.eql(u8, sub, "autopsy")) {
+        try std.io.getStdErr().writer().print("Unknown context command: {s}\nUsage: ghost context autopsy [--json] [--debug] <description>\n", .{sub});
+        std.process.exit(1);
+    }
+    const description = if (parsed.leftover_args.items.len > 1) parsed.leftover_args.items[1] else null;
+    try context_cmd.executeAutopsy(allocator, root, .{
+        .description = description,
+        .json = parsed.options.json_out,
+        .debug = parsed.options.debug_mode,
+    });
+}
+
 fn printHelp(writer: anytype) !void {
     try writer.print(
         \\ghost_cli - User-facing CLI for ghost_engine
@@ -440,6 +461,21 @@ fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
             \\
             \\Safety:
             \\  This scan runs only when this command is explicitly invoked.
+            \\
+        , .{}),
+        .context => try writer.print(
+            \\
+            \\Subcommands:
+            \\  autopsy <description>  Run an explicit context.autopsy GIP request
+            \\
+            \\Options:
+            \\  --json                 Preserve raw GIP stdout exactly
+            \\  --debug                Diagnostics to stderr
+            \\
+            \\Safety:
+            \\  This request runs only when this command is explicitly invoked.
+            \\  It does not add artifact refs, run scans, execute verifiers, mutate packs,
+            \\  or mutate negative knowledge.
             \\
         , .{}),
         .packs => try writer.print(

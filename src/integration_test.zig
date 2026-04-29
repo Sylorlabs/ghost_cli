@@ -31,6 +31,7 @@ test "help text lists all top-level commands" {
     try testing.expect(std.mem.indexOf(u8, res.stderr, "status") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "doctor") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "autopsy") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "context") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "debug") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "tui") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "Core:") != null);
@@ -60,6 +61,15 @@ test "subcommand help works without resolving engine" {
     try testing.expectEqual(@as(u32, 0), autopsy_res.term.Exited);
     try testing.expect(std.mem.indexOf(u8, autopsy_res.stderr, "Usage: ghost autopsy") != null);
     try testing.expect(std.mem.indexOf(u8, autopsy_res.stderr, "explicitly invoked") != null);
+
+    const context_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "context", "--help", "--engine-root=/tmp/ghost-help-missing" });
+    defer {
+        testing.allocator.free(context_res.stdout);
+        testing.allocator.free(context_res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), context_res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, context_res.stderr, "Usage: ghost context autopsy") != null);
+    try testing.expect(std.mem.indexOf(u8, context_res.stderr, "context.autopsy GIP request") != null);
 }
 
 test "advanced renderer options parse consistently" {
@@ -313,6 +323,141 @@ test "json debug mode keeps stdout raw and debug on stderr" {
 
     try testing.expectEqualStrings(raw_json, res.stdout);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Engine Binary:") != null);
+}
+
+test "context autopsy renders draft non-authorizing human output" {
+    const mock_root = "/tmp/ghost-cli-context-human";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\n" ++
+            "cat >/dev/null\n" ++
+            "printf '%s' '{\"gipVersion\":\"gip.v0.1\",\"kind\":\"context.autopsy\",\"status\":\"ok\",\"resultState\":{\"state\":\"draft\"},\"result\":{\"contextAutopsy\":{\"contextCase\":{\"description\":\"launch\"},\"detectedSignals\":[{\"name\":\"signal\"}],\"suggestedUnknowns\":[{\"name\":\"unknown\"}],\"riskSurfaces\":[{\"riskKind\":\"risk\"}],\"candidateActions\":[{\"id\":\"action\"}],\"checkCandidates\":[{\"id\":\"check\"}],\"pendingEvidenceObligations\":[{\"id\":\"pending\"}],\"packInfluences\":[{\"packName\":\"pack\"}],\"state\":\"draft\",\"nonAuthorizing\":true},\"readOnly\":true,\"commandsExecuted\":false,\"verifiersExecuted\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"non_authorizing\":true}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "context",
+        "autopsy",
+        "--engine-root=" ++ mock_root,
+        "I need marketing advice for a launch",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Context Autopsy Result") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "DRAFT") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "NON-AUTHORIZING") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Signals:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Unknowns:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Risks:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Candidate Actions:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Check Candidates:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Pending Obligations:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Pack Influence:") != null);
+}
+
+test "context autopsy json preserves raw GIP stdout" {
+    const mock_root = "/tmp/ghost-cli-context-json";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+    const raw_json = "{\"gipVersion\":\"gip.v0.1\",\"kind\":\"context.autopsy\",\"status\":\"ok\",\"result\":{\"contextAutopsy\":{\"state\":\"draft\",\"nonAuthorizing\":true}}}";
+
+    const file = try std.fs.cwd().createFile(mock_root ++ "/ghost_gip", .{ .mode = 0o755 });
+    try file.writeAll("#!/bin/sh\ncat >/dev/null\nprintf '%s' '");
+    try file.writeAll(raw_json);
+    try file.writeAll("'\n");
+    file.close();
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "context",
+        "autopsy",
+        "--engine-root=" ++ mock_root,
+        "--json",
+        "I need marketing advice for a launch",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqualStrings(raw_json, res.stdout);
+}
+
+test "context autopsy debug stays on stderr" {
+    const mock_root = "/tmp/ghost-cli-context-debug";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\n" ++
+            "cat >/dev/null\n" ++
+            "printf '%s' '{\"gipVersion\":\"gip.v0.1\",\"kind\":\"context.autopsy\",\"status\":\"ok\",\"result\":{\"contextAutopsy\":{\"state\":\"draft\",\"nonAuthorizing\":true}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "context",
+        "autopsy",
+        "--engine-root=" ++ mock_root,
+        "--debug",
+        "I need marketing advice for a launch",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Context Autopsy Result") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Engine Binary:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] GIP Kind: context.autopsy") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Exit Code: 0") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] JSON Parse: SUCCESS") != null);
+}
+
+test "doctor status and no-arg TUI do not invoke context autopsy" {
+    const mock_root = "/tmp/ghost-cli-context-no-hidden";
+    const marker = mock_root ++ "/context-marker";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(mock_root ++ "/ghost_task_operator", "#!/bin/sh\nprintf 'task help\\n'\n");
+    try writeMockExecutable(mock_root ++ "/ghost_code_intel", "#!/bin/sh\nprintf 'code intel\\n'\n");
+    try writeMockExecutable(mock_root ++ "/ghost_patch_candidates", "#!/bin/sh\nprintf 'patch candidates\\n'\n");
+    try writeMockExecutable(mock_root ++ "/ghost_knowledge_pack", "#!/bin/sh\nprintf 'knowledge pack\\n'\n");
+    try writeMockExecutable(mock_root ++ "/ghost_project_autopsy", "#!/bin/sh\nprintf 'project autopsy\\n'\n");
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\n" ++
+            "payload=$(cat)\n" ++
+            "case \"$payload\" in *context.autopsy*) touch '" ++ marker ++ "';; esac\n" ++
+            "printf '{\"status\":\"ok\"}'\n",
+    );
+
+    const doctor_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "doctor", "--engine-root=" ++ mock_root });
+    defer {
+        testing.allocator.free(doctor_res.stdout);
+        testing.allocator.free(doctor_res.stderr);
+    }
+    const status_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "status", "--engine-root=" ++ mock_root });
+    defer {
+        testing.allocator.free(status_res.stdout);
+        testing.allocator.free(status_res.stderr);
+    }
+    const tui_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "--engine-root=" ++ mock_root });
+    defer {
+        testing.allocator.free(tui_res.stdout);
+        testing.allocator.free(tui_res.stderr);
+    }
+
+    try testing.expectError(error.FileNotFound, std.fs.cwd().access(marker, .{}));
 }
 
 test "missing engine binary fails early with locator error" {

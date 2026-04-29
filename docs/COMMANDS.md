@@ -3,7 +3,7 @@
 Top-level help is organized around Ghost operator workflows:
 
 - **Core**: `ask`, `chat`, `fix`, `verify`
-- **Inspection**: `autopsy`, `status`, `doctor`
+- **Inspection**: `autopsy`, `context`, `status`, `doctor`
 - **Knowledge**: `packs`, `learn`
 - **Advanced**: `debug`
 - **Interface**: `tui`
@@ -40,6 +40,24 @@ Usage: `ghost fix "make the failing runtime test pass" --reasoning=deep`
 Ask engine to verify current task/workspace state.
 Usage: `ghost verify --reasoning=deep`
 Usage: `ghost verify --context-artifact=src/main.zig --reasoning=max`
+
+### `ghost context autopsy`
+Run an explicit Context Autopsy GIP request using `ghost_gip`.
+
+Usage: `ghost context autopsy "I need marketing advice for a launch"`
+Usage: `ghost context autopsy --json "I need marketing advice for a launch"`
+Usage: `ghost context autopsy --debug "I need marketing advice for a launch"`
+
+This command sends a minimal `context.autopsy` request only when explicitly
+invoked. It does not add artifact refs, run hidden project/context scans,
+execute verifiers, mutate packs, or mutate negative knowledge.
+
+Human-readable output is labeled **DRAFT** and **NON-AUTHORIZING** and renders
+signals, unknowns, risks, candidate actions, check candidates, pending
+obligations, evidence expectations, pack influence, artifact coverage, and pack
+guidance trace fields when the engine returns them. `--json` preserves raw
+engine stdout exactly. `--debug` writes the engine binary path, GIP kind, exit
+code, and parse status to stderr.
 
 ### `ghost packs`
 Manage knowledge packs via `ghost_knowledge_pack`.
@@ -161,7 +179,7 @@ Engine binaries tracked by `ghost doctor` and `ghost status`:
 | `ghost_code_intel` | Code intelligence | Yes |
 | `ghost_patch_candidates` | Patch candidate generation | Yes |
 | `ghost_knowledge_pack` | Knowledge pack management | Yes |
-| `ghost_gip` | GIP protocol / engine status | No |
+| `ghost_gip` | GIP protocol / engine status / Context Autopsy | No |
 | `ghost_project_autopsy` | Project Autopsy pass | No |
 
 `ghost_project_autopsy` is detected and reported by `doctor`/`status`. Doctor
@@ -184,6 +202,19 @@ Usage: `ghost autopsy --json [path]`
 Usage: `ghost autopsy --debug [path]`
 
 The human-readable output provides a concise summary of detected languages, build systems, safe command candidates, verifier plan candidates, and gaps/unknowns. All output is marked as **DRAFT** and **NON-AUTHORIZING**.
+
+### `ghost context autopsy`
+Run an explicit Context Autopsy request through `ghost_gip`.
+
+Usage: `ghost context autopsy <description>`
+Usage: `ghost context autopsy --json <description>`
+Usage: `ghost context autopsy --debug <description>`
+
+The CLI constructs only the minimal GIP request with
+`kind=context.autopsy` and the supplied description. It does not attach artifact
+refs automatically and does not run hidden scans, verifiers, pack mutation, or
+negative-knowledge mutation. Human rendering is marked **DRAFT** and
+**NON-AUTHORIZING**.
 
 ### `ghost debug`
 Advanced user diagnostic tool. Bypasses JSON serialization or runs raw engine paths.

@@ -66,6 +66,11 @@ ghost fix "make the failing runtime test pass" --reasoning=deep
 ghost verify --reasoning=deep
 ghost verify --context-artifact=src/main.zig --reasoning=max
 
+# Explicit Context Autopsy through GIP
+ghost context autopsy "I need marketing advice for a launch"
+ghost context autopsy --json "I need marketing advice for a launch"
+ghost context autopsy --debug "I need marketing advice for a launch"
+
 # Interactive TUI Console
 ghost tui
 ghost tui --reasoning=deep --compact --color=auto
@@ -111,7 +116,7 @@ Normal users specify `--reasoning=quick|balanced|deep|max`.
 Top-level help is grouped by operator workflow:
 
 - Core: `ask`, `chat`, `fix`, `verify`
-- Inspection: `autopsy`, `status`, `doctor`
+- Inspection: `autopsy`, `context`, `status`, `doctor`
 - Knowledge: `packs`, `learn`
 - Advanced: `debug`
 - Interface: `tui`
@@ -179,6 +184,7 @@ If `ghost_cli` encounters issues, use these commands to diagnose the problem:
 - **`ghost status`**: Checks engine availability/status, including `ghost_project_autopsy`.
 - **`ghost doctor`**: Runs read-only environment and tester diagnostics, including CLI path, engine binary resolution (all binaries including `ghost_project_autopsy`), Zig version, OS/arch, terminal, PATH, and safe smoke checks. A bounded `--version` smoke check confirms autopsy binary responds; **no scan is run**.
 - **`ghost autopsy`**: Runs an explicit project structure analysis scan.
+- **`ghost context autopsy`**: Runs an explicit `context.autopsy` GIP request. Human output is labeled **DRAFT** and **NON-AUTHORIZING**; `--json` preserves raw engine stdout exactly.
 - **`ghost <command> --debug`**: Prints the exact engine binary path, arguments, exit code, JSON parse result, and whether correction/negative-knowledge/epistemic fields were detected.
 - **`ghost <command> --json`**: Preserves raw engine stdout exactly; debug diagnostics and engine stderr are written to stderr.
 - **`ghost debug raw <engine-binary> [args...]`**: Bypasses all CLI formatting to run an engine binary directly and print the raw text/JSON.
