@@ -63,7 +63,7 @@ Interactive Ghost Console TUI. Provides a live cockpit view for interacting with
 
 Usage: `ghost tui [--reasoning=quick|balanced|deep|max] [--context-artifact=<path>] [--no-color|--color=auto|always|never] [--compact]`
 
-History output separates `YOU`, `GHOST`, `SYSTEM`, and `COMMAND` entries with native terminal labels and turn separators. Ghost responses still use the same renderer as terminal chat/ask output, including correction, negative-knowledge, and epistemic sections when the engine reports them. The status bar includes compact counters for corrections, applied/proposed negative knowledge, verifier requirements, suppressions, and routing warnings.
+History output separates `YOU`, `GHOST`, `SYSTEM`, `COMMAND`, and `ERROR` entries with native terminal labels and turn separators. Ghost responses still use the same renderer as terminal chat/ask output, including correction, negative-knowledge, and epistemic sections when the engine reports them. The status bar includes compact counters for corrections, applied/proposed negative knowledge, verifier requirements, suppressions, and routing warnings.
 
 If stdin/stdout is not an interactive TTY, `ghost`/`ghost tui` exits gracefully
 with a message. No engine command is run in that fallback path.

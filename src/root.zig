@@ -649,40 +649,58 @@ test "TUI slash command parser covers operator commands" {
 test "TUI slash command suggestions use prefix matching" {
     try testing.expectEqual(@as(usize, tui_slash.commands.len), tui_slash.matchingCount("/"));
     try testing.expectEqual(@as(usize, 1), tui_slash.matchingCount("/r"));
+    try testing.expectEqual(@as(usize, 2), tui_slash.matchingCount("/d"));
     try testing.expectEqual(@as(usize, 0), tui_slash.matchingCount("/notreal"));
 
     var out_buf = std.ArrayList(u8).init(testing.allocator);
     defer out_buf.deinit();
-    var previous_height: u16 = 0;
-    try tui_render.renderSlashSuggestions(out_buf.writer(), "/", 20, &previous_height, .{ .color = false });
+    var session = state.SessionState.init(testing.allocator, "test", null, false);
+    defer session.deinit();
+
+    try session.current_input.appendSlice("/");
+    try tui_render.renderSlashSuggestions(out_buf.writer(), &session, 20, .{ .color = false });
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "+-- slash commands ") != null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "/help") != null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "/context") != null);
-    try testing.expectEqual(@as(u16, 12), previous_height);
+    try testing.expectEqual(@as(u16, 12), session.previous_suggestion_height);
     try testing.expectEqual(@as(u16, 12), tui_render.suggestionHeight("/", .{ .rows = 24, .cols = 80 }, false));
     try testing.expectEqual(@as(u16, 3), tui_render.suggestionHeight("/r", .{ .rows = 24, .cols = 80 }, false));
     try testing.expectEqual(@as(u16, 3), tui_render.suggestionHeight("/notreal", .{ .rows = 24, .cols = 80 }, false));
     try testing.expectEqual(@as(u16, 0), tui_render.suggestionHeight("normal prompt", .{ .rows = 24, .cols = 80 }, false));
 
     out_buf.clearRetainingCapacity();
-    try tui_render.renderSlashSuggestions(out_buf.writer(), "/r", 20, &previous_height, .{ .color = false });
+    session.current_input.clearRetainingCapacity();
+    try session.current_input.appendSlice("/r");
+    try tui_render.renderSlashSuggestions(out_buf.writer(), &session, 20, .{ .color = false });
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "/reasoning") != null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "/debug") == null);
-    try testing.expectEqual(@as(u16, 3), previous_height);
+    try testing.expectEqual(@as(u16, 3), session.previous_suggestion_height);
 
     out_buf.clearRetainingCapacity();
-    try tui_render.renderSlashSuggestions(out_buf.writer(), "/reasoning ", 20, &previous_height, .{ .color = false });
+    session.current_input.clearRetainingCapacity();
+    try session.current_input.appendSlice("/d");
+    try tui_render.renderSlashSuggestions(out_buf.writer(), &session, 20, .{ .color = false });
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "/debug") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "/doctor") != null);
+
+    out_buf.clearRetainingCapacity();
+    session.current_input.clearRetainingCapacity();
+    try session.current_input.appendSlice("/reasoning ");
+    try tui_render.renderSlashSuggestions(out_buf.writer(), &session, 20, .{ .color = false });
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "/reasoning") != null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "no matching slash commands") == null);
 
     out_buf.clearRetainingCapacity();
-    try tui_render.renderSlashSuggestions(out_buf.writer(), "/notreal", 20, &previous_height, .{ .color = false });
+    session.current_input.clearRetainingCapacity();
+    try session.current_input.appendSlice("/notreal");
+    try tui_render.renderSlashSuggestions(out_buf.writer(), &session, 20, .{ .color = false });
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "[WARN]") != null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "no matching slash commands") != null);
 
     out_buf.clearRetainingCapacity();
-    try tui_render.renderSlashSuggestions(out_buf.writer(), "", 20, &previous_height, .{ .color = false });
-    try testing.expectEqual(@as(u16, 0), previous_height);
+    session.current_input.clearRetainingCapacity();
+    try tui_render.renderSlashSuggestions(out_buf.writer(), &session, 20, .{ .color = false });
+    try testing.expectEqual(@as(u16, 0), session.previous_suggestion_height);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "\x1b[9;1H\x1b[K") == null);
 }
 

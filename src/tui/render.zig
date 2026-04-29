@@ -35,6 +35,10 @@ pub const Style = struct {
         return self.code("\x1b[36m");
     }
 
+    pub fn white(self: Style) []const u8 {
+        return self.code("\x1b[37m");
+    }
+
     pub fn yellow(self: Style) []const u8 {
         return self.code("\x1b[33m");
     }
@@ -125,14 +129,9 @@ pub fn render(writer: anytype, s: *state.SessionState, style: Style) !void {
         style.reset(),
     });
 
-    try renderSlashSuggestions(writer, s.current_input.items, suggestion_panel_bottom, &s.previous_suggestion_height, style);
+    try renderSlashSuggestions(writer, s, suggestion_panel_bottom, style);
 
-    try writer.print("\x1b[{d};1H\x1b[K{s}ghost>{s} {s}", .{
-        input_row,
-        style.cyan(),
-        style.reset(),
-        s.current_input.items,
-    });
+    try renderInputLine(writer, s, input_row, style);
 }
 
 pub fn renderCompact(writer: anytype, s: *state.SessionState, style: Style) !void {
@@ -154,13 +153,32 @@ pub fn renderCompact(writer: anytype, s: *state.SessionState, style: Style) !voi
         s.context_artifact orelse "none",
         style.reset(),
     });
-    try renderSlashSuggestions(writer, s.current_input.items, suggestion_panel_bottom, &s.previous_suggestion_height, style);
+    try renderSlashSuggestions(writer, s, suggestion_panel_bottom, style);
+
+    try renderInputLine(writer, s, size.rows, style);
+}
+
+fn renderInputLine(writer: anytype, s: *state.SessionState, row: u16, style: Style) !void {
     try writer.print("\x1b[{d};1H\x1b[K{s}ghost>{s} {s}", .{
-        size.rows,
+        row,
         style.cyan(),
         style.reset(),
         s.current_input.items,
     });
+
+    if (std.mem.indexOfAny(u8, s.current_input.items, " \t") == null) {
+        if (slash.findNthMatch(s.current_input.items, s.suggestion_index)) |matched| {
+            if (matched.len > s.current_input.items.len) {
+                try writer.print("{s}{s}{s}", .{
+                    style.dim(),
+                    matched[s.current_input.items.len..],
+                    style.reset(),
+                });
+                // Move cursor back to the end of actual input
+                try writer.print("\x1b[{d};{d}H", .{ row, @as(u16, @intCast(8 + s.current_input.items.len)) });
+            }
+        }
+    }
 }
 
 pub fn renderFrame(writer: anytype, s: *state.SessionState, style: Style) !void {
@@ -281,10 +299,11 @@ pub fn clearHistoryArea(writer: anytype) !void {
     try writer.writeAll("\x1b[1;1H");
 }
 
-pub fn renderSlashSuggestions(writer: anytype, input_text: []const u8, panel_bottom: u16, previous_height: *u16, style: Style) !void {
+pub fn renderSlashSuggestions(writer: anytype, s: *state.SessionState, panel_bottom: u16, style: Style) !void {
+    const input_text = s.current_input.items;
     const height = suggestionHeightForPanel(input_text, panel_bottom);
-    try clearSuggestionPanel(writer, panel_bottom, @max(height, previous_height.*));
-    previous_height.* = height;
+    try clearSuggestionPanel(writer, panel_bottom, @max(height, s.previous_suggestion_height));
+    s.previous_suggestion_height = height;
 
     if (height == 0) return;
 
@@ -302,24 +321,32 @@ pub fn renderSlashSuggestions(writer: anytype, input_text: []const u8, panel_bot
         return;
     }
 
+    // Ensure suggestion_index is within bounds
+    if (s.suggestion_index >= count) s.suggestion_index = 0;
+
     try printPanelBorder(writer, top, width, " slash commands ");
-    var emitted: usize = 0;
+    var matching_idx: usize = 0;
     var row = top + 1;
     const row_limit = panel_bottom - 1;
     for (slash.commands) |command| {
         if (!std.mem.startsWith(u8, command.name, token)) continue;
         if (row > row_limit) break;
-        try writer.print("\x1b[{d};1H| {s}", .{ row, style.cyan() });
+
+        const is_selected = (matching_idx == s.suggestion_index);
+        const item_style = if (is_selected) style.white() else style.cyan();
+
+        try writer.print("\x1b[{d};1H| {s}", .{ row, item_style });
         try writePadded(writer, commandDisplay(command), @min(@as(usize, 21), panelContentWidth(width, 3)));
         try writer.print("{s} ", .{style.reset()});
         try writeTruncated(writer, command.help, panelHelpWidth(width));
-        emitted += 1;
+
+        matching_idx += 1;
         row += 1;
     }
-    if (emitted < count and row <= row_limit) {
+    if (matching_idx < count and row <= row_limit) {
         try writer.print("\x1b[{d};1H| {s}[WARN]{s} ", .{ row, style.yellow(), style.reset() });
         var hidden_buf: [64]u8 = undefined;
-        const hidden = try std.fmt.bufPrint(&hidden_buf, "{d} more command(s) hidden by terminal height", .{count - emitted});
+        const hidden = try std.fmt.bufPrint(&hidden_buf, "{d} more command(s) hidden by terminal height", .{count - matching_idx});
         try writeTruncated(writer, hidden, panelContentWidth(width, 9));
     }
     try printPanelBorder(writer, panel_bottom, width, "");

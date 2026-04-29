@@ -85,12 +85,56 @@ pub fn run(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: RunO
                 }
             },
             .esc => break,
+            .up => {
+                const count = slash.matchingCount(s.current_input.items);
+                if (count > 0) {
+                    if (s.suggestion_index == 0) {
+                        s.suggestion_index = count - 1;
+                    } else {
+                        s.suggestion_index -= 1;
+                    }
+                }
+            },
+            .down => {
+                const count = slash.matchingCount(s.current_input.items);
+                if (count > 0) {
+                    s.suggestion_index = (s.suggestion_index + 1) % count;
+                }
+            },
+            .right => {
+                if (std.mem.indexOfAny(u8, s.current_input.items, " \t") == null) {
+                    if (slash.findNthMatch(s.current_input.items, s.suggestion_index)) |matched| {
+                        if (matched.len > s.current_input.items.len) {
+                            try s.current_input.appendSlice(matched[s.current_input.items.len..]);
+                            s.suggestion_index = 0;
+                        }
+                    }
+                }
+            },
+            .left => {
+                // Return slash-command input to the root suggestion menu.
+                if (s.current_input.items.len > 1 and s.current_input.items[0] == '/') {
+                    s.current_input.shrinkAndFree(1);
+                    s.suggestion_index = 0;
+                }
+            },
+            .tab => {
+                if (std.mem.indexOfAny(u8, s.current_input.items, " \t") == null) {
+                    if (slash.findNthMatch(s.current_input.items, s.suggestion_index)) |matched| {
+                        if (matched.len > s.current_input.items.len) {
+                            try s.current_input.appendSlice(matched[s.current_input.items.len..]);
+                            s.suggestion_index = 0;
+                        }
+                    }
+                }
+            },
             .enter => {
                 if (s.current_input.items.len == 0) continue;
 
                 const cmd_text = try allocator.dupe(u8, s.current_input.items);
                 defer allocator.free(cmd_text);
                 s.current_input.clearRetainingCapacity();
+                s.suggestion_index = 0;
 
                 if (try handleSlash(allocator, engine_root, &s, cmd_text, writer, style)) |should_quit| {
                     if (should_quit) break;
@@ -102,11 +146,13 @@ pub fn run(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: RunO
             .backspace => {
                 if (s.current_input.items.len > 0) {
                     _ = s.current_input.pop();
+                    s.suggestion_index = 0;
                 }
             },
             .char => |c| {
                 if (s.current_input.items.len == 0 and c == 'q') break;
                 try s.current_input.append(c);
+                s.suggestion_index = 0;
             },
             else => {},
         }

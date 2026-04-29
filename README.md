@@ -131,7 +131,7 @@ unresolved counters from parsed engine output. Launching it does not run doctor,
 autopsy, verifiers, scans, or pack mutation.
 
 Typing `/` shows lightweight native slash-command suggestions using simple prefix
-matching. Invalid slash commands are rejected in the TUI with a clear `SYSTEM`
+matching. Invalid slash commands are rejected in the TUI with a clear `ERROR`
 message and are not sent to the engine as normal prompts.
 The suggestion area grows upward from the lower command region when more matches
 are visible, shrinks again as matches narrow, and reserves terminal rows so
@@ -142,8 +142,8 @@ while idle so resizes are picked up without another keypress, and clips command
 panel rows to the current width.
 
 History entries are separated by turn and labeled as `YOU`, `GHOST`, `SYSTEM`,
-or `COMMAND` so user input, Ghost responses, local command output, and local
-errors remain distinct.
+`COMMAND`, or `ERROR` so user input, Ghost responses, local command output, and
+local errors remain distinct.
 
 Slash commands:
 

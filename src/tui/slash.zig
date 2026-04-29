@@ -70,6 +70,23 @@ pub fn matchingCount(prefix: []const u8) usize {
     return count;
 }
 
+pub fn findFirstMatch(prefix: []const u8) ?[]const u8 {
+    return findNthMatch(prefix, 0);
+}
+
+pub fn findNthMatch(prefix: []const u8, n: usize) ?[]const u8 {
+    const token = suggestionToken(prefix);
+    if (token.len == 0 or token[0] != '/') return null;
+    var count: usize = 0;
+    for (commands) |command| {
+        if (std.mem.startsWith(u8, command.name, token)) {
+            if (count == n) return command.name;
+            count += 1;
+        }
+    }
+    return null;
+}
+
 pub fn hasMatches(prefix: []const u8) bool {
     return matchingCount(prefix) > 0;
 }
