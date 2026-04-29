@@ -85,6 +85,8 @@ Typing `/` in the TUI shows matching slash commands. Matching is simple prefix m
 
 The suggestion area grows upward from the lower command region as more commands match, shrinks as fewer commands match, and reserves terminal rows so history does not overlap the command list. Errors render red, warnings render yellow, and labels remain plain ASCII when color is disabled.
 
+The TUI reads live terminal dimensions on each frame, redraws periodically while idle so resize changes are picked up without another keypress, and clips command-panel rows to the current terminal width.
+
 Invalid slash commands are rejected locally with `Not a valid command: /name` and `Type /help for available commands`. They are not sent to the engine as chat prompts.
 
 - `/quit`: Exit TUI

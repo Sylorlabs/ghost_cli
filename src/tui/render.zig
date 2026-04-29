@@ -52,7 +52,7 @@ pub fn getTerminalSize() TerminalSize {
         .ypixel = 0,
     };
     const err = std.os.linux.ioctl(std.posix.STDOUT_FILENO, std.os.linux.T.IOCGWINSZ, @intFromPtr(&winsize));
-    if (err == 0) {
+    if (err == 0 and winsize.row > 0 and winsize.col > 0) {
         return .{ .rows = winsize.row, .cols = winsize.col };
     }
     return .{ .rows = 24, .cols = 80 };
@@ -298,7 +298,8 @@ pub fn renderSlashSuggestions(writer: anytype, input_text: []const u8, panel_bot
     const width = panelWidth(size);
     if (count == 0) {
         try printPanelBorder(writer, top, width, " slash commands ");
-        try writer.print("\x1b[{d};1H| {s}[WARN]{s} no matching slash commands | Type /help for available commands", .{ top + 1, style.yellow(), style.reset() });
+        try writer.print("\x1b[{d};1H| {s}[WARN]{s} ", .{ top + 1, style.yellow(), style.reset() });
+        try writeTruncated(writer, "no matching slash commands | Type /help for available commands", panelContentWidth(width, 9));
         try printPanelBorder(writer, top + 2, width, "");
         return;
     }
@@ -310,12 +311,18 @@ pub fn renderSlashSuggestions(writer: anytype, input_text: []const u8, panel_bot
     for (slash.commands) |command| {
         if (!std.mem.startsWith(u8, command.name, token)) continue;
         if (row > row_limit) break;
-        try writer.print("\x1b[{d};1H| {s}{s:<21}{s} {s}", .{ row, style.cyan(), commandDisplay(command), style.reset(), command.help });
+        try writer.print("\x1b[{d};1H| {s}", .{ row, style.cyan() });
+        try writePadded(writer, commandDisplay(command), @min(@as(usize, 21), panelContentWidth(width, 3)));
+        try writer.print("{s} ", .{style.reset()});
+        try writeTruncated(writer, command.help, panelHelpWidth(width));
         emitted += 1;
         row += 1;
     }
     if (emitted < count and row <= row_limit) {
-        try writer.print("\x1b[{d};1H| {s}[WARN]{s} {d} more command(s) hidden by terminal height", .{ row, style.yellow(), style.reset(), count - emitted });
+        try writer.print("\x1b[{d};1H| {s}[WARN]{s} ", .{ row, style.yellow(), style.reset() });
+        var hidden_buf: [64]u8 = undefined;
+        const hidden = try std.fmt.bufPrint(&hidden_buf, "{d} more command(s) hidden by terminal height", .{count - emitted});
+        try writeTruncated(writer, hidden, panelContentWidth(width, 9));
     }
     try printPanelBorder(writer, panel_bottom, width, "");
 }
@@ -374,8 +381,7 @@ fn commandDisplay(command: slash.SlashCommandSpec) []const u8 {
 }
 
 fn panelWidth(size: TerminalSize) u16 {
-    if (size.cols < 48) return size.cols;
-    return @min(size.cols, 96);
+    return size.cols;
 }
 
 fn printPanelBorder(writer: anytype, row: u16, width: u16, title: []const u8) !void {
@@ -393,4 +399,29 @@ fn printPanelBorder(writer: anytype, row: u16, width: u16, title: []const u8) !v
         try writer.writeAll("-");
     }
     try writer.writeAll("+");
+}
+
+fn panelContentWidth(width: u16, used: usize) usize {
+    const w: usize = width;
+    if (w <= used + 1) return 0;
+    return w - used - 1;
+}
+
+fn panelHelpWidth(width: u16) usize {
+    return panelContentWidth(width, 25);
+}
+
+fn writePadded(writer: anytype, text: []const u8, width: usize) !void {
+    const written = @min(text.len, width);
+    try writer.writeAll(text[0..written]);
+    var i = written;
+    while (i < width) : (i += 1) {
+        try writer.writeAll(" ");
+    }
+}
+
+fn writeTruncated(writer: anytype, text: []const u8, width: usize) !void {
+    if (width == 0) return;
+    const written = @min(text.len, width);
+    try writer.writeAll(text[0..written]);
 }

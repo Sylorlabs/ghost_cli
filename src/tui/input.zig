@@ -70,8 +70,8 @@ pub const RawMode = struct {
         raw.lflag.IEXTEN = false;
         raw.lflag.ISIG = false;
 
-        raw.cc[@intFromEnum(std.posix.V.MIN)] = 1;
-        raw.cc[@intFromEnum(std.posix.V.TIME)] = 0;
+        raw.cc[@intFromEnum(std.posix.V.MIN)] = 0;
+        raw.cc[@intFromEnum(std.posix.V.TIME)] = 1;
 
         try std.posix.tcsetattr(stdin_fd, .FLUSH, raw);
 

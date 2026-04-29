@@ -137,6 +137,9 @@ The suggestion area grows upward from the lower command region when more matches
 are visible, shrinks again as matches narrow, and reserves terminal rows so
 history stays separate. Native ANSI color stays restrained: errors are red,
 warnings are yellow, and the same labels remain readable with `--no-color`.
+The TUI reads the live terminal dimensions on each frame, redraws periodically
+while idle so resizes are picked up without another keypress, and clips command
+panel rows to the current width.
 
 History entries are separated by turn and labeled as `YOU`, `GHOST`, `SYSTEM`,
 or `COMMAND` so user input, Ghost responses, local command output, and local
