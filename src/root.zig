@@ -260,6 +260,47 @@ test "routing warning renders" {
     try testing.expect(std.mem.indexOf(u8, rendered, "Non-authorizing routing warning") != null);
 }
 
+test "NK prose substrings do not infer structured semantics" {
+    const rendered = try renderEngineJson(testing.allocator,
+        \\{
+        \\  "negative_knowledge": {
+        \\    "items": [
+        \\      {
+        \\        "id": "nk-prose-only",
+        \\        "reason": "prose mentions stronger_verifier_required, exact_repeat_suppressed, routing_warning, and trust_decay"
+        \\      }
+        \\    ]
+        \\  }
+        \\}
+    );
+    defer testing.allocator.free(rendered);
+
+    try testing.expect(std.mem.indexOf(u8, rendered, "Negative Knowledge Candidate Proposed:") != null);
+    try testing.expect(std.mem.indexOf(u8, rendered, "Stronger Verifier Required:") == null);
+    try testing.expect(std.mem.indexOf(u8, rendered, "Exact Repeat Suppressed:") == null);
+    try testing.expect(std.mem.indexOf(u8, rendered, "Routing Warning:") == null);
+    try testing.expect(std.mem.indexOf(u8, rendered, "Trust Decay Candidate Proposed:") == null);
+}
+
+test "render counters use explicit NK kind fields only" {
+    var parsed = try json_contracts.parseEngineJson(testing.allocator,
+        \\{
+        \\  "negative_knowledge": {
+        \\    "items": [
+        \\      { "kind": "stronger_verifier_required", "id": "explicit" },
+        \\      { "reason": "routing_warning and exact_repeat_suppressed in prose only" }
+        \\    ]
+        \\  }
+        \\}
+    );
+    defer parsed.deinit();
+
+    const counters = json_contracts.renderCounters(parsed.value);
+    try testing.expectEqual(@as(usize, 1), counters.verifier_requirements);
+    try testing.expectEqual(@as(usize, 0), counters.routing_warnings);
+    try testing.expectEqual(@as(usize, 0), counters.suppressions);
+}
+
 test "trust decay candidate renders as candidate only" {
     const rendered = try renderEngineJson(testing.allocator,
         \\{
@@ -602,6 +643,29 @@ test "locator candidate paths - no engine_root" {
     try testing.expectEqual(@as(usize, 2), candidates.len);
     try testing.expectEqualStrings("../ghost_engine/zig-out/bin/ghost_task_operator", candidates[0]);
     try testing.expectEqualStrings("ghost_task_operator", candidates[1]);
+}
+
+test "locator classifies candidates and does not resolve missing preferred path" {
+    var resolution = try locator.resolveEngineBinary(testing.allocator, "/tmp/ghost-cli-missing-root", .ghost_gip);
+    defer resolution.deinit(testing.allocator);
+
+    try testing.expect(resolution.candidates.len >= 4);
+    try testing.expectEqual(locator.CandidateKind.engine_root_direct, resolution.candidates[0].kind);
+    try testing.expectEqual(locator.CandidateStatus.missing, resolution.candidates[0].status);
+    try testing.expectEqual(locator.CandidateKind.dev_fallback, resolution.candidates[2].kind);
+    if (resolution.resolved_path) |path| {
+        try testing.expect(!std.mem.eql(u8, path, "/tmp/ghost-cli-missing-root/ghost_gip"));
+    }
+}
+
+test "findEngineBinary fails when no executable candidate exists" {
+    const result = locator.findEngineBinary(testing.allocator, "/tmp/ghost-cli-missing-root", .ghost_gip);
+    if (result) |path| {
+        testing.allocator.free(path);
+        return error.ExpectedMissingBinary;
+    } else |err| {
+        try testing.expect(err == locator.LocatorError.EngineBinaryMissing or err == locator.LocatorError.EngineBinaryFoundNotExecutable);
+    }
 }
 
 comptime {

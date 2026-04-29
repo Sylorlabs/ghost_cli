@@ -315,9 +315,18 @@ pub fn renderCounters(response: EngineResponse) RenderCounters {
         counters.nk_candidates += countObjectFieldItems(nk, "proposed_candidates");
         counters.nk_candidates += countObjectFieldItems(nk, "items");
         counters.trust_decay_candidates += countObjectFieldItems(nk, "trust_decay_candidates");
-        counters.verifier_requirements += countMatchingItems(nk, "stronger_verifier");
-        counters.suppressions += countMatchingItems(nk, "repeat_suppress");
-        counters.routing_warnings += countMatchingItems(nk, "routing_warning");
+        counters.verifier_requirements += countItemsByKind(nk, &.{
+            "stronger_verifier_required",
+            "stronger_verifier_requirement",
+            "stronger_verifier",
+        });
+        counters.suppressions += countItemsByKind(nk, &.{
+            "exact_repeat_suppressed",
+            "repeat_suppression",
+        });
+        counters.routing_warnings += countItemsByKind(nk, &.{
+            "routing_warning",
+        });
     }
     return counters;
 }
@@ -338,48 +347,39 @@ fn countItems(value: std.json.Value) usize {
     };
 }
 
-fn countMatchingItems(value: std.json.Value, needle: []const u8) usize {
+fn countItemsByKind(value: std.json.Value, accepted: []const []const u8) usize {
     return switch (value) {
         .array => |arr| blk: {
             var count: usize = 0;
-            for (arr.items) |item| count += countMatchingItems(item, needle);
+            for (arr.items) |item| count += countItemsByKind(item, accepted);
             break :blk count;
         },
         .object => |obj| blk: {
-            var self_matches = false;
             var nested_count: usize = 0;
-            var it = obj.iterator();
-            while (it.next()) |entry| {
-                if (containsNoCase(entry.key_ptr.*, needle) or valueContainsNoCase(entry.value_ptr.*, needle)) {
-                    self_matches = true;
-                }
-                nested_count += countMatchingItems(entry.value_ptr.*, needle);
-            }
+            if (obj.get("items")) |items| nested_count += countItemsByKind(items, accepted);
+            const self_matches = if (explicitKind(obj)) |kind| matchesAny(kind, accepted) else false;
             break :blk nested_count + @as(usize, if (self_matches) 1 else 0);
         },
         else => 0,
     };
 }
 
-fn valueContainsNoCase(value: std.json.Value, needle: []const u8) bool {
-    return switch (value) {
-        .string => |s| containsNoCase(s, needle),
-        else => false,
-    };
+fn explicitKind(obj: std.json.ObjectMap) ?[]const u8 {
+    const fields = [_][]const u8{ "kind", "type", "event", "category" };
+    for (fields) |field| {
+        if (obj.get(field)) |value| {
+            if (value == .string) return value.string;
+        }
+    }
+    return null;
 }
 
-fn containsNoCase(haystack: []const u8, needle: []const u8) bool {
-    if (needle.len == 0) return true;
-    if (haystack.len < needle.len) return false;
-    var i: usize = 0;
-    while (i + needle.len <= haystack.len) : (i += 1) {
-        var j: usize = 0;
-        while (j < needle.len and std.ascii.toLower(haystack[i + j]) == std.ascii.toLower(needle[j])) : (j += 1) {}
-        if (j == needle.len) return true;
+fn matchesAny(value: []const u8, accepted: []const []const u8) bool {
+    for (accepted) |candidate| {
+        if (std.mem.eql(u8, value, candidate)) return true;
     }
     return false;
 }
-
 pub fn parseEngineJson(allocator: std.mem.Allocator, json_str: []const u8) !std.json.Parsed(EngineResponse) {
     return try std.json.parseFromSlice(EngineResponse, allocator, json_str, .{ .ignore_unknown_fields = true });
 }

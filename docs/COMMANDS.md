@@ -99,6 +99,8 @@ Usage: `ghost doctor --run-build-check`
 
 Default doctor is fast and non-mutating. It does not build the engine, run expensive tests, execute verifiers, mutate packs, or change negative knowledge. It reports the CLI version/path, current directory, `GHOST_ENGINE_ROOT`, resolved engine binaries, executable bits, Zig version, OS/arch, terminal, PATH resolution, and safe smoke checks.
 
+Binary resolution is shared with normal command execution. Candidates are classified as `engine-root`, `engine-root-zig-out`, `dev-fallback-candidate`, or `PATH-candidate`, with status `executable`, `found-not-executable`, or `missing`. If `--engine-root`/`GHOST_ENGINE_ROOT` is set, normal execution resolves only the explicit root candidates and fails early if they are missing or not executable; dev fallback and PATH candidates remain visible as diagnostics.
+
 Engine binaries tracked by `ghost doctor` and `ghost status`:
 
 | Binary | Role | Core? |
@@ -129,6 +131,8 @@ Usage: `ghost debug raw <engine-binary> [args...]`
 Example: `ghost debug raw ghost_knowledge_pack list`
 
 For rendered commands such as `ghost ask --debug`, debug output reports whether correction, negative-knowledge, and epistemic fields were detected without dumping large arrays.
+
+When `--json` is set, engine stdout is passed through exactly. Debug diagnostics and engine stderr go to stderr.
 
 ## First Tester Checklist
 

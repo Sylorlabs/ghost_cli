@@ -63,6 +63,8 @@ The CLI consolidates fields from the top level and nested objects:
 - **Corrections**: `corrections.summary`, `corrections.items[]`.
 - **Negative Knowledge**: `negative_knowledge.influence_summary`, `negative_knowledge.applied_records[]`, `negative_knowledge.proposed_candidates[]`, `negative_knowledge.trust_decay_candidates[]`, `negative_knowledge.items[]`.
 
+Semantic labels for negative-knowledge items are selected only from explicit structured discriminator fields (`kind`, `type`, `event`, or `category`) with known exact values. The CLI does not infer verifier requirements, suppressions, routing warnings, trust decay, corrections, or epistemic state from arbitrary prose, summaries, IDs, or nested string substrings.
+
 ### Renderer Labels
 When present, correction, negative-knowledge, and epistemic fields are displayed with explicit non-authorizing labels:
 
@@ -83,5 +85,7 @@ These sections are display-only. The CLI does not execute verifiers, corrections
 2. The CLI must silently handle unknown or extra JSON fields.
 3. The CLI must degrade gracefully if optional fields are missing.
 4. When `--json` is set, raw engine stdout is preserved exactly and terminal rendering is skipped.
-5. When `JSON` formatting cannot be parsed (e.g., an engine panic or bad trace log), the CLI falls back to dumping raw text output without interpretation.
-6. If JSON is parsed but no recognized fields exist, it renders "Status: Parsed JSON, unrecognized contract".
+5. Debug diagnostics are written to stderr so they do not corrupt JSON stdout.
+6. Engine stderr is written to stderr in JSON passthrough mode and reported on stderr for human mode failures.
+7. When `JSON` formatting cannot be parsed (e.g., an engine panic or bad trace log), the CLI falls back to dumping raw text output without interpretation.
+8. If JSON is parsed but no recognized fields exist, it renders "Status: Parsed JSON, unrecognized contract".

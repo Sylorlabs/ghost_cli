@@ -23,20 +23,11 @@ pub const RunResult = struct {
 };
 
 pub fn run(allocator: std.mem.Allocator, options: RunOptions) !RunResult {
-    const bin_path = try locator.findEngineBinary(allocator, options.engine_root, options.binary);
-    defer allocator.free(bin_path);
-
-    // If it's not in PATH and doesn't exist, it's a failure
-    if (!locator.checkBinaryExists(bin_path) and std.mem.indexOfScalar(u8, bin_path, std.fs.path.sep) != null) {
-        const bin_name = options.binary.toStr();
-        std.debug.print("\x1b[31m[!] Error:\x1b[0m Engine binary '{s}' not found.\n", .{bin_name});
-        if (options.engine_root) |root| {
-            std.debug.print("\x1b[33mHint:\x1b[0m Checked engine root: {s}\n", .{root});
-            std.debug.print("\x1b[33mHint:\x1b[0m If GHOST_ENGINE_ROOT points to the repo root, run `zig build` in ghost_engine.\n", .{});
-        }
-        std.debug.print("\x1b[33mFix:\x1b[0m Set --engine-root=<path>, GHOST_ENGINE_ROOT environment variable, or run `zig build install` in ghost_engine.\n", .{});
+    const bin_path = locator.findEngineBinary(allocator, options.engine_root, options.binary) catch |err| {
+        try locator.printLocatorError(std.io.getStdErr().writer(), options.binary, options.engine_root, err);
         std.process.exit(1);
-    }
+    };
+    defer allocator.free(bin_path);
 
     var run_args = std.ArrayList([]const u8).init(allocator);
     defer run_args.deinit();

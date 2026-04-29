@@ -23,7 +23,10 @@ pub fn execute(allocator: std.mem.Allocator, engine_root: ?[]const u8, args: [][
         inline for (@typeInfo(locator.EngineBinaries).@"enum".fields) |field| {
             if (std.mem.eql(u8, bin_name, field.name)) {
                 const enum_val = @field(locator.EngineBinaries, field.name);
-                const p = try locator.findEngineBinary(allocator, engine_root, enum_val);
+                const p = locator.findEngineBinary(allocator, engine_root, enum_val) catch |err| {
+                    try locator.printLocatorError(std.io.getStdErr().writer(), enum_val, engine_root, err);
+                    return;
+                };
                 bin_path = p;
                 found = true;
             }
@@ -49,7 +52,7 @@ pub fn execute(allocator: std.mem.Allocator, engine_root: ?[]const u8, args: [][
 
         if (result.stdout.len > 0) std.debug.print("{s}", .{result.stdout});
         if (result.stderr.len > 0) std.debug.print("{s}", .{result.stderr});
-        
+
         if (result.exit_code != 0) {
             std.process.exit(result.exit_code);
         }

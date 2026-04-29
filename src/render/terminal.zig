@@ -224,10 +224,15 @@ fn printNkItem(writer: anytype, item: std.json.Value) !void {
 }
 
 fn nkItemLabel(item: std.json.Value) []const u8 {
-    if (jsonValueContainsNoCase(item, "stronger_verifier")) return "Stronger Verifier Required";
-    if (jsonValueContainsNoCase(item, "exact_repeat_suppressed") or jsonValueContainsNoCase(item, "repeat_suppress")) return "Exact Repeat Suppressed";
-    if (jsonValueContainsNoCase(item, "routing_warning")) return "Routing Warning";
-    if (jsonValueContainsNoCase(item, "trust_decay")) return "Trust Decay Candidate Proposed";
+    const obj = switch (item) {
+        .object => |obj| obj,
+        else => return "Negative Knowledge Candidate Proposed",
+    };
+    const kind = explicitKind(obj) orelse return "Negative Knowledge Candidate Proposed";
+    if (matchesAny(kind, &.{ "stronger_verifier_required", "stronger_verifier_requirement", "stronger_verifier" })) return "Stronger Verifier Required";
+    if (matchesAny(kind, &.{ "exact_repeat_suppressed", "repeat_suppression" })) return "Exact Repeat Suppressed";
+    if (matchesAny(kind, &.{"routing_warning"})) return "Routing Warning";
+    if (matchesAny(kind, &.{ "trust_decay_candidate", "trust_decay" })) return "Trust Decay Candidate Proposed";
     return "Negative Knowledge Candidate Proposed";
 }
 
@@ -562,36 +567,19 @@ fn printOptionalJsonField(writer: anytype, obj: std.json.ObjectMap, field: []con
     }
 }
 
-fn jsonValueContainsNoCase(value: std.json.Value, needle: []const u8) bool {
-    return switch (value) {
-        .string => |s| containsNoCase(s, needle),
-        .array => |arr| blk: {
-            for (arr.items) |item| {
-                if (jsonValueContainsNoCase(item, needle)) break :blk true;
-            }
-            break :blk false;
-        },
-        .object => |obj| blk: {
-            var it = obj.iterator();
-            while (it.next()) |entry| {
-                if (containsNoCase(entry.key_ptr.*, needle) or jsonValueContainsNoCase(entry.value_ptr.*, needle)) {
-                    break :blk true;
-                }
-            }
-            break :blk false;
-        },
-        else => false,
-    };
+fn explicitKind(obj: std.json.ObjectMap) ?[]const u8 {
+    const fields = [_][]const u8{ "kind", "type", "event", "category" };
+    for (fields) |field| {
+        if (obj.get(field)) |value| {
+            if (value == .string) return value.string;
+        }
+    }
+    return null;
 }
 
-fn containsNoCase(haystack: []const u8, needle: []const u8) bool {
-    if (needle.len == 0) return true;
-    if (haystack.len < needle.len) return false;
-    var i: usize = 0;
-    while (i + needle.len <= haystack.len) : (i += 1) {
-        var j: usize = 0;
-        while (j < needle.len and std.ascii.toLower(haystack[i + j]) == std.ascii.toLower(needle[j])) : (j += 1) {}
-        if (j == needle.len) return true;
+fn matchesAny(value: []const u8, accepted: []const []const u8) bool {
+    for (accepted) |candidate| {
+        if (std.mem.eql(u8, value, candidate)) return true;
     }
     return false;
 }

@@ -40,6 +40,8 @@ By default, the CLI looks for `ghost_engine` binaries in standard development pa
 - The `--engine-root=<path>` CLI flag.
 - The `GHOST_ENGINE_ROOT` environment variable.
 
+Binary resolution is explicit: candidates are reported as engine-root, engine-root `zig-out`, dev fallback, or PATH candidates, and as executable, found-not-executable, or missing. Normal command execution requires an executable binary and fails before launch when the selected engine binary is missing.
+
 **Running `ghost` with no arguments launches the interactive TUI console.**
 
 ### Examples
@@ -108,12 +110,15 @@ Normal users specify `--reasoning=quick|balanced|deep|max`.
 - **Negative Knowledge Applied/Candidate Proposed**: Engine reported prior-failure influence or review-needed candidates. The CLI labels these as non-authorizing and does not mutate negative knowledge.
 - **Epistemic State**: Engine-provided epistemic render metadata, displayed without upgrading draft/unresolved/support status.
 
+The CLI renders these labels only from explicit JSON fields. It does not infer negative-knowledge, verifier, suppression, routing, trust-decay, correction, or epistemic semantics from arbitrary text substrings.
+
 ## Troubleshooting
 If `ghost_cli` encounters issues, use these commands to diagnose the problem:
 - **`ghost status`**: Checks engine availability/status, including `ghost_project_autopsy`.
 - **`ghost doctor`**: Runs read-only environment and tester diagnostics, including CLI path, engine binary resolution (all binaries including `ghost_project_autopsy`), Zig version, OS/arch, terminal, PATH, and safe smoke checks. A bounded `--version` smoke check confirms autopsy binary responds; **no scan is run**.
 - **`ghost autopsy`**: Runs an explicit project structure analysis scan.
 - **`ghost <command> --debug`**: Prints the exact engine binary path, arguments, exit code, JSON parse result, and whether correction/negative-knowledge/epistemic fields were detected.
+- **`ghost <command> --json`**: Preserves raw engine stdout exactly; debug diagnostics and engine stderr are written to stderr.
 - **`ghost debug raw <engine-binary> [args...]`**: Bypasses all CLI formatting to run an engine binary directly and print the raw text/JSON.
 
 ## First Tester Checklist

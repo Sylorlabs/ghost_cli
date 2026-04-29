@@ -46,8 +46,7 @@ test "engine root resolution - repo root case" {
     const mock_root = "/tmp/ghost-mock-repo";
     try std.fs.cwd().makePath(mock_root ++ "/zig-out/bin");
     const mock_bin = mock_root ++ "/zig-out/bin/ghost_task_operator";
-    const file = try std.fs.cwd().createFile(mock_bin, .{});
-    file.close();
+    try writeMockExecutable(mock_bin, "#!/bin/sh\nprintf 'task help\\n'\n");
 
     const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "status", "--engine-root=" ++ mock_root, "--debug" });
     defer {
@@ -56,7 +55,7 @@ test "engine root resolution - repo root case" {
         std.fs.cwd().deleteTree(mock_root) catch {};
     }
 
-    try testing.expect(std.mem.indexOf(u8, res.stdout, "[FOUND]    " ++ mock_bin) != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, mock_bin ++ " [engine-root-zig-out; executable]") != null);
 }
 
 test "status debug mode shows candidate paths" {
@@ -222,6 +221,100 @@ test "json mode preserves raw engine stdout" {
     }
 
     try testing.expectEqualStrings(raw_json, res.stdout);
+}
+
+test "json debug mode keeps stdout raw and debug on stderr" {
+    const mock_root = "/tmp/ghost-cli-json-debug-preserve";
+    try std.fs.cwd().makePath(mock_root);
+    const mock_bin = mock_root ++ "/ghost_task_operator";
+    const raw_json = "{\"summary\":\"raw debug json\"}";
+
+    const file = try std.fs.cwd().createFile(mock_bin, .{ .mode = 0o755 });
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+    try file.writeAll("#!/bin/sh\nprintf '%s' '");
+    try file.writeAll(raw_json);
+    try file.writeAll("'\n");
+    file.close();
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "ask",
+        "--engine-root=" ++ mock_root,
+        "--json",
+        "--debug",
+        "hello",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqualStrings(raw_json, res.stdout);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Engine Binary:") != null);
+}
+
+test "missing engine binary fails early with locator error" {
+    const mock_root = "/tmp/ghost-cli-missing-engine";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "ask",
+        "--engine-root=" ++ mock_root,
+        "hello",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expect(res.term.Exited != 0);
+    try testing.expectEqualStrings("", res.stdout);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "Engine binary 'ghost_task_operator' is missing") != null);
+}
+
+test "doctor and status share locator semantics for non executable binary" {
+    const mock_root = "/tmp/ghost-cli-non-exec-engine";
+    try std.fs.cwd().makePath(mock_root);
+    const mock_bin = mock_root ++ "/ghost_task_operator";
+    const file = try std.fs.cwd().createFile(mock_bin, .{ .mode = 0o644 });
+    file.close();
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    const status_res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "status",
+        "--engine-root=" ++ mock_root,
+    });
+    defer {
+        testing.allocator.free(status_res.stdout);
+        testing.allocator.free(status_res.stderr);
+    }
+    try testing.expect(std.mem.indexOf(u8, status_res.stdout, "ghost_task_operator: found-not-executable [engine-root]") != null);
+
+    const doctor_res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "doctor",
+        "--engine-root=" ++ mock_root,
+        "--json",
+    });
+    defer {
+        testing.allocator.free(doctor_res.stdout);
+        testing.allocator.free(doctor_res.stderr);
+    }
+    var parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, doctor_res.stdout, .{});
+    defer parsed.deinit();
+    const binaries = parsed.value.object.get("binaries") orelse return error.MissingField;
+    var found_matching_status = false;
+    for (binaries.array.items) |item| {
+        if (std.mem.eql(u8, item.object.get("name").?.string, "ghost_task_operator")) {
+            found_matching_status = std.mem.eql(u8, item.object.get("status").?.string, "found-not-executable") and
+                std.mem.eql(u8, item.object.get("source").?.string, "engine-root");
+            break;
+        }
+    }
+    try testing.expect(found_matching_status);
 }
 
 // ---------------------------------------------------------------------------
@@ -515,5 +608,29 @@ test "doctor and status do not run autopsy scans" {
         testing.allocator.free(res_status.stdout);
         testing.allocator.free(res_status.stderr);
     }
+    try testing.expectError(error.FileNotFound, std.fs.cwd().access(marker, .{}));
+}
+
+test "no-arg ghost routes through TUI preflight and does not run autopsy scan" {
+    const mock_root = "/tmp/ghost-noarg-no-auto-scan";
+    try std.fs.cwd().makePath(mock_root);
+    const mock_bin = mock_root ++ "/ghost_project_autopsy";
+    const marker = mock_root ++ "/scan-marker";
+
+    const file = try std.fs.cwd().createFile(mock_bin, .{ .mode = 0o755 });
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+    try file.writeAll("#!/bin/sh\ntouch '" ++ marker ++ "'\n");
+    file.close();
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "--engine-root=" ++ mock_root,
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "Engine binary 'ghost_task_operator' is missing") != null);
     try testing.expectError(error.FileNotFound, std.fs.cwd().access(marker, .{}));
 }

@@ -16,12 +16,12 @@ pub fn execute(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: 
     const aa = arena.allocator();
 
     var argv = std.ArrayList([]const u8).init(aa);
-    
+
     // We use chat command as the verify endpoint per requirements if no dedicated verify exists
     try argv.append("chat");
     try argv.append("--message");
     try argv.append("verify current workspace/task");
-    
+
     const reasoning = options.reasoning orelse .deep;
     var buf: [64]u8 = undefined;
     const reasoning_arg = try std.fmt.bufPrint(&buf, "--reasoning={s}", .{reasoning.toStr()});
@@ -44,8 +44,8 @@ pub fn execute(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: 
     defer res.deinit();
 
     if (options.json) {
-        std.debug.print("{s}\n", .{res.stdout});
-        if (res.stderr.len > 0) std.debug.print("{s}\n", .{res.stderr});
+        try std.io.getStdOut().writer().writeAll(res.stdout);
+        if (res.stderr.len > 0) try std.io.getStdErr().writer().writeAll(res.stderr);
         if (res.exit_code != 0) std.process.exit(res.exit_code);
         return;
     }

@@ -2,18 +2,6 @@ const std = @import("std");
 const builtin = @import("builtin");
 const locator = @import("../engine/locator.zig");
 
-// Core binaries: their absence sets ok=false.
-// Non-core (index >= 4): tracked but do not affect ok.
-const engine_binary_names = [_][]const u8{
-    "ghost_task_operator",
-    "ghost_code_intel",
-    "ghost_patch_candidates",
-    "ghost_knowledge_pack",
-    "ghost_gip",
-    "ghost_project_autopsy",
-};
-const engine_core_count = 4; // ghost_task_operator .. ghost_knowledge_pack
-
 pub const Options = struct {
     json: bool = false,
     debug: bool = false,
@@ -34,15 +22,14 @@ const CommandProbe = struct {
 
 const BinaryReport = struct {
     name: []const u8,
-    path: []u8,
-    exists: bool,
-    executable: bool,
-    candidates: [][]u8,
+    path: []const u8,
+    status: locator.CandidateStatus,
+    kind: ?locator.CandidateKind,
+    candidates: []locator.Candidate,
+    resolution: locator.Resolution,
 
     fn deinit(self: *BinaryReport, allocator: std.mem.Allocator) void {
-        allocator.free(self.path);
-        for (self.candidates) |candidate| allocator.free(candidate);
-        allocator.free(self.candidates);
+        self.resolution.deinit(allocator);
     }
 };
 
@@ -120,10 +107,9 @@ fn collectReport(allocator: std.mem.Allocator, engine_root: ?[]const u8, options
         binaries.deinit();
     }
     var all_core_ok = true;
-    for (engine_binary_names, 0..) |name, index| {
-        const binary = try collectBinaryReport(allocator, engine_root, name);
-        // Only the first engine_core_count binaries determine ok.
-        if (index < engine_core_count and !binary.executable) all_core_ok = false;
+    for (locator.allBinaries()) |binary_name| {
+        const binary = try collectBinaryReport(allocator, engine_root, binary_name);
+        if (binary_name.isCore() and binary.status != .executable) all_core_ok = false;
         try binaries.append(binary);
     }
 
@@ -182,61 +168,16 @@ fn collectReport(allocator: std.mem.Allocator, engine_root: ?[]const u8, options
     };
 }
 
-fn collectBinaryReport(allocator: std.mem.Allocator, engine_root: ?[]const u8, name: []const u8) !BinaryReport {
-    const candidates = try getCandidatePathsForName(allocator, engine_root, name);
-    errdefer {
-        for (candidates) |candidate| allocator.free(candidate);
-        allocator.free(candidates);
-    }
-
-    var chosen: ?[]const u8 = null;
-    var chosen_exists = false;
-    var chosen_executable = false;
-    const preferred_count: usize = if (engine_root != null) @min(candidates.len, 2) else candidates.len;
-    for (candidates[0..preferred_count]) |candidate| {
-        const exists = checkExists(candidate);
-        const executable = checkExecutable(candidate);
-        if (executable or (exists and chosen == null)) {
-            chosen = candidate;
-            chosen_exists = exists;
-            chosen_executable = executable;
-            if (executable) break;
-        }
-    }
-    if (chosen == null and candidates.len > 0) {
-        chosen = candidates[0];
-        chosen_exists = checkExists(chosen.?);
-        chosen_executable = checkExecutable(chosen.?);
-    }
-
+fn collectBinaryReport(allocator: std.mem.Allocator, engine_root: ?[]const u8, binary: locator.EngineBinaries) !BinaryReport {
+    const resolution = try locator.resolveEngineBinary(allocator, engine_root, binary);
     return BinaryReport{
-        .name = name,
-        .path = try allocator.dupe(u8, chosen orelse name),
-        .exists = chosen_exists,
-        .executable = chosen_executable,
-        .candidates = candidates,
+        .name = binary.toStr(),
+        .path = resolution.resolved_path orelse "unresolved",
+        .status = resolution.resolved_status,
+        .kind = resolution.resolved_kind,
+        .candidates = resolution.candidates,
+        .resolution = resolution,
     };
-}
-
-fn getCandidatePathsForName(allocator: std.mem.Allocator, engine_root: ?[]const u8, name: []const u8) ![][]u8 {
-    if (std.mem.eql(u8, name, "ghost_task_operator")) return locator.getCandidatePaths(allocator, engine_root, .ghost_task_operator);
-    if (std.mem.eql(u8, name, "ghost_code_intel")) return locator.getCandidatePaths(allocator, engine_root, .ghost_code_intel);
-    if (std.mem.eql(u8, name, "ghost_patch_candidates")) return locator.getCandidatePaths(allocator, engine_root, .ghost_patch_candidates);
-    if (std.mem.eql(u8, name, "ghost_knowledge_pack")) return locator.getCandidatePaths(allocator, engine_root, .ghost_knowledge_pack);
-    if (std.mem.eql(u8, name, "ghost_project_autopsy")) return locator.getCandidatePaths(allocator, engine_root, .ghost_project_autopsy);
-
-    var list = std.ArrayList([]u8).init(allocator);
-    errdefer {
-        for (list.items) |item| allocator.free(item);
-        list.deinit();
-    }
-    if (engine_root) |root| {
-        try list.append(try std.fs.path.join(allocator, &[_][]const u8{ root, name }));
-        try list.append(try std.fs.path.join(allocator, &[_][]const u8{ root, "zig-out", "bin", name }));
-    }
-    try list.append(try std.fs.path.join(allocator, &[_][]const u8{ "../ghost_engine/zig-out/bin", name }));
-    try list.append(try allocator.dupe(u8, name));
-    return list.toOwnedSlice();
 }
 
 fn printHuman(report: DoctorReport, debug: bool, full: bool, run_build_check: bool) !void {
@@ -260,11 +201,15 @@ fn printHuman(report: DoctorReport, debug: bool, full: bool, run_build_check: bo
 
     try out.print("\nEngine Binaries:\n", .{});
     for (report.binaries) |binary| {
-        try out.print("  - {s}: {s} ({s})\n", .{ binary.name, if (binary.executable) "EXECUTABLE" else if (binary.exists) "FOUND_NOT_EXECUTABLE" else "MISSING", binary.path });
+        try out.print("  - {s}: {s}", .{ binary.name, upperStatus(binary.status) });
+        if (binary.kind) |kind| try out.print(" [{s}]", .{kind.label()});
+        try out.print(" ({s})\n", .{binary.path});
         if (debug) {
             try out.print("    candidates:\n", .{});
             for (binary.candidates) |candidate| {
-                try out.print("      - {s} [{s}]\n", .{ candidate, if (checkExecutable(candidate)) "executable" else if (checkExists(candidate)) "found" else "missing" });
+                try out.print("      - {s} [{s}; {s}", .{ candidate.path, candidate.kind.label(), candidate.status.label() });
+                if (candidate.resolved_path) |resolved| try out.print("; resolved={s}", .{resolved});
+                try out.print("]\n", .{});
             }
         }
     }
@@ -300,9 +245,13 @@ fn printTesterReport(report: DoctorReport, debug: bool) !void {
     try out.print("PATH ghost: {s}\n", .{if (report.path_ghost.len > 0) report.path_ghost else "Not Found"});
     try out.print("\nResolved binaries:\n", .{});
     for (report.binaries) |binary| {
-        try out.print("- {s}: {s} ({s})\n", .{ binary.name, if (binary.executable) "executable" else if (binary.exists) "found-not-executable" else "missing", binary.path });
+        try out.print("- {s}: {s}", .{ binary.name, binary.status.label() });
+        if (binary.kind) |kind| try out.print(" [{s}]", .{kind.label()});
+        try out.print(" ({s})\n", .{binary.path});
         if (debug) {
-            for (binary.candidates) |candidate| try out.print("  candidate: {s}\n", .{candidate});
+            for (binary.candidates) |candidate| {
+                try out.print("  candidate: {s} [{s}; {s}]\n", .{ candidate.path, candidate.kind.label(), candidate.status.label() });
+            }
         }
     }
     try out.print("ghost_project_autopsy: {s}\n", .{if (report.autopsy_smoke.available) "available" else "not-installed"});
@@ -334,12 +283,19 @@ fn printJson(report: DoctorReport, debug: bool) !void {
         try out.writeAll("{");
         try jsonField(out, "name", binary.name, true);
         try jsonField(out, "path", binary.path, false);
-        try out.print(",\"exists\":{},\"executable\":{}", .{ binary.exists, binary.executable });
+        try jsonField(out, "status", binary.status.label(), false);
+        try jsonField(out, "source", if (binary.kind) |kind| kind.label() else null, false);
+        try out.print(",\"exists\":{},\"executable\":{}", .{ binary.status != .missing, binary.status == .executable });
         if (debug) {
             try out.writeAll(",\"candidates\":[");
             for (binary.candidates, 0..) |candidate, j| {
                 if (j > 0) try out.writeAll(",");
-                try writeJsonString(out, candidate);
+                try out.writeAll("{");
+                try jsonField(out, "path", candidate.path, true);
+                try jsonField(out, "source", candidate.kind.label(), false);
+                try jsonField(out, "status", candidate.status.label(), false);
+                try jsonField(out, "resolved_path", candidate.resolved_path, false);
+                try out.writeAll("}");
             }
             try out.writeAll("]");
         }
@@ -378,7 +334,7 @@ fn writeJsonString(writer: anytype, value: []const u8) !void {
 
 fn findBinaryPath(binaries: []BinaryReport, name: []const u8) ?[]const u8 {
     for (binaries) |binary| {
-        if (std.mem.eql(u8, binary.name, name) and binary.executable) return binary.path;
+        if (std.mem.eql(u8, binary.name, name) and binary.status == .executable) return binary.path;
     }
     return null;
 }
@@ -469,30 +425,14 @@ fn detectGpu(allocator: std.mem.Allocator) ![]u8 {
     return allocator.dupe(u8, "unknown");
 }
 
-fn checkExists(path: []const u8) bool {
-    if (std.mem.indexOfScalar(u8, path, std.fs.path.sep) == null) return pathExecutableOnPath(path);
-    var file = std.fs.cwd().openFile(path, .{}) catch return false;
-    file.close();
-    return true;
-}
-
-fn checkExecutable(path: []const u8) bool {
-    if (std.mem.indexOfScalar(u8, path, std.fs.path.sep) == null) return pathExecutableOnPath(path);
-    var file = std.fs.cwd().openFile(path, .{}) catch return false;
-    file.close();
-    std.posix.access(path, std.posix.X_OK) catch return false;
-    return true;
-}
-
-fn pathExecutableOnPath(name: []const u8) bool {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-    var probe = probeCommand(allocator, &[_][]const u8{ "sh", "-c", "command -v \"$1\" >/dev/null 2>&1", "sh", name }) catch return false;
-    defer probe.deinit(allocator);
-    return probe.available;
-}
-
 fn yesNo(value: bool) []const u8 {
     return if (value) "yes" else "no";
+}
+
+fn upperStatus(status: locator.CandidateStatus) []const u8 {
+    return switch (status) {
+        .missing => "MISSING",
+        .found_not_executable => "FOUND_NOT_EXECUTABLE",
+        .executable => "EXECUTABLE",
+    };
 }
