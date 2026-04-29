@@ -413,6 +413,7 @@ fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
             \\Slash commands:
             \\  /help, /quit, /status, /reasoning <level>, /debug on|off, /json on|off
             \\  /clear, /doctor, /autopsy <path>, /context <path>
+            \\  Typing / shows matching commands. Invalid slash commands are rejected locally.
             \\
             \\Safety:
             \\  Launching the TUI does not run doctor, autopsy, verifiers, scans, or pack mutation.

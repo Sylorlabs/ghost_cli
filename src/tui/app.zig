@@ -2,12 +2,16 @@ const std = @import("std");
 const state = @import("state.zig");
 const render = @import("render.zig");
 const input = @import("input.zig");
+const slash = @import("slash.zig");
 const stats = @import("stats.zig");
 const runner = @import("../engine/runner.zig");
 const json_contracts = @import("../engine/json_contracts.zig");
 const terminal_render = @import("../render/terminal.zig");
 const doctor = @import("../commands/doctor.zig");
 const autopsy = @import("../commands/autopsy.zig");
+
+pub const SlashKind = slash.SlashKind;
+pub const SlashCommand = slash.SlashCommand;
 
 pub const ColorMode = enum {
     auto,
@@ -25,39 +29,12 @@ pub const RunOptions = struct {
     engine_root_label: ?[]const u8 = null,
 };
 
-pub const SlashKind = enum {
-    none,
-    help,
-    quit,
-    status,
-    reasoning,
-    debug,
-    json,
-    clear,
-    doctor,
-    autopsy,
-    context,
-    unknown,
-};
-
-pub const SlashCommand = struct {
-    kind: SlashKind,
-    arg: ?[]const u8 = null,
-};
-
 pub fn parseSlashCommand(text: []const u8) SlashCommand {
-    if (text.len == 0 or text[0] != '/') return .{ .kind = .none };
-    if (std.mem.eql(u8, text, "/help")) return .{ .kind = .help };
-    if (std.mem.eql(u8, text, "/quit")) return .{ .kind = .quit };
-    if (std.mem.eql(u8, text, "/status")) return .{ .kind = .status };
-    if (std.mem.eql(u8, text, "/clear")) return .{ .kind = .clear };
-    if (std.mem.eql(u8, text, "/doctor")) return .{ .kind = .doctor };
-    if (std.mem.startsWith(u8, text, "/reasoning ")) return .{ .kind = .reasoning, .arg = std.mem.trim(u8, text["/reasoning ".len..], " \t") };
-    if (std.mem.startsWith(u8, text, "/debug ")) return .{ .kind = .debug, .arg = std.mem.trim(u8, text["/debug ".len..], " \t") };
-    if (std.mem.startsWith(u8, text, "/json ")) return .{ .kind = .json, .arg = std.mem.trim(u8, text["/json ".len..], " \t") };
-    if (std.mem.startsWith(u8, text, "/autopsy ")) return .{ .kind = .autopsy, .arg = std.mem.trim(u8, text["/autopsy ".len..], " \t") };
-    if (std.mem.startsWith(u8, text, "/context ")) return .{ .kind = .context, .arg = std.mem.trim(u8, text["/context ".len..], " \t") };
-    return .{ .kind = .unknown, .arg = text };
+    return slash.parse(text);
+}
+
+pub fn shouldSubmitToEngine(text: []const u8) bool {
+    return slash.shouldSubmitToEngine(text);
 }
 
 pub fn run(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: RunOptions) !void {
@@ -152,8 +129,8 @@ fn colorEnabled(allocator: std.mem.Allocator, mode: ColorMode) !bool {
 }
 
 fn handleSlash(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *state.SessionState, text: []const u8, writer: anytype, style: render.Style) !?bool {
-    const slash = parseSlashCommand(text);
-    switch (slash.kind) {
+    const command = parseSlashCommand(text);
+    switch (command.kind) {
         .none => return null,
         .quit => return true,
         .help => {
@@ -169,31 +146,31 @@ fn handleSlash(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *state
             try render.clearHistoryArea(writer);
         },
         .reasoning => {
-            const level_str = slash.arg orelse "";
+            const level_str = command.arg orelse "";
             if (std.meta.stringToEnum(json_contracts.ReasoningLevel, level_str)) |level| {
                 s.reasoning = level;
                 s.last_command_status = "reasoning changed";
-                try writer.print("\n{s}[INFO]{s} reasoning={s}\n", .{ style.cyan(), style.reset(), level.toStr() });
+                try render.renderCommandMessage(writer, style, "reasoning={s}", .{level.toStr()});
             } else {
                 s.last_command_status = "invalid reasoning";
-                try writer.print("\n{s}[ERROR]{s} Invalid reasoning level: {s}. Use quick|balanced|deep|max\n", .{ style.yellow(), style.reset(), level_str });
+                try render.renderSystemMessage(writer, style, "Invalid reasoning level: {s}. Use quick|balanced|deep|max", .{level_str});
             }
         },
         .debug => {
-            const setting = slash.arg orelse "";
+            const setting = command.arg orelse "";
             if (std.mem.eql(u8, setting, "on")) s.debug = true else if (std.mem.eql(u8, setting, "off")) s.debug = false else s.debug = !s.debug;
             s.last_command_status = if (s.debug) "debug on" else "debug off";
-            try writer.print("\n{s}[INFO]{s} debug={s}\n", .{ style.cyan(), style.reset(), if (s.debug) "on" else "off" });
+            try render.renderCommandMessage(writer, style, "debug={s}", .{if (s.debug) "on" else "off"});
         },
         .json => {
-            const setting = slash.arg orelse "";
+            const setting = command.arg orelse "";
             if (std.mem.eql(u8, setting, "on")) s.json_mode = true else if (std.mem.eql(u8, setting, "off")) s.json_mode = false else s.json_mode = !s.json_mode;
             s.last_command_status = if (s.json_mode) "json on" else "json off";
-            try writer.print("\n{s}[INFO]{s} json={s}\n", .{ style.cyan(), style.reset(), if (s.json_mode) "on" else "off" });
+            try render.renderCommandMessage(writer, style, "json={s}", .{if (s.json_mode) "on" else "off"});
         },
         .doctor => {
             s.last_command_status = "doctor requested";
-            try writer.print("\n{s}[DOCTOR]{s} explicit read-only diagnostics\n", .{ style.cyan(), style.reset() });
+            try render.renderCommandMessage(writer, style, "doctor: explicit read-only diagnostics", .{});
             try doctor.execute(allocator, engine_root, .{
                 .json = false,
                 .debug = s.debug,
@@ -204,31 +181,31 @@ fn handleSlash(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *state
             });
         },
         .autopsy => {
-            const path = slash.arg orelse "";
+            const path = command.arg orelse "";
             if (path.len == 0) {
                 s.last_command_status = "autopsy path required";
-                try writer.print("\n{s}[ERROR]{s} /autopsy requires an explicit path\n", .{ style.yellow(), style.reset() });
+                try render.renderSystemMessage(writer, style, "/autopsy requires an explicit path", .{});
             } else {
                 s.last_command_status = "autopsy requested";
-                try writer.print("\n{s}[AUTOPSY]{s} explicit scan: {s}\n", .{ style.cyan(), style.reset(), path });
+                try render.renderCommandMessage(writer, style, "autopsy: explicit scan: {s}", .{path});
                 try autopsy.execute(allocator, engine_root, .{ .path = path, .json = false, .debug = s.debug });
             }
         },
         .context => {
-            const path = slash.arg orelse "";
+            const path = command.arg orelse "";
             if (path.len == 0) {
                 s.last_command_status = "context path required";
-                try writer.print("\n{s}[ERROR]{s} /context requires a path\n", .{ style.yellow(), style.reset() });
+                try render.renderSystemMessage(writer, style, "/context requires a path", .{});
             } else {
                 if (s.context_artifact) |ca| allocator.free(ca);
                 s.context_artifact = try allocator.dupe(u8, path);
                 s.last_command_status = "context changed";
-                try writer.print("\n{s}[INFO]{s} context={s}\n", .{ style.cyan(), style.reset(), path });
+                try render.renderCommandMessage(writer, style, "context={s}", .{path});
             }
         },
         .unknown => {
             s.last_command_status = "unknown slash command";
-            try writer.print("\n{s}[ERROR]{s} Unknown slash command: {s}\n", .{ style.yellow(), style.reset(), slash.arg orelse text });
+            try render.renderInvalidSlashCommand(writer, style, command.arg orelse text);
         },
     }
     return false;
@@ -264,7 +241,7 @@ fn handleSubmit(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *stat
         .json = true,
         .debug = s.debug,
     }) catch |err| {
-        try writer.print("\n[ERROR] Failed to run engine: {}\n", .{err});
+        try render.renderSystemMessage(writer, style, "Failed to run engine: {}", .{err});
         return;
     };
     defer res.deinit();

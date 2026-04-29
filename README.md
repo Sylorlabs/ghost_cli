@@ -130,6 +130,14 @@ root/context footer, reasoning/debug/json indicators, and draft/verified/
 unresolved counters from parsed engine output. Launching it does not run doctor,
 autopsy, verifiers, scans, or pack mutation.
 
+Typing `/` shows lightweight native slash-command suggestions using simple prefix
+matching. Invalid slash commands are rejected in the TUI with a clear `SYSTEM`
+message and are not sent to the engine as normal prompts.
+
+History entries are separated by turn and labeled as `YOU`, `GHOST`, `SYSTEM`,
+or `COMMAND` so user input, Ghost responses, local command output, and local
+errors remain distinct.
+
 Slash commands:
 
 - `/help`

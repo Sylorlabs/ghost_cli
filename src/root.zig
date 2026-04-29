@@ -9,6 +9,7 @@ const stats = @import("tui/stats.zig");
 const state = @import("tui/state.zig");
 const tui_app = @import("tui/app.zig");
 const tui_render = @import("tui/render.zig");
+const tui_slash = @import("tui/slash.zig");
 
 fn renderEngineJson(allocator: std.mem.Allocator, json: []const u8) ![]u8 {
     var parsed = try json_contracts.parseEngineJson(allocator, json);
@@ -379,6 +380,9 @@ test "TUI render helper handles correction NK sections" {
         .json_ok = true,
     };
     try tui_render.renderTurn(out_buf.writer(), turn, .{ .color = false });
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "YOU") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "GHOST") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "---- TURN 1") != null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "Correction Recorded:") != null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "Negative Knowledge Candidate Proposed:") != null);
 }
@@ -626,6 +630,8 @@ test "TUI slash command parser covers operator commands" {
     try testing.expectEqual(tui_app.SlashKind.status, tui_app.parseSlashCommand("/status").kind);
     try testing.expectEqual(tui_app.SlashKind.clear, tui_app.parseSlashCommand("/clear").kind);
     try testing.expectEqual(tui_app.SlashKind.doctor, tui_app.parseSlashCommand("/doctor").kind);
+    try testing.expectEqual(tui_app.SlashKind.debug, tui_app.parseSlashCommand("/debug").kind);
+    try testing.expectEqual(tui_app.SlashKind.json, tui_app.parseSlashCommand("/json").kind);
 
     const reasoning = tui_app.parseSlashCommand("/reasoning deep");
     try testing.expectEqual(tui_app.SlashKind.reasoning, reasoning.kind);
@@ -638,6 +644,57 @@ test "TUI slash command parser covers operator commands" {
     const context = tui_app.parseSlashCommand("/context src/main.zig");
     try testing.expectEqual(tui_app.SlashKind.context, context.kind);
     try testing.expectEqualStrings("src/main.zig", context.arg.?);
+}
+
+test "TUI slash command suggestions use prefix matching" {
+    try testing.expectEqual(@as(usize, tui_slash.commands.len), tui_slash.matchingCount("/"));
+    try testing.expectEqual(@as(usize, 1), tui_slash.matchingCount("/r"));
+    try testing.expectEqual(@as(usize, 0), tui_slash.matchingCount("/notreal"));
+
+    var out_buf = std.ArrayList(u8).init(testing.allocator);
+    defer out_buf.deinit();
+    try tui_render.renderSlashSuggestions(out_buf.writer(), "/", 1, .{ .color = false });
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "/help") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "/context") != null);
+
+    out_buf.clearRetainingCapacity();
+    try tui_render.renderSlashSuggestions(out_buf.writer(), "/r", 1, .{ .color = false });
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "/reasoning") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "/debug") == null);
+
+    out_buf.clearRetainingCapacity();
+    try tui_render.renderSlashSuggestions(out_buf.writer(), "/reasoning ", 1, .{ .color = false });
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "/reasoning") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "no matching slash commands") == null);
+
+    out_buf.clearRetainingCapacity();
+    try tui_render.renderSlashSuggestions(out_buf.writer(), "/notreal", 1, .{ .color = false });
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "no matching slash commands") != null);
+}
+
+test "TUI invalid slash command is explicit and not engine-submitted" {
+    const invalid = tui_app.parseSlashCommand("/notreal");
+    try testing.expectEqual(tui_app.SlashKind.unknown, invalid.kind);
+    try testing.expect(!tui_app.shouldSubmitToEngine("/notreal"));
+    try testing.expect(tui_app.shouldSubmitToEngine("normal prompt"));
+
+    var out_buf = std.ArrayList(u8).init(testing.allocator);
+    defer out_buf.deinit();
+    try tui_render.renderInvalidSlashCommand(out_buf.writer(), .{ .color = false }, invalid.arg.?);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "SYSTEM") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "Not a valid command: /notreal") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "Type /help for available commands") != null);
+}
+
+test "TUI command and system render labels are distinguishable" {
+    var out_buf = std.ArrayList(u8).init(testing.allocator);
+    defer out_buf.deinit();
+
+    try tui_render.renderCommandMessage(out_buf.writer(), .{ .color = false }, "debug={s}", .{"on"});
+    try tui_render.renderSystemMessage(out_buf.writer(), .{ .color = false }, "status={s}", .{"ready"});
+
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "COMMAND debug=on") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "SYSTEM status=ready") != null);
 }
 
 test "locator candidate paths - with engine_root" {
