@@ -653,22 +653,26 @@ test "TUI slash command suggestions use prefix matching" {
 
     var out_buf = std.ArrayList(u8).init(testing.allocator);
     defer out_buf.deinit();
-    try tui_render.renderSlashSuggestions(out_buf.writer(), "/", 1, .{ .color = false });
+    try tui_render.renderSlashSuggestions(out_buf.writer(), "/", 20, .{ .color = false });
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "/help") != null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "/context") != null);
+    try testing.expectEqual(@as(u16, 11), tui_render.suggestionHeight("/", .{ .rows = 24, .cols = 80 }, false));
+    try testing.expectEqual(@as(u16, 2), tui_render.suggestionHeight("/r", .{ .rows = 24, .cols = 80 }, false));
+    try testing.expectEqual(@as(u16, 1), tui_render.suggestionHeight("/notreal", .{ .rows = 24, .cols = 80 }, false));
+    try testing.expectEqual(@as(u16, 0), tui_render.suggestionHeight("normal prompt", .{ .rows = 24, .cols = 80 }, false));
 
     out_buf.clearRetainingCapacity();
-    try tui_render.renderSlashSuggestions(out_buf.writer(), "/r", 1, .{ .color = false });
+    try tui_render.renderSlashSuggestions(out_buf.writer(), "/r", 20, .{ .color = false });
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "/reasoning") != null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "/debug") == null);
 
     out_buf.clearRetainingCapacity();
-    try tui_render.renderSlashSuggestions(out_buf.writer(), "/reasoning ", 1, .{ .color = false });
+    try tui_render.renderSlashSuggestions(out_buf.writer(), "/reasoning ", 20, .{ .color = false });
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "/reasoning") != null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "no matching slash commands") == null);
 
     out_buf.clearRetainingCapacity();
-    try tui_render.renderSlashSuggestions(out_buf.writer(), "/notreal", 1, .{ .color = false });
+    try tui_render.renderSlashSuggestions(out_buf.writer(), "/notreal", 20, .{ .color = false });
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "no matching slash commands") != null);
 }
 

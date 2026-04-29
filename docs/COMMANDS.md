@@ -83,6 +83,8 @@ Typing `/` in the TUI shows matching slash commands. Matching is simple prefix m
 - `/r` shows `/reasoning`
 - unknown prefixes show `no matching slash commands`
 
+The suggestion area grows upward from the lower command region as more commands match, shrinks as fewer commands match, and reserves terminal rows so history does not overlap the command list.
+
 Invalid slash commands are rejected locally with `Not a valid command: /name` and `Type /help for available commands`. They are not sent to the engine as chat prompts.
 
 - `/quit`: Exit TUI

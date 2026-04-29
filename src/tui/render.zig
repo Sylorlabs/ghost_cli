@@ -62,7 +62,7 @@ pub fn initTerminal(writer: anytype, style: Style) !void {
         style.yellow(),
         style.reset(),
     });
-    try writer.print("\x1b[2;{d}r", .{historyBottomRow(size)});
+    try writer.print("\x1b[2;{d}r", .{historyBottomRow(size, 0)});
     try writer.writeAll("\x1b[2;1H");
 }
 
@@ -78,7 +78,10 @@ pub fn render(writer: anytype, s: *state.SessionState, style: Style) !void {
     const input_row = size.rows;
     const footer_row = size.rows - 1;
     const status_row = size.rows - 2;
-    const suggestion_row = size.rows - 3;
+    const suggestion_panel_bottom = status_row - 1;
+    const suggestion_height = suggestionHeight(s.current_input.items, size, false);
+
+    try writer.print("\x1b[2;{d}r", .{historyBottomRow(size, suggestion_height)});
 
     try writer.print("\x1b[1;1H{s}\x1b[K GHOST {s} | engine={s} | mode=session | reasoning={s} | turns={d} | draft={d} verified={d} unresolved={d}{s}", .{
         style.header(),
@@ -118,7 +121,7 @@ pub fn render(writer: anytype, s: *state.SessionState, style: Style) !void {
         style.reset(),
     });
 
-    try renderSlashSuggestions(writer, s.current_input.items, suggestion_row, style);
+    try renderSlashSuggestions(writer, s.current_input.items, suggestion_panel_bottom, style);
 
     try writer.print("\x1b[{d};1H\x1b[K{s}ghost>{s} {s}", .{
         input_row,
@@ -131,7 +134,9 @@ pub fn render(writer: anytype, s: *state.SessionState, style: Style) !void {
 pub fn renderCompact(writer: anytype, s: *state.SessionState, style: Style) !void {
     const size = getTerminalSize();
     const status_row = size.rows - 1;
-    const suggestion_row = size.rows - 2;
+    const suggestion_panel_bottom = status_row - 1;
+    const suggestion_height = suggestionHeight(s.current_input.items, size, true);
+    try writer.print("\x1b[2;{d}r", .{historyBottomRow(size, suggestion_height)});
     try writer.print("\x1b[{d};1H{s}\x1b[K Ghost {s} | {s} | turns={d} draft={d} verified={d} unresolved={d} | debug={s} | context={s}{s}", .{
         status_row,
         style.status(),
@@ -145,7 +150,7 @@ pub fn renderCompact(writer: anytype, s: *state.SessionState, style: Style) !voi
         s.context_artifact orelse "none",
         style.reset(),
     });
-    try renderSlashSuggestions(writer, s.current_input.items, suggestion_row, style);
+    try renderSlashSuggestions(writer, s.current_input.items, suggestion_panel_bottom, style);
     try writer.print("\x1b[{d};1H\x1b[K{s}ghost>{s} {s}", .{
         size.rows,
         style.cyan(),
@@ -226,7 +231,7 @@ pub fn renderInputStats(writer: anytype, s: *state.SessionState, style: Style) !
 pub fn renderTurn(writer: anytype, turn: state.Turn, style: Style) !void {
     const size = getTerminalSize();
 
-    try writer.print("\x1b[{d};1H", .{historyBottomRow(size)});
+    try writer.print("\x1b[{d};1H", .{historyBottomRow(size, 0)});
 
     try writer.print("{s}---- TURN {d} | {s} | {d}ms | json={s} ----{s}\n", .{ style.dim(), turn.index, turn.reasoning.toStr(), turn.elapsed_ms, if (turn.json_ok) "ok" else "raw", style.reset() });
     try writer.print("{s}YOU{s}\n{s}\n", .{ style.cyan(), style.reset(), turn.input });
@@ -257,33 +262,77 @@ pub fn clearHistoryArea(writer: anytype) !void {
     try writer.writeAll("\x1b[1;1H");
     // Clear lines from 1 to height-2
     var i: usize = 1;
-    while (i <= historyBottomRow(size)) : (i += 1) {
+    while (i <= historyBottomRow(size, 0)) : (i += 1) {
         try writer.print("\x1b[{d};1H\x1b[K", .{i});
     }
     try writer.writeAll("\x1b[1;1H");
 }
 
-pub fn renderSlashSuggestions(writer: anytype, input_text: []const u8, row: u16, style: Style) !void {
-    try writer.print("\x1b[{d};1H\x1b[K", .{row});
-    if (input_text.len == 0 or input_text[0] != '/') return;
+pub fn renderSlashSuggestions(writer: anytype, input_text: []const u8, panel_bottom: u16, style: Style) !void {
+    try clearSuggestionPanel(writer, panel_bottom);
+
+    const height = suggestionHeightForPanel(input_text, panel_bottom);
+    if (height == 0) return;
+
+    const top = panel_bottom - height + 1;
 
     const token = slash.suggestionToken(input_text);
     const count = slash.matchingCount(token);
     if (count == 0) {
-        try writer.print("{s}COMMAND{s} no matching slash commands | Type /help for available commands", .{ style.yellow(), style.reset() });
+        try writer.print("\x1b[{d};1H{s}COMMAND{s} no matching slash commands | Type /help for available commands", .{ top, style.yellow(), style.reset() });
         return;
     }
 
-    try writer.print("{s}COMMAND{s} ", .{ style.cyan(), style.reset() });
+    try writer.print("\x1b[{d};1H{s}COMMAND{s} slash commands ({d})", .{ top, style.cyan(), style.reset(), count });
     var emitted: usize = 0;
+    var row = top + 1;
     for (slash.commands) |command| {
         if (!std.mem.startsWith(u8, command.name, token)) continue;
-        if (emitted > 0) try writer.writeAll("  ");
-        try writer.print("{s}{s}", .{ command.name, command.args });
+        if (row > panel_bottom) break;
+        try writer.print("\x1b[{d};1H  {s}{s} - {s}", .{ row, command.name, command.args, command.help });
         emitted += 1;
+        row += 1;
     }
 }
 
-fn historyBottomRow(size: TerminalSize) u16 {
-    return if (size.rows > 5) size.rows - 4 else 1;
+pub fn suggestionHeight(input_text: []const u8, size: TerminalSize, compact: bool) u16 {
+    const fixed_rows: u16 = if (compact) 2 else 3;
+    if (size.rows <= fixed_rows + 2) return 0;
+    const panel_bottom = size.rows - fixed_rows;
+    return suggestionHeightForPanel(input_text, panel_bottom);
+}
+
+fn suggestionHeightForPanel(input_text: []const u8, panel_bottom: u16) u16 {
+    if (input_text.len == 0 or input_text[0] != '/') return 0;
+
+    const available = maxSuggestionHeight(panel_bottom);
+    if (available == 0) return 0;
+
+    const token = slash.suggestionToken(input_text);
+    const count = slash.matchingCount(token);
+    const wanted: u16 = if (count == 0) 1 else @as(u16, @intCast(count + 1));
+    return @min(wanted, available);
+}
+
+fn maxSuggestionHeight(panel_bottom: u16) u16 {
+    if (panel_bottom <= 2) return 0;
+    return @min(@as(u16, slash.commands.len + 1), panel_bottom - 1);
+}
+
+fn clearSuggestionPanel(writer: anytype, panel_bottom: u16) !void {
+    const height = maxSuggestionHeight(panel_bottom);
+    if (height == 0) return;
+
+    const top = panel_bottom - height + 1;
+    var row = top;
+    while (row <= panel_bottom) : (row += 1) {
+        try writer.print("\x1b[{d};1H\x1b[K", .{row});
+    }
+}
+
+fn historyBottomRow(size: TerminalSize, suggestion_height: u16) u16 {
+    const base_bottom: u16 = if (size.rows > 5) size.rows - 4 else 1;
+    if (suggestion_height == 0) return base_bottom;
+    if (base_bottom <= suggestion_height) return 1;
+    return base_bottom - suggestion_height;
 }
