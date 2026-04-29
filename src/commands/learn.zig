@@ -53,7 +53,7 @@ fn executeCandidates(allocator: std.mem.Allocator, engine_root: ?[]const u8, opt
     defer res.deinit();
 
     if (options.json) {
-        std.debug.print("{s}\n", .{res.stdout});
+        try std.io.getStdOut().writer().writeAll(res.stdout);
         return;
     }
 
@@ -101,7 +101,7 @@ fn executeShow(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: 
     defer res.deinit();
 
     if (options.json) {
-        std.debug.print("{s}\n", .{res.stdout});
+        try std.io.getStdOut().writer().writeAll(res.stdout);
         return;
     }
 
@@ -167,7 +167,7 @@ fn executeExport(allocator: std.mem.Allocator, engine_root: ?[]const u8, options
     defer res.deinit();
 
     if (options.json) {
-        std.debug.print("{s}\n", .{res.stdout});
+        try std.io.getStdOut().writer().writeAll(res.stdout);
         return;
     }
 

@@ -27,30 +27,52 @@ const CommandKind = enum {
     autopsy,
 };
 
+const CommandGroup = enum {
+    core,
+    inspection,
+    knowledge,
+    advanced,
+    interface,
+
+    fn title(self: CommandGroup) []const u8 {
+        return switch (self) {
+            .core => "Core",
+            .inspection => "Inspection",
+            .knowledge => "Knowledge",
+            .advanced => "Advanced",
+            .interface => "Interface",
+        };
+    }
+};
+
 const CommandDef = struct {
     name: []const u8,
     kind: CommandKind,
     help: []const u8,
+    group: CommandGroup,
+    usage: []const u8,
 };
 
 const command_registry = [_]CommandDef{
-    .{ .name = "chat", .kind = .chat, .help = "Conversational interface to task operator" },
-    .{ .name = "ask", .kind = .ask, .help = "Short one-shot question" },
-    .{ .name = "fix", .kind = .fix, .help = "Propose or perform a fix" },
-    .{ .name = "verify", .kind = .verify, .help = "Verify current workspace state" },
-    .{ .name = "packs", .kind = .packs, .help = "Manage knowledge packs (list, inspect, mount, unmount)" },
-    .{ .name = "learn", .kind = .learn, .help = "Feedback/distillation surface (candidates, show, export)" },
-    .{ .name = "tui", .kind = .tui, .help = "Interactive Ghost Console TUI (same as default)" },
-    .{ .name = "status", .kind = .status, .help = "Show engine availability/status" },
-    .{ .name = "doctor", .kind = .doctor, .help = "Run read-only environment diagnostics" },
-    .{ .name = "autopsy", .kind = .autopsy, .help = "Project Autopsy pass (explicit scan only)" },
-    .{ .name = "debug", .kind = .debug, .help = "Advanced debug commands" },
+    .{ .name = "ask", .kind = .ask, .group = .core, .help = "Short one-shot question", .usage = "ghost ask [options] <message>" },
+    .{ .name = "chat", .kind = .chat, .group = .core, .help = "Conversational interface to task operator", .usage = "ghost chat [options] --message=\"...\"" },
+    .{ .name = "fix", .kind = .fix, .group = .core, .help = "Ask Ghost for a fix-oriented response", .usage = "ghost fix [options] <message>" },
+    .{ .name = "verify", .kind = .verify, .group = .core, .help = "Ask the engine to verify current workspace state", .usage = "ghost verify [options]" },
+    .{ .name = "autopsy", .kind = .autopsy, .group = .inspection, .help = "Project Autopsy pass (explicit scan only)", .usage = "ghost autopsy [--json] [--debug] [path]" },
+    .{ .name = "status", .kind = .status, .group = .inspection, .help = "Show engine availability/status", .usage = "ghost status [--debug]" },
+    .{ .name = "doctor", .kind = .doctor, .group = .inspection, .help = "Run read-only environment diagnostics", .usage = "ghost doctor [--json|--report] [--debug] [--full] [--run-build-check]" },
+    .{ .name = "packs", .kind = .packs, .group = .knowledge, .help = "Manage knowledge packs", .usage = "ghost packs <list|inspect|mount|unmount> [options]" },
+    .{ .name = "learn", .kind = .learn, .group = .knowledge, .help = "Feedback/distillation surface", .usage = "ghost learn <candidates|show|export> [options]" },
+    .{ .name = "debug", .kind = .debug, .group = .advanced, .help = "Advanced raw engine diagnostics", .usage = "ghost debug raw <engine-binary> [args...]" },
+    .{ .name = "tui", .kind = .tui, .group = .interface, .help = "Interactive Ghost operator console", .usage = "ghost tui [options]" },
 };
 
 const CliOptions = struct {
     explicit_engine_root: ?[]const u8 = null,
     json_out: bool = false,
     debug_mode: bool = false,
+    color_mode: tui.ColorMode = .auto,
+    compact: bool = false,
     reasoning_level: ?json_contracts.ReasoningLevel = null,
     context_artifact: ?[]const u8 = null,
     message: ?[]const u8 = null,
@@ -60,6 +82,7 @@ const CliOptions = struct {
     approve: bool = false,
     version_flag: bool = false,
     help_flag: bool = false,
+    subcommand_help: bool = false,
     report: bool = false,
     full: bool = false,
     run_build_check: bool = false,
@@ -93,7 +116,7 @@ pub fn main() !void {
     defer parsed.deinit();
     try parseArgs(&args, &parsed);
 
-    if (parsed.options.help_flag) {
+    if (parsed.options.help_flag and parsed.command == null) {
         try printHelp(std.io.getStdErr().writer());
         return;
     }
@@ -105,6 +128,11 @@ pub fn main() !void {
 
     if (parsed.command == null) {
         try runDefaultTui(allocator, parsed.options);
+        return;
+    }
+
+    if (parsed.options.subcommand_help or parsed.options.help_flag) {
+        try printCommandHelp(std.io.getStdErr().writer(), parsed.command.?);
         return;
     }
 
@@ -128,6 +156,10 @@ pub fn main() !void {
             .reasoning = parsed.options.reasoning_level,
             .context_artifact = parsed.options.context_artifact,
             .debug = parsed.options.debug_mode,
+            .color = parsed.options.color_mode,
+            .compact = parsed.options.compact,
+            .version = build_version,
+            .engine_root_label = root,
         }),
         .status => try status.execute(allocator, root, parsed.options.debug_mode, build_version),
         .doctor => try doctor.execute(allocator, root, .{
@@ -149,6 +181,14 @@ pub fn main() !void {
 
 fn parseArgs(args: *std.process.ArgIterator, parsed: *ParsedCli) !void {
     while (args.next()) |arg| {
+        if (std.mem.eql(u8, arg, "--help")) {
+            if (parsed.command == null) {
+                parsed.options.help_flag = true;
+            } else {
+                parsed.options.subcommand_help = true;
+            }
+            continue;
+        }
         if (try parseFlag(arg, &parsed.options)) continue;
         if (parsed.command == null) {
             if (lookupCommand(arg)) |command| {
@@ -172,6 +212,16 @@ fn parseFlag(arg: []const u8, options: *CliOptions) !bool {
         options.json_out = true;
     } else if (std.mem.eql(u8, arg, "--debug")) {
         options.debug_mode = true;
+    } else if (std.mem.eql(u8, arg, "--no-color")) {
+        options.color_mode = .never;
+    } else if (std.mem.startsWith(u8, arg, "--color=")) {
+        const mode_str = arg["--color=".len..];
+        options.color_mode = std.meta.stringToEnum(tui.ColorMode, mode_str) orelse {
+            try std.io.getStdErr().writer().print("Invalid --color value: {s}. Use auto|always|never.\n", .{mode_str});
+            std.process.exit(1);
+        };
+    } else if (std.mem.eql(u8, arg, "--compact")) {
+        options.compact = true;
     } else if (std.mem.eql(u8, arg, "--approve")) {
         options.approve = true;
     } else if (std.mem.eql(u8, arg, "--report")) {
@@ -182,11 +232,12 @@ fn parseFlag(arg: []const u8, options: *CliOptions) !bool {
         options.run_build_check = true;
     } else if (std.mem.eql(u8, arg, "--version")) {
         options.version_flag = true;
-    } else if (std.mem.eql(u8, arg, "--help")) {
-        options.help_flag = true;
     } else if (std.mem.startsWith(u8, arg, "--reasoning=")) {
         const level_str = arg["--reasoning=".len..];
-        options.reasoning_level = std.meta.stringToEnum(json_contracts.ReasoningLevel, level_str);
+        options.reasoning_level = std.meta.stringToEnum(json_contracts.ReasoningLevel, level_str) orelse {
+            try std.io.getStdErr().writer().print("Invalid --reasoning value: {s}. Use quick|balanced|deep|max.\n", .{level_str});
+            std.process.exit(1);
+        };
     } else if (std.mem.startsWith(u8, arg, "--context-artifact=")) {
         options.context_artifact = arg["--context-artifact=".len..];
     } else if (std.mem.startsWith(u8, arg, "--message=")) {
@@ -218,6 +269,10 @@ fn runDefaultTui(allocator: std.mem.Allocator, options: CliOptions) !void {
         .reasoning = options.reasoning_level,
         .context_artifact = options.context_artifact,
         .debug = options.debug_mode,
+        .color = options.color_mode,
+        .compact = options.compact,
+        .version = build_version,
+        .engine_root_label = root_tui,
     });
 }
 
@@ -277,17 +332,34 @@ fn printHelp(writer: anytype) !void {
         \\  (none)   Launch interactive TUI console (default)
         \\
     , .{});
-    for (command_registry) |command| {
-        try writer.print("  {s:<8} {s}\n", .{ command.name, command.help });
+    inline for (.{ CommandGroup.core, CommandGroup.inspection, CommandGroup.knowledge, CommandGroup.advanced, CommandGroup.interface }) |group| {
+        try writer.print("\n  {s}:\n", .{group.title()});
+        for (command_registry) |command| {
+            if (command.group == group) {
+                try writer.print("    {s:<8} {s}\n", .{ command.name, command.help });
+            }
+        }
     }
     try writer.print(
         \\
-        \\Options:
+        \\Common options:
         \\
         \\  --message="..."        The message/request to send
         \\  --reasoning=<level>    quick|balanced|deep|max
         \\  --context-artifact=<p> Pass a path as context
         \\  --version              Show version information
+        \\  --engine-root=<path>   Explicitly set path to ghost_engine binaries
+        \\  --help                 Show help
+        \\
+        \\Output options:
+        \\
+        \\  --json                 Preserve raw engine JSON where supported
+        \\  --no-color             Disable ANSI color in native TUI surfaces
+        \\  --color=<mode>         auto|always|never
+        \\  --compact              Use tighter native TUI layout
+        \\
+        \\Advanced/debug options:
+        \\
         \\  --version=<v>          Specific version for packs/distillation
         \\  --project-shard=<s>    Project shard ID for distillation
         \\  --pack-id=<id>         Target pack ID for export
@@ -295,10 +367,102 @@ fn printHelp(writer: anytype) !void {
         \\  --report               Print copy-paste tester report for doctor
         \\  --full                 Include optional doctor checks
         \\  --run-build-check      Let doctor run `zig build --help`
-        \\  --engine-root=<path>   Explicitly set path to ghost_engine binaries
-        \\  --json                 Output in JSON format
         \\  --debug                Show debug information
-        \\  --help                 Show this help message
+        \\
+        \\Use `ghost <command> --help` for command-specific usage.
         \\
     , .{});
+}
+
+fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
+    const command = commandByKind(kind).?;
+    try writer.print("{s}\n\nUsage: {s}\n\n{s}\n", .{ command.name, command.usage, command.help });
+    switch (kind) {
+        .ask, .chat, .fix => try writer.print(
+            \\
+            \\Options:
+            \\  --message="..."        Message to send
+            \\  --reasoning=<level>    quick|balanced|deep|max
+            \\  --context-artifact=<p> Attach explicit context path
+            \\  --engine-root=<path>   Resolve engine binaries from path
+            \\  --json                 Preserve raw engine stdout exactly
+            \\  --debug                Diagnostics to stderr
+            \\
+        , .{}),
+        .verify => try writer.print(
+            \\
+            \\Options:
+            \\  --reasoning=<level>    quick|balanced|deep|max
+            \\  --context-artifact=<p> Attach explicit context path
+            \\  --engine-root=<path>   Resolve engine binaries from path
+            \\  --json                 Preserve raw engine stdout exactly
+            \\  --debug                Diagnostics to stderr
+            \\
+        , .{}),
+        .tui => try writer.print(
+            \\
+            \\Options:
+            \\  --reasoning=<level>    quick|balanced|deep|max
+            \\  --context-artifact=<p> Set active context artifact
+            \\  --engine-root=<path>   Resolve engine binaries from path when commands run
+            \\  --debug                Start with debug mode on
+            \\  --no-color             Disable ANSI color
+            \\  --color=<mode>         auto|always|never
+            \\  --compact              Tighter layout
+            \\
+            \\Slash commands:
+            \\  /help, /quit, /status, /reasoning <level>, /debug on|off, /json on|off
+            \\  /clear, /doctor, /autopsy <path>, /context <path>
+            \\
+            \\Safety:
+            \\  Launching the TUI does not run doctor, autopsy, verifiers, scans, or pack mutation.
+            \\
+        , .{}),
+        .doctor => try writer.print(
+            \\
+            \\Options:
+            \\  --json                 Emit diagnostic JSON
+            \\  --report               Copy-paste tester report
+            \\  --full                 Include optional probes
+            \\  --run-build-check      Run `zig build --help` only
+            \\  --debug                Include candidate resolution detail
+            \\
+        , .{}),
+        .status => try writer.print("\nOptions:\n  --debug                Include candidate resolution detail\n", .{}),
+        .autopsy => try writer.print(
+            \\
+            \\Options:
+            \\  --json                 Preserve raw autopsy JSON exactly
+            \\  --debug                Diagnostics to stderr
+            \\
+            \\Safety:
+            \\  This scan runs only when this command is explicitly invoked.
+            \\
+        , .{}),
+        .packs => try writer.print(
+            \\
+            \\Subcommands:
+            \\  list
+            \\  inspect <pack-id> [--version=<v>]
+            \\  mount <pack-id> [--version=<v>]
+            \\  unmount <pack-id> [--version=<v>]
+            \\
+        , .{}),
+        .learn => try writer.print(
+            \\
+            \\Subcommands:
+            \\  candidates --project-shard=<id>
+            \\  show <candidate-id> --project-shard=<id>
+            \\  export <candidate-id> --project-shard=<id> --pack-id=<id> --version=<v> --approve
+            \\
+        , .{}),
+        .debug => try writer.print("\nAdvanced raw diagnostic command. Does not reinterpret engine output.\n", .{}),
+    }
+}
+
+fn commandByKind(kind: CommandKind) ?CommandDef {
+    for (command_registry) |command| {
+        if (command.kind == kind) return command;
+    }
+    return null;
 }

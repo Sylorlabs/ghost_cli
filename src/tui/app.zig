@@ -6,14 +6,75 @@ const stats = @import("stats.zig");
 const runner = @import("../engine/runner.zig");
 const json_contracts = @import("../engine/json_contracts.zig");
 const terminal_render = @import("../render/terminal.zig");
+const doctor = @import("../commands/doctor.zig");
+const autopsy = @import("../commands/autopsy.zig");
 
-pub fn run(allocator: std.mem.Allocator, engine_root: ?[]const u8, initial_reasoning: ?json_contracts.ReasoningLevel, initial_context: ?[]const u8, initial_debug: bool) !void {
-    var s = state.SessionState.init(allocator);
+pub const ColorMode = enum {
+    auto,
+    always,
+    never,
+};
+
+pub const RunOptions = struct {
+    reasoning: ?json_contracts.ReasoningLevel = null,
+    context_artifact: ?[]const u8 = null,
+    debug: bool = false,
+    color: ColorMode = .auto,
+    compact: bool = false,
+    version: []const u8,
+    engine_root_label: ?[]const u8 = null,
+};
+
+pub const SlashKind = enum {
+    none,
+    help,
+    quit,
+    status,
+    reasoning,
+    debug,
+    json,
+    clear,
+    doctor,
+    autopsy,
+    context,
+    unknown,
+};
+
+pub const SlashCommand = struct {
+    kind: SlashKind,
+    arg: ?[]const u8 = null,
+};
+
+pub fn parseSlashCommand(text: []const u8) SlashCommand {
+    if (text.len == 0 or text[0] != '/') return .{ .kind = .none };
+    if (std.mem.eql(u8, text, "/help")) return .{ .kind = .help };
+    if (std.mem.eql(u8, text, "/quit")) return .{ .kind = .quit };
+    if (std.mem.eql(u8, text, "/status")) return .{ .kind = .status };
+    if (std.mem.eql(u8, text, "/clear")) return .{ .kind = .clear };
+    if (std.mem.eql(u8, text, "/doctor")) return .{ .kind = .doctor };
+    if (std.mem.startsWith(u8, text, "/reasoning ")) return .{ .kind = .reasoning, .arg = std.mem.trim(u8, text["/reasoning ".len..], " \t") };
+    if (std.mem.startsWith(u8, text, "/debug ")) return .{ .kind = .debug, .arg = std.mem.trim(u8, text["/debug ".len..], " \t") };
+    if (std.mem.startsWith(u8, text, "/json ")) return .{ .kind = .json, .arg = std.mem.trim(u8, text["/json ".len..], " \t") };
+    if (std.mem.startsWith(u8, text, "/autopsy ")) return .{ .kind = .autopsy, .arg = std.mem.trim(u8, text["/autopsy ".len..], " \t") };
+    if (std.mem.startsWith(u8, text, "/context ")) return .{ .kind = .context, .arg = std.mem.trim(u8, text["/context ".len..], " \t") };
+    return .{ .kind = .unknown, .arg = text };
+}
+
+pub fn run(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: RunOptions) !void {
+    if (!input.isTty()) {
+        try render.renderNonTty(std.io.getStdErr().writer());
+        return;
+    }
+
+    const color_enabled = try colorEnabled(allocator, options.color);
+    const style = render.Style{ .color = color_enabled };
+
+    var s = state.SessionState.init(allocator, options.version, options.engine_root_label, options.compact);
     defer s.deinit();
 
-    if (initial_reasoning) |r| s.reasoning = r;
-    if (initial_context) |c| s.context_artifact = try allocator.dupe(u8, c);
-    s.debug = initial_debug;
+    if (options.reasoning) |r| s.reasoning = r;
+    if (options.context_artifact) |c| s.context_artifact = try allocator.dupe(u8, c);
+    s.debug = options.debug;
 
     const stdin = std.io.getStdIn();
     const stdout = std.io.getStdOut();
@@ -22,12 +83,12 @@ pub fn run(allocator: std.mem.Allocator, engine_root: ?[]const u8, initial_reaso
     var raw_mode = try input.RawMode.enable();
     defer raw_mode.disable();
 
-    try render.initTerminal(writer);
+    try render.initTerminal(writer, style);
     defer render.deinitTerminal(writer) catch {};
 
     while (true) {
         s.last_ram_bytes = stats.getCliRamRss();
-        try render.render(writer, &s);
+        try render.renderFrame(writer, &s, style);
 
         const key = try input.readKey(stdin.reader());
         switch (key) {
@@ -35,7 +96,10 @@ pub fn run(allocator: std.mem.Allocator, engine_root: ?[]const u8, initial_reaso
                 switch (c) {
                     'C' => break,
                     'R' => s.cycleReasoning(),
-                    'D' => s.debug = !s.debug,
+                    'D' => {
+                        s.debug = !s.debug;
+                        s.last_command_status = if (s.debug) "debug on" else "debug off";
+                    },
                     'L' => {
                         s.clearHistory();
                         try render.clearHistoryArea(writer);
@@ -51,40 +115,12 @@ pub fn run(allocator: std.mem.Allocator, engine_root: ?[]const u8, initial_reaso
                 defer allocator.free(cmd_text);
                 s.current_input.clearRetainingCapacity();
 
-                if (std.mem.eql(u8, cmd_text, "/quit")) break;
-                if (std.mem.eql(u8, cmd_text, "/help")) {
-                    try writer.writeAll("\n\x1b[36m[HELP] Commands:\x1b[0m /quit, /help, /status, /reasoning <level>, /context <path>\n");
-                    try writer.writeAll("\x1b[36m[HELP] Keys:\x1b[0m Ctrl+C (quit), Ctrl+R (cycle reasoning), Ctrl+D (debug), Ctrl+L (clear history)\n");
-                    continue;
-                }
-                if (std.mem.startsWith(u8, cmd_text, "/reasoning ")) {
-                    const level_str = cmd_text[11..];
-                    if (std.meta.stringToEnum(json_contracts.ReasoningLevel, level_str)) |level| {
-                        s.reasoning = level;
-                        try writer.print("\n\x1b[32m[INFO] Reasoning set to: {s}\x1b[0m\n", .{@tagName(level)});
-                    } else {
-                        try writer.print("\n\x1b[31m[ERROR] Invalid reasoning level: {s}. Use quick|balanced|deep|max\x1b[0m\n", .{level_str});
-                    }
-                    continue;
-                }
-                if (std.mem.startsWith(u8, cmd_text, "/context ")) {
-                    const path = cmd_text[9..];
-                    if (s.context_artifact) |ca| allocator.free(ca);
-                    s.context_artifact = try allocator.dupe(u8, path);
-                    try writer.print("\n\x1b[32m[INFO] Context artifact set to: {s}\x1b[0m\n", .{path});
-                    continue;
-                }
-                if (std.mem.eql(u8, cmd_text, "/status")) {
-                    // This is a bit tricky to run in TUI as it might scroll the region
-                    // But we can just print it.
-                    try writer.writeAll("\n\x1b[36m--- TUI Session Status ---\x1b[0m\n");
-                    try writer.print("Turns: {d}\n", .{s.history.items.len});
-                    try writer.print("Reasoning: {s}\n", .{@tagName(s.reasoning)});
-                    try writer.print("Debug: {s}\n", .{if (s.debug) "on" else "off"});
+                if (try handleSlash(allocator, engine_root, &s, cmd_text, writer, style)) |should_quit| {
+                    if (should_quit) break;
                     continue;
                 }
 
-                try handleSubmit(allocator, engine_root, &s, cmd_text, writer);
+                try handleSubmit(allocator, engine_root, &s, cmd_text, writer, style);
             },
             .backspace => {
                 if (s.current_input.items.len > 0) {
@@ -100,7 +136,105 @@ pub fn run(allocator: std.mem.Allocator, engine_root: ?[]const u8, initial_reaso
     }
 }
 
-fn handleSubmit(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *state.SessionState, cmd_text: []const u8, writer: anytype) !void {
+fn colorEnabled(allocator: std.mem.Allocator, mode: ColorMode) !bool {
+    return switch (mode) {
+        .always => true,
+        .never => false,
+        .auto => blk: {
+            const no_color = std.process.getEnvVarOwned(allocator, "NO_COLOR") catch |err| switch (err) {
+                error.EnvironmentVariableNotFound => break :blk true,
+                else => return err,
+            };
+            allocator.free(no_color);
+            break :blk false;
+        },
+    };
+}
+
+fn handleSlash(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *state.SessionState, text: []const u8, writer: anytype, style: render.Style) !?bool {
+    const slash = parseSlashCommand(text);
+    switch (slash.kind) {
+        .none => return null,
+        .quit => return true,
+        .help => {
+            try render.renderHelp(writer, style);
+            s.last_command_status = "help";
+        },
+        .status => {
+            try render.renderStatus(writer, s, style);
+            s.last_command_status = "status";
+        },
+        .clear => {
+            s.clearHistory();
+            try render.clearHistoryArea(writer);
+        },
+        .reasoning => {
+            const level_str = slash.arg orelse "";
+            if (std.meta.stringToEnum(json_contracts.ReasoningLevel, level_str)) |level| {
+                s.reasoning = level;
+                s.last_command_status = "reasoning changed";
+                try writer.print("\n{s}[INFO]{s} reasoning={s}\n", .{ style.cyan(), style.reset(), level.toStr() });
+            } else {
+                s.last_command_status = "invalid reasoning";
+                try writer.print("\n{s}[ERROR]{s} Invalid reasoning level: {s}. Use quick|balanced|deep|max\n", .{ style.yellow(), style.reset(), level_str });
+            }
+        },
+        .debug => {
+            const setting = slash.arg orelse "";
+            if (std.mem.eql(u8, setting, "on")) s.debug = true else if (std.mem.eql(u8, setting, "off")) s.debug = false else s.debug = !s.debug;
+            s.last_command_status = if (s.debug) "debug on" else "debug off";
+            try writer.print("\n{s}[INFO]{s} debug={s}\n", .{ style.cyan(), style.reset(), if (s.debug) "on" else "off" });
+        },
+        .json => {
+            const setting = slash.arg orelse "";
+            if (std.mem.eql(u8, setting, "on")) s.json_mode = true else if (std.mem.eql(u8, setting, "off")) s.json_mode = false else s.json_mode = !s.json_mode;
+            s.last_command_status = if (s.json_mode) "json on" else "json off";
+            try writer.print("\n{s}[INFO]{s} json={s}\n", .{ style.cyan(), style.reset(), if (s.json_mode) "on" else "off" });
+        },
+        .doctor => {
+            s.last_command_status = "doctor requested";
+            try writer.print("\n{s}[DOCTOR]{s} explicit read-only diagnostics\n", .{ style.cyan(), style.reset() });
+            try doctor.execute(allocator, engine_root, .{
+                .json = false,
+                .debug = s.debug,
+                .report = false,
+                .full = false,
+                .run_build_check = false,
+                .version = s.version,
+            });
+        },
+        .autopsy => {
+            const path = slash.arg orelse "";
+            if (path.len == 0) {
+                s.last_command_status = "autopsy path required";
+                try writer.print("\n{s}[ERROR]{s} /autopsy requires an explicit path\n", .{ style.yellow(), style.reset() });
+            } else {
+                s.last_command_status = "autopsy requested";
+                try writer.print("\n{s}[AUTOPSY]{s} explicit scan: {s}\n", .{ style.cyan(), style.reset(), path });
+                try autopsy.execute(allocator, engine_root, .{ .path = path, .json = false, .debug = s.debug });
+            }
+        },
+        .context => {
+            const path = slash.arg orelse "";
+            if (path.len == 0) {
+                s.last_command_status = "context path required";
+                try writer.print("\n{s}[ERROR]{s} /context requires a path\n", .{ style.yellow(), style.reset() });
+            } else {
+                if (s.context_artifact) |ca| allocator.free(ca);
+                s.context_artifact = try allocator.dupe(u8, path);
+                s.last_command_status = "context changed";
+                try writer.print("\n{s}[INFO]{s} context={s}\n", .{ style.cyan(), style.reset(), path });
+            }
+        },
+        .unknown => {
+            s.last_command_status = "unknown slash command";
+            try writer.print("\n{s}[ERROR]{s} Unknown slash command: {s}\n", .{ style.yellow(), style.reset(), slash.arg orelse text });
+        },
+    }
+    return false;
+}
+
+fn handleSubmit(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *state.SessionState, cmd_text: []const u8, writer: anytype, style: render.Style) !void {
     const start_time = std.time.milliTimestamp();
 
     var arena = std.heap.ArenaAllocator.init(allocator);
@@ -142,10 +276,14 @@ fn handleSubmit(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *stat
 
     var json_ok = false;
 
-    if (json_contracts.parseEngineJson(allocator, res.stdout)) |parsed| {
+    if (s.json_mode) {
+        try rendered_buf.appendSlice(res.stdout);
+        json_ok = true;
+    } else if (json_contracts.parseEngineJson(allocator, res.stdout)) |parsed| {
         // defer parsed.deinit(); // We'd need to copy the response if we deinit here
         // For now, let's just render it into our buffer
         s.last_counters = json_contracts.renderCounters(parsed.value);
+        s.recordResponseState(parsed.value);
         if (s.debug) try terminal_render.printDebugFieldDetection(rendered_buf.writer(), parsed.value);
         try terminal_render.printEngineOutput(rendered_buf.writer(), parsed.value);
         json_ok = true;
@@ -173,5 +311,6 @@ fn handleSubmit(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *stat
     };
 
     try s.history.append(turn);
-    try render.renderTurn(writer, turn);
+    s.last_command_status = if (res.exit_code == 0) "engine response" else "engine error";
+    try render.renderTurn(writer, turn, style);
 }

@@ -1,5 +1,16 @@
 # Commands
 
+Top-level help is organized around Ghost operator workflows:
+
+- **Core**: `ask`, `chat`, `fix`, `verify`
+- **Inspection**: `autopsy`, `status`, `doctor`
+- **Knowledge**: `packs`, `learn`
+- **Advanced**: `debug`
+- **Interface**: `tui`
+
+Every top-level command supports `ghost <command> --help` without resolving or
+executing engine binaries.
+
 ### Default (no command)
 
 Running `ghost` with no arguments launches the interactive TUI console — the same as `ghost tui`.
@@ -50,9 +61,12 @@ Usage: `ghost packs unmount zig_runtime_sync`
 ### `ghost tui`
 Interactive Ghost Console TUI. Provides a live cockpit view for interacting with the engine.
 
-Usage: `ghost tui [--reasoning=quick|balanced|deep|max] [--context-artifact=<path>]`
+Usage: `ghost tui [--reasoning=quick|balanced|deep|max] [--context-artifact=<path>] [--no-color|--color=auto|always|never] [--compact]`
 
 History output uses the same renderer as terminal chat/ask output, including correction, negative-knowledge, and epistemic sections when the engine reports them. The status bar includes compact counters for corrections, applied/proposed negative knowledge, verifier requirements, suppressions, and routing warnings.
+
+If stdin/stdout is not an interactive TTY, `ghost`/`ghost tui` exits gracefully
+with a message. No engine command is run in that fallback path.
 
 #### Keybindings
 - `Ctrl+C`: Quit
@@ -67,6 +81,11 @@ History output uses the same renderer as terminal chat/ask output, including cor
 - `/help`: Show help text
 - `/status`: Show session turn count and settings
 - `/reasoning <level>`: Change reasoning level
+- `/debug on|off`: Toggle debug diagnostics
+- `/json on|off`: Toggle raw JSON capture for submitted prompts
+- `/clear`: Clear the local TUI history
+- `/doctor`: Explicitly run read-only doctor diagnostics
+- `/autopsy <path>`: Explicitly run Project Autopsy for a path
 - `/context <path>`: Set context artifact path
 
 ### `ghost learn`
@@ -133,6 +152,32 @@ Example: `ghost debug raw ghost_knowledge_pack list`
 For rendered commands such as `ghost ask --debug`, debug output reports whether correction, negative-knowledge, and epistemic fields were detected without dumping large arrays.
 
 When `--json` is set, engine stdout is passed through exactly. Debug diagnostics and engine stderr go to stderr.
+
+### Common and Advanced Options
+
+Common workflow options:
+
+- `--message="..."`: message/request to send where supported
+- `--reasoning=quick|balanced|deep|max`: engine-supported public reasoning level
+- `--context-artifact=<path>`: explicit context path
+- `--engine-root=<path>`: explicit `ghost_engine` binary root
+
+Output options:
+
+- `--json`: preserve raw engine stdout exactly where the command promises JSON passthrough
+- `--no-color`: disable ANSI color in native TUI surfaces
+- `--color=auto|always|never`: control native TUI color
+- `--compact`: use a tighter native TUI layout
+
+Advanced/debug options:
+
+- `--debug`: diagnostics to stderr for rendered commands
+- `--project-shard=<id>`, `--pack-id=<id>`, `--version=<v>`, `--approve`: knowledge lifecycle options
+- `--report`, `--full`, `--run-build-check`: doctor-only diagnostics options
+
+Not implemented: `--timeout-ms` and normal-command `--raw`. There is no runner
+timeout contract yet, and raw engine execution remains scoped to
+`ghost debug raw <engine-binary> [args...]`.
 
 ## First Tester Checklist
 

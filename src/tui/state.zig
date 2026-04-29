@@ -22,11 +22,20 @@ pub const SessionState = struct {
     reasoning: json_contracts.ReasoningLevel,
     context_artifact: ?[]const u8,
     debug: bool,
+    json_mode: bool,
+    compact: bool,
+    version: []const u8,
+    engine_root_label: ?[]const u8,
+    last_command_status: []const u8,
+    warnings: std.ArrayList([]const u8),
     engine_found: bool,
     last_ram_bytes: ?usize,
     last_counters: json_contracts.RenderCounters,
+    draft_count: usize,
+    verified_count: usize,
+    unresolved_count: usize,
 
-    pub fn init(allocator: std.mem.Allocator) SessionState {
+    pub fn init(allocator: std.mem.Allocator, version: []const u8, engine_root_label: ?[]const u8, compact: bool) SessionState {
         return .{
             .allocator = allocator,
             .history = std.ArrayList(Turn).init(allocator),
@@ -34,9 +43,18 @@ pub const SessionState = struct {
             .reasoning = .balanced,
             .context_artifact = null,
             .debug = false,
+            .json_mode = false,
+            .compact = compact,
+            .version = version,
+            .engine_root_label = engine_root_label,
+            .last_command_status = "ready",
+            .warnings = std.ArrayList([]const u8).init(allocator),
             .engine_found = false,
             .last_ram_bytes = null,
             .last_counters = .{},
+            .draft_count = 0,
+            .verified_count = 0,
+            .unresolved_count = 0,
         };
     }
 
@@ -50,6 +68,7 @@ pub const SessionState = struct {
         }
         self.history.deinit();
         self.current_input.deinit();
+        self.warnings.deinit();
         if (self.context_artifact) |ca| self.allocator.free(ca);
     }
 
@@ -70,5 +89,24 @@ pub const SessionState = struct {
             if (turn.context_artifact) |ca| self.allocator.free(ca);
         }
         self.history.clearRetainingCapacity();
+        self.last_counters = .{};
+        self.draft_count = 0;
+        self.verified_count = 0;
+        self.unresolved_count = 0;
+        self.last_command_status = "history cleared";
+    }
+
+    pub fn recordResponseState(self: *SessionState, response: json_contracts.EngineResponse) void {
+        if (response.isDraftStatus()) {
+            self.draft_count += 1;
+            return;
+        }
+        if (response.getVerificationState()) |verification| {
+            if (std.mem.eql(u8, verification, "verified") or std.mem.eql(u8, verification, "supported")) {
+                self.verified_count += 1;
+            } else if (std.mem.eql(u8, verification, "unresolved")) {
+                self.unresolved_count += 1;
+            }
+        }
     }
 };

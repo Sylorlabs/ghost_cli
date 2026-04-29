@@ -30,7 +30,67 @@ test "help text lists all top-level commands" {
     try testing.expect(std.mem.indexOf(u8, res.stderr, "learn") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "status") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "doctor") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "autopsy") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "debug") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "tui") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "Core:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "Inspection:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "Knowledge:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "Advanced:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "Interface:") != null);
+}
+
+test "subcommand help works without resolving engine" {
+    const tui_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "tui", "--help", "--engine-root=/tmp/ghost-help-missing" });
+    defer {
+        testing.allocator.free(tui_res.stdout);
+        testing.allocator.free(tui_res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), tui_res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, tui_res.stderr, "Usage: ghost tui") != null);
+    try testing.expect(std.mem.indexOf(u8, tui_res.stderr, "/autopsy <path>") != null);
+
+    const autopsy_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "autopsy", "--help", "--engine-root=/tmp/ghost-help-missing" });
+    defer {
+        testing.allocator.free(autopsy_res.stdout);
+        testing.allocator.free(autopsy_res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), autopsy_res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, autopsy_res.stderr, "Usage: ghost autopsy") != null);
+    try testing.expect(std.mem.indexOf(u8, autopsy_res.stderr, "explicitly invoked") != null);
+}
+
+test "advanced renderer options parse consistently" {
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "tui",
+        "--help",
+        "--no-color",
+        "--color=never",
+        "--compact",
+        "--reasoning=max",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "--compact") != null);
+}
+
+test "invalid reasoning fails clearly" {
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "ask",
+        "--reasoning=fastest",
+        "hello",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+    try testing.expect(res.term.Exited != 0);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "Invalid --reasoning value") != null);
 }
 
 test "version flag works" {
@@ -321,29 +381,24 @@ test "doctor and status share locator semantics for non executable binary" {
 // Default TUI routing and flag regression tests
 // ---------------------------------------------------------------------------
 
-test "no-arg invocation attempts TUI not static help" {
-    // The TUI enters raw mode and blocks on stdin, so we cannot invoke `ghost`
-    // bare in a non-interactive test without hanging.  Instead we verify the
-    // routing contract via two observable proxy signals:
-    //   1. `ghost --help` now documents the no-arg TUI default.
-    //   2. The help output does NOT start with the old static-only preamble
-    //      that was the sole result of a bare invocation.
-    // This is the safe smoke method called out in the audit spec.
-    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "--help" });
+test "no-arg invocation routes to graceful non-tty TUI without scan" {
+    const mock_root = "/tmp/ghost-cli-noarg-non-tty";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    const marker = mock_root ++ "/scan-marker";
+    try writeMockExecutable(mock_root ++ "/ghost_project_autopsy", "#!/bin/sh\ntouch '" ++ marker ++ "'\nprintf '{}'\n");
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "--engine-root=" ++ mock_root });
     defer {
         testing.allocator.free(res.stdout);
         testing.allocator.free(res.stderr);
     }
-    // Updated help must mention TUI/no-arg default
-    const has_noarg_doc = std.mem.indexOf(u8, res.stderr, "no arguments") != null or
-        std.mem.indexOf(u8, res.stderr, "(none)") != null;
-    try testing.expect(has_noarg_doc);
-    // All commands still listed in help
-    try testing.expect(std.mem.indexOf(u8, res.stderr, "chat") != null);
-    try testing.expect(std.mem.indexOf(u8, res.stderr, "ask") != null);
-    try testing.expect(std.mem.indexOf(u8, res.stderr, "tui") != null);
-    try testing.expect(std.mem.indexOf(u8, res.stderr, "doctor") != null);
-    try testing.expect(std.mem.indexOf(u8, res.stderr, "status") != null);
+
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "requires an interactive TTY") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "No engine command was run") != null);
+    try testing.expectError(error.FileNotFound, std.fs.cwd().access(marker, .{}));
 }
 
 test "help flag still prints help" {
@@ -631,6 +686,7 @@ test "no-arg ghost routes through TUI preflight and does not run autopsy scan" {
         testing.allocator.free(res.stderr);
     }
 
-    try testing.expect(std.mem.indexOf(u8, res.stderr, "Engine binary 'ghost_task_operator' is missing") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "requires an interactive TTY") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "No engine command was run") != null);
     try testing.expectError(error.FileNotFound, std.fs.cwd().access(marker, .{}));
 }

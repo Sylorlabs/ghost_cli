@@ -7,6 +7,7 @@ const json_contracts = @import("engine/json_contracts.zig");
 const terminal = @import("render/terminal.zig");
 const stats = @import("tui/stats.zig");
 const state = @import("tui/state.zig");
+const tui_app = @import("tui/app.zig");
 const tui_render = @import("tui/render.zig");
 
 fn renderEngineJson(allocator: std.mem.Allocator, json: []const u8) ![]u8 {
@@ -377,7 +378,7 @@ test "TUI render helper handles correction NK sections" {
         .output_runes = stats.countRunes(rendered),
         .json_ok = true,
     };
-    try tui_render.renderTurn(out_buf.writer(), turn);
+    try tui_render.renderTurn(out_buf.writer(), turn, .{ .color = false });
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "Correction Recorded:") != null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "Negative Knowledge Candidate Proposed:") != null);
 }
@@ -569,7 +570,7 @@ test "rune counting handles ASCII and Unicode" {
 }
 
 test "reasoning cycling" {
-    var s = state.SessionState.init(testing.allocator);
+    var s = state.SessionState.init(testing.allocator, "test", null, false);
     defer s.deinit();
 
     try testing.expect(s.reasoning == .balanced);
@@ -596,7 +597,7 @@ test "stats RAM formatting" {
 }
 
 test "TUI session state clear history" {
-    var s = state.SessionState.init(testing.allocator);
+    var s = state.SessionState.init(testing.allocator, "test", null, false);
     defer s.deinit();
 
     const turn = state.Turn{
@@ -617,6 +618,26 @@ test "TUI session state clear history" {
     try testing.expectEqual(@as(usize, 1), s.history.items.len);
     s.clearHistory();
     try testing.expectEqual(@as(usize, 0), s.history.items.len);
+}
+
+test "TUI slash command parser covers operator commands" {
+    try testing.expectEqual(tui_app.SlashKind.help, tui_app.parseSlashCommand("/help").kind);
+    try testing.expectEqual(tui_app.SlashKind.quit, tui_app.parseSlashCommand("/quit").kind);
+    try testing.expectEqual(tui_app.SlashKind.status, tui_app.parseSlashCommand("/status").kind);
+    try testing.expectEqual(tui_app.SlashKind.clear, tui_app.parseSlashCommand("/clear").kind);
+    try testing.expectEqual(tui_app.SlashKind.doctor, tui_app.parseSlashCommand("/doctor").kind);
+
+    const reasoning = tui_app.parseSlashCommand("/reasoning deep");
+    try testing.expectEqual(tui_app.SlashKind.reasoning, reasoning.kind);
+    try testing.expectEqualStrings("deep", reasoning.arg.?);
+
+    const autopsy_cmd = tui_app.parseSlashCommand("/autopsy .");
+    try testing.expectEqual(tui_app.SlashKind.autopsy, autopsy_cmd.kind);
+    try testing.expectEqualStrings(".", autopsy_cmd.arg.?);
+
+    const context = tui_app.parseSlashCommand("/context src/main.zig");
+    try testing.expectEqual(tui_app.SlashKind.context, context.kind);
+    try testing.expectEqualStrings("src/main.zig", context.arg.?);
 }
 
 test "locator candidate paths - with engine_root" {

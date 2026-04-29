@@ -1,5 +1,9 @@
 const std = @import("std");
 
+pub fn isTty() bool {
+    return std.posix.isatty(std.posix.STDIN_FILENO) and std.posix.isatty(std.posix.STDOUT_FILENO);
+}
+
 pub const Key = union(enum) {
     char: u8,
     ctrl: u8,

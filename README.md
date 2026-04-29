@@ -43,6 +43,8 @@ By default, the CLI looks for `ghost_engine` binaries in standard development pa
 Binary resolution is explicit: candidates are reported as engine-root, engine-root `zig-out`, dev fallback, or PATH candidates, and as executable, found-not-executable, or missing. Normal command execution requires an executable binary and fails before launch when the selected engine binary is missing.
 
 **Running `ghost` with no arguments launches the interactive TUI console.**
+In a non-interactive pipe or script, the TUI path exits cleanly and reports that
+no engine command, doctor check, autopsy scan, verifier, or pack mutation ran.
 
 ### Examples
 
@@ -65,6 +67,7 @@ ghost verify --context-artifact=src/main.zig --reasoning=max
 
 # Interactive TUI Console
 ghost tui
+ghost tui --reasoning=deep --compact --color=auto
 
 # List knowledge packs
 ghost packs list
@@ -101,6 +104,44 @@ Normal users specify `--reasoning=quick|balanced|deep|max`.
 - **balanced**: Default. Mix of speed and thoroughness.
 - **deep**: Thorough, verifies when useful, may take longer.
 - **max**: Most thorough. Uses the largest budget allowance without forcing expensive verification.
+
+### Command Help and Options
+
+Top-level help is grouped by operator workflow:
+
+- Core: `ask`, `chat`, `fix`, `verify`
+- Inspection: `autopsy`, `status`, `doctor`
+- Knowledge: `packs`, `learn`
+- Advanced: `debug`
+- Interface: `tui`
+
+Every top-level command supports `ghost <command> --help`.
+
+Normal options stay focused on workflow: `--message`, `--reasoning`,
+`--context-artifact`, and `--engine-root`. Output/debug controls include
+`--json`, `--debug`, `--no-color`, `--color=auto|always|never`, and `--compact`
+where meaningful. `--timeout-ms` is intentionally not exposed because the runner
+does not have a safe timeout contract yet.
+
+### TUI Console
+
+The native TUI is terminal-only Zig code. It has a Ghost status header, engine
+root/context footer, reasoning/debug/json indicators, and draft/verified/
+unresolved counters from parsed engine output. Launching it does not run doctor,
+autopsy, verifiers, scans, or pack mutation.
+
+Slash commands:
+
+- `/help`
+- `/quit`
+- `/status`
+- `/reasoning quick|balanced|deep|max`
+- `/debug on|off`
+- `/json on|off`
+- `/clear`
+- `/doctor`
+- `/autopsy <path>`
+- `/context <path>`
 
 ### Output States
 - **Draft / unverified**: Fast output, assumptions are made, no verification steps ran.
