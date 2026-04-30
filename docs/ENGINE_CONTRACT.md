@@ -136,3 +136,29 @@ exactly. Debug diagnostics go to stderr and include engine path, capability
 result, routed argv, exit code, and parse status. The command is never run
 automatically by help, startup, TUI launch, doctor, or status, and it does not
 mutate packs, auto-fix guidance, or auto-promote guidance.
+
+`ghost doctor` and `ghost status` may run
+`ghost_knowledge_pack capabilities --json` as a bounded read-only diagnostic.
+That diagnostic reports compatibility only: capabilities availability,
+`validate-autopsy-guidance` support, supported schema versions, and advertised
+validation limit flags. It does not run validation, mutate packs, auto-fix
+guidance, auto-promote guidance, or treat capability availability as proof.
+Unavailable or unparsable capabilities render a compatibility warning and an
+engine upgrade/rebuild suggestion.
+
+## Context Autopsy Coverage Warnings
+
+Human `ghost context autopsy` output is always labeled DRAFT and
+NON-AUTHORIZING. When `inputCoverage` or `artifactCoverage` reports skipped
+inputs/files, truncation, budget hits, unread regions, or unknowns from
+uninspected material, the CLI prints a top-of-output warning:
+
+```text
+COVERAGE WARNING
+- Some referenced input was truncated or skipped.
+- Ghost did not inspect all provided material.
+- Treat conclusions as partial and non-authorizing.
+```
+
+The warning is display-only and does not reinterpret engine authority. `--json`
+continues to preserve raw engine stdout exactly.

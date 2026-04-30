@@ -117,6 +117,15 @@ test "subcommand help works without resolving engine" {
     try testing.expect(std.mem.indexOf(u8, context_res.stderr, "context.autopsy GIP request") != null);
     try testing.expect(std.mem.indexOf(u8, context_res.stderr, "--input-file <path>") != null);
     try testing.expect(std.mem.indexOf(u8, context_res.stderr, "DRAFT / NON-AUTHORIZING") != null);
+
+    const context_autopsy_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "context", "autopsy", "--help", "--engine-root=/tmp/ghost-help-missing" });
+    defer {
+        testing.allocator.free(context_autopsy_res.stdout);
+        testing.allocator.free(context_autopsy_res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), context_autopsy_res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, context_autopsy_res.stderr, "Usage: ghost context autopsy") != null);
+    try testing.expect(std.mem.indexOf(u8, context_autopsy_res.stderr, "--input-max-bytes <n>") != null);
 }
 
 test "advanced renderer options parse consistently" {
@@ -235,6 +244,62 @@ test "doctor json emits valid JSON" {
     try testing.expect(parsed.value.object.contains("version"));
     try testing.expect(parsed.value.object.contains("binaries"));
     try testing.expect(parsed.value.object.contains("doctor_result"));
+    try testing.expect(parsed.value.object.contains("knowledge_pack_capabilities"));
+}
+
+test "doctor reports knowledge pack validation capabilities when available" {
+    const mock_root = "/tmp/ghost-doctor-capabilities";
+    try std.fs.cwd().makePath(mock_root ++ "/zig-out/bin");
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(mock_root ++ "/zig-out/bin/ghost_task_operator", "#!/bin/sh\nprintf 'task help\\n'\n");
+    try writeMockExecutable(mock_root ++ "/zig-out/bin/ghost_code_intel", "#!/bin/sh\nprintf 'code intel\\n'\n");
+    try writeMockExecutable(mock_root ++ "/zig-out/bin/ghost_patch_candidates", "#!/bin/sh\nprintf 'patch candidates\\n'\n");
+    try writeMockExecutable(mock_root ++ "/zig-out/bin/ghost_gip", "#!/bin/sh\nprintf 'gip status\\n'\n");
+    try writeMockExecutable(
+        mock_root ++ "/zig-out/bin/ghost_knowledge_pack",
+        "#!/bin/sh\n" ++
+            "case \"$*\" in capabilities*) printf '{\"commands\":[{\"name\":\"validate-autopsy-guidance\"}],\"validateAutopsyGuidance\":{\"flags\":[\"--pack-id\",\"--version\",\"--manifest\",\"--all-mounted\",\"--project-shard\",\"--json\",\"--max-guidance-bytes\",\"--max-array-items\",\"--max-string-bytes\"],\"supportedSchemaVersions\":[\"ghost.autopsy_guidance.v1\"]}}' ;; *) printf 'knowledge pack\\n' ;; esac\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "doctor", "--engine-root=" ++ mock_root });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "ghost_knowledge_pack capabilities --json [diagnostic/read-only]: available") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "validate-autopsy-guidance supported: yes") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "ghost.autopsy_guidance.v1") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "--max-guidance-bytes") != null);
+}
+
+test "doctor reports compatibility warning for old knowledge pack capabilities" {
+    const mock_root = "/tmp/ghost-doctor-old-capabilities";
+    const marker = mock_root ++ "/validation-marker";
+    try std.fs.cwd().makePath(mock_root ++ "/zig-out/bin");
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(mock_root ++ "/zig-out/bin/ghost_task_operator", "#!/bin/sh\nprintf 'task help\\n'\n");
+    try writeMockExecutable(mock_root ++ "/zig-out/bin/ghost_code_intel", "#!/bin/sh\nprintf 'code intel\\n'\n");
+    try writeMockExecutable(mock_root ++ "/zig-out/bin/ghost_patch_candidates", "#!/bin/sh\nprintf 'patch candidates\\n'\n");
+    try writeMockExecutable(
+        mock_root ++ "/zig-out/bin/ghost_knowledge_pack",
+        "#!/bin/sh\n" ++
+            "case \"$*\" in *validate-autopsy-guidance*) touch '" ++ marker ++ "';; esac\n" ++
+            "printf 'old engine\\n'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "doctor", "--engine-root=" ++ mock_root });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "capabilities --json [diagnostic/read-only]: unavailable") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "compatibility warning") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Upgrade/rebuild ghost_engine") != null);
+    try testing.expectError(error.FileNotFound, std.fs.cwd().access(marker, .{}));
 }
 
 test "doctor debug lists candidate paths" {
@@ -271,7 +336,12 @@ test "doctor does not run mutating commands" {
     try writeMockExecutable(mock_root ++ "/zig-out/bin/ghost_task_operator", "#!/bin/sh\nprintf 'task help\\n'\n");
     try writeMockExecutable(mock_root ++ "/zig-out/bin/ghost_code_intel", "#!/bin/sh\nprintf 'code intel\\n'\n");
     try writeMockExecutable(mock_root ++ "/zig-out/bin/ghost_patch_candidates", "#!/bin/sh\nprintf 'patch candidates\\n'\n");
-    try writeMockExecutable(mock_root ++ "/zig-out/bin/ghost_knowledge_pack", "#!/bin/sh\ntouch '" ++ marker ++ "'\n");
+    try writeMockExecutable(
+        mock_root ++ "/zig-out/bin/ghost_knowledge_pack",
+        "#!/bin/sh\n" ++
+            "case \"$*\" in *validate-autopsy-guidance*|*mount*|*unmount*) touch '" ++ marker ++ "';; esac\n" ++
+            "case \"$*\" in capabilities*) printf '{\"commands\":[{\"name\":\"validate-autopsy-guidance\"}],\"validateAutopsyGuidance\":{\"flags\":[\"--pack-id\",\"--version\",\"--manifest\",\"--all-mounted\",\"--project-shard\",\"--json\",\"--max-guidance-bytes\",\"--max-array-items\",\"--max-string-bytes\"],\"supportedSchemaVersions\":[\"ghost.autopsy_guidance.v1\"]}}' ;; *) printf 'knowledge pack\\n' ;; esac\n",
+    );
 
     const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "doctor", "--engine-root=" ++ mock_root });
     defer {
@@ -280,6 +350,7 @@ test "doctor does not run mutating commands" {
     }
 
     try testing.expect(std.mem.indexOf(u8, res.stdout, "ghost_knowledge_pack: EXECUTABLE") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "validate-autopsy-guidance supported: yes") != null);
     try testing.expectError(error.FileNotFound, std.fs.cwd().access(marker, .{}));
 }
 
@@ -292,6 +363,35 @@ test "status still works" {
 
     try testing.expect(std.mem.indexOf(u8, res.stdout, "--- Ghost CLI Status ---") != null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "Engine Root: /tmp/ghost-status-still-works") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Knowledge Pack Validation Capabilities") != null);
+}
+
+test "status reports capabilities without running validation" {
+    const mock_root = "/tmp/ghost-status-capabilities";
+    const marker = mock_root ++ "/validation-marker";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(mock_root ++ "/ghost_task_operator", "#!/bin/sh\nprintf 'task help\\n'\n");
+    try writeMockExecutable(mock_root ++ "/ghost_code_intel", "#!/bin/sh\nprintf 'code intel\\n'\n");
+    try writeMockExecutable(mock_root ++ "/ghost_patch_candidates", "#!/bin/sh\nprintf 'patch candidates\\n'\n");
+    try writeMockExecutable(
+        mock_root ++ "/ghost_knowledge_pack",
+        "#!/bin/sh\n" ++
+            "case \"$*\" in *validate-autopsy-guidance*) touch '" ++ marker ++ "';; esac\n" ++
+            "case \"$*\" in capabilities*) printf '{\"commands\":[{\"name\":\"validate-autopsy-guidance\"}],\"validateAutopsyGuidance\":{\"flags\":[\"--pack-id\",\"--version\",\"--manifest\",\"--all-mounted\",\"--project-shard\",\"--json\",\"--max-guidance-bytes\"],\"supportedSchemaVersions\":[\"ghost.autopsy_guidance.v1\"]}}' ;; *) printf 'knowledge pack\\n' ;; esac\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "status", "--engine-root=" ++ mock_root });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "capabilities available: yes") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "validate-autopsy-guidance supported: yes") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "--max-guidance-bytes") != null);
+    try testing.expectError(error.FileNotFound, std.fs.cwd().access(marker, .{}));
 }
 
 test "missing required learn flags fail clearly" {
@@ -324,6 +424,15 @@ test "packs help lists validate autopsy guidance" {
     try testing.expect(std.mem.indexOf(u8, res.stderr, "validate-autopsy-guidance --manifest=<path>") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "review-only") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "does not mutate packs") != null);
+
+    const nested = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "packs", "validate-autopsy-guidance", "--help", "--engine-root=/tmp/ghost-help-missing" });
+    defer {
+        testing.allocator.free(nested.stdout);
+        testing.allocator.free(nested.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), nested.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, nested.stderr, "validate-autopsy-guidance --manifest=<path>") != null);
+    try testing.expect(std.mem.indexOf(u8, nested.stderr, "review-only") != null);
 }
 
 test "packs validate autopsy guidance uses real engine capabilities and renders clean success" {
@@ -552,6 +661,98 @@ test "existing packs list command still works" {
     }
 
     try testing.expectEqual(@as(u32, 0), res.term.Exited);
+}
+
+test "packs validate autopsy guidance spaced flags parse in command module" {
+    const mock_root = "/tmp/ghost-cli-packs-parse-spaced";
+    const argv_path = mock_root ++ "/argv.txt";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_knowledge_pack",
+        "#!/bin/sh\n" ++
+            "case \"$*\" in capabilities*) printf '{\"commands\":[{\"name\":\"validate-autopsy-guidance\"}],\"validateAutopsyGuidance\":{\"flags\":[\"--pack-id\",\"--version\",\"--manifest\",\"--all-mounted\",\"--project-shard\",\"--json\",\"--max-guidance-bytes\",\"--max-array-items\",\"--max-string-bytes\"],\"supportedSchemaVersions\":[\"ghost.autopsy_guidance.v1\"]}}'; exit 0 ;; esac\n" ++
+            "printf '%s\\n' \"$*\" > '" ++ argv_path ++ "'\n" ++
+            "printf '{\"ok\":true,\"supportedSchemaVersions\":[\"ghost.autopsy_guidance.v1\"],\"errorCount\":0,\"warningCount\":0,\"reports\":[]}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "packs",
+        "validate-autopsy-guidance",
+        "--engine-root=" ++ mock_root,
+        "--manifest",
+        "relative/manifest.json",
+        "--max-guidance-bytes",
+        "64",
+        "--max-array-items",
+        "8",
+        "--max-string-bytes",
+        "16",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    const argv = try std.fs.cwd().readFileAlloc(testing.allocator, argv_path, 1024 * 1024);
+    defer testing.allocator.free(argv);
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, argv, "--manifest=relative/manifest.json") != null);
+    try testing.expect(std.mem.indexOf(u8, argv, "--max-guidance-bytes=64") != null);
+    try testing.expect(std.mem.indexOf(u8, argv, "--max-array-items=8") != null);
+    try testing.expect(std.mem.indexOf(u8, argv, "--max-string-bytes=16") != null);
+}
+
+test "packs validate autopsy guidance pack and all-mounted forms still parse" {
+    const mock_root = "/tmp/ghost-cli-packs-parse-targets";
+    const argv_path = mock_root ++ "/argv.txt";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_knowledge_pack",
+        "#!/bin/sh\n" ++
+            "case \"$*\" in capabilities*) printf '{\"commands\":[{\"name\":\"validate-autopsy-guidance\"}],\"validateAutopsyGuidance\":{\"flags\":[\"--pack-id\",\"--version\",\"--manifest\",\"--all-mounted\",\"--project-shard\",\"--json\"],\"supportedSchemaVersions\":[\"ghost.autopsy_guidance.v1\"]}}'; exit 0 ;; esac\n" ++
+            "printf '%s\\n' \"$*\" >> '" ++ argv_path ++ "'\n" ++
+            "printf '{\"ok\":true,\"supportedSchemaVersions\":[\"ghost.autopsy_guidance.v1\"],\"errorCount\":0,\"warningCount\":0,\"reports\":[]}'\n",
+    );
+
+    const pack_res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "packs",
+        "validate-autopsy-guidance",
+        "--engine-root=" ++ mock_root,
+        "--pack-id=pack-a",
+        "--version=1.0.0",
+    });
+    defer {
+        testing.allocator.free(pack_res.stdout);
+        testing.allocator.free(pack_res.stderr);
+    }
+    const mounted_res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "packs",
+        "validate-autopsy-guidance",
+        "--engine-root=" ++ mock_root,
+        "--all-mounted",
+        "--project-shard",
+        "project-a",
+    });
+    defer {
+        testing.allocator.free(mounted_res.stdout);
+        testing.allocator.free(mounted_res.stderr);
+    }
+
+    const argv = try std.fs.cwd().readFileAlloc(testing.allocator, argv_path, 1024 * 1024);
+    defer testing.allocator.free(argv);
+    try testing.expectEqual(@as(u32, 0), pack_res.term.Exited);
+    try testing.expectEqual(@as(u32, 0), mounted_res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, argv, "--pack-id=pack-a") != null);
+    try testing.expect(std.mem.indexOf(u8, argv, "--version=1.0.0") != null);
+    try testing.expect(std.mem.indexOf(u8, argv, "--all-mounted") != null);
+    try testing.expect(std.mem.indexOf(u8, argv, "--project-shard=project-a") != null);
 }
 
 test "doctor status and no-arg TUI do not run autopsy guidance validation" {
@@ -914,6 +1115,67 @@ test "context autopsy human output renders input coverage" {
     try testing.expect(std.mem.indexOf(u8, res.stdout, "skippedInputs:") != null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "truncatedInputs:") != null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "unread region after byte budget") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "COVERAGE WARNING") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Ghost did not inspect all provided material") != null);
+}
+
+test "context autopsy human output omits coverage warning when coverage is complete" {
+    const mock_root = "/tmp/ghost-cli-context-complete-coverage";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\n" ++
+            "cat >/dev/null\n" ++
+            "printf '%s' '{\"gipVersion\":\"gip.v0.1\",\"kind\":\"context.autopsy\",\"status\":\"ok\",\"result\":{\"contextAutopsy\":{\"state\":\"draft\",\"nonAuthorizing\":true},\"inputCoverage\":{\"inputsRequested\":1,\"inputsRead\":1,\"bytesRead\":128,\"skippedInputs\":[],\"truncatedInputs\":[],\"unknowns\":[]},\"artifactCoverage\":{\"filesRequested\":1,\"filesRead\":1,\"filesSkipped\":[],\"filesTruncated\":[],\"budgetHits\":[]}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "context",
+        "autopsy",
+        "--engine-root=" ++ mock_root,
+        "--input-file",
+        "README.md",
+        "Summarize this context",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Input Coverage:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Artifact Coverage:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "COVERAGE WARNING") == null);
+}
+
+test "context autopsy human output warns for artifact coverage budget hits" {
+    const mock_root = "/tmp/ghost-cli-context-artifact-coverage-warning";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\n" ++
+            "cat >/dev/null\n" ++
+            "printf '%s' '{\"gipVersion\":\"gip.v0.1\",\"kind\":\"context.autopsy\",\"status\":\"ok\",\"result\":{\"contextAutopsy\":{\"state\":\"draft\",\"nonAuthorizing\":true},\"artifactCoverage\":{\"filesRead\":1,\"filesSkipped\":[{\"path\":\"large.bin\"}],\"budgetHits\":[\"maxBytes\"]}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "context",
+        "autopsy",
+        "--engine-root=" ++ mock_root,
+        "Summarize this context",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "COVERAGE WARNING") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Artifact Coverage:") != null);
 }
 
 test "doctor status and no-arg TUI do not invoke context autopsy" {

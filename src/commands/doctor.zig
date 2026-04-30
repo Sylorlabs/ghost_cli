@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const locator = @import("../engine/locator.zig");
+const packs = @import("packs.zig");
 
 pub const Options = struct {
     json: bool = false,
@@ -51,6 +52,7 @@ const DoctorReport = struct {
     gip_status_smoke: CommandProbe,
     /// Smoke: ghost_project_autopsy --version (read-only, bounded, labeled smoke only).
     autopsy_smoke: CommandProbe,
+    knowledge_pack_capabilities: packs.CapabilityDiagnostic,
     cpu: []u8,
     ram: []u8,
     gpu: []u8,
@@ -69,6 +71,7 @@ const DoctorReport = struct {
         self.task_operator_smoke.deinit(allocator);
         self.gip_status_smoke.deinit(allocator);
         self.autopsy_smoke.deinit(allocator);
+        self.knowledge_pack_capabilities.deinit();
         allocator.free(self.cpu);
         allocator.free(self.ram);
         allocator.free(self.gpu);
@@ -139,6 +142,8 @@ fn collectReport(allocator: std.mem.Allocator, engine_root: ?[]const u8, options
     else
         CommandProbe{ .available = false, .output = try allocator.dupe(u8, "ghost_project_autopsy not available") };
 
+    const knowledge_pack_capabilities = try packs.collectCapabilityDiagnostic(allocator, engine_root, options.debug);
+
     const cpu = try detectCpu(allocator);
     const ram = try detectRam(allocator);
     const gpu = try detectGpu(allocator);
@@ -160,6 +165,7 @@ fn collectReport(allocator: std.mem.Allocator, engine_root: ?[]const u8, options
         .task_operator_smoke = task_operator_smoke,
         .gip_status_smoke = gip_status_smoke,
         .autopsy_smoke = autopsy_smoke,
+        .knowledge_pack_capabilities = knowledge_pack_capabilities,
         .cpu = cpu,
         .ram = ram,
         .gpu = gpu,
@@ -218,6 +224,7 @@ fn printHuman(report: DoctorReport, debug: bool, full: bool, run_build_check: bo
     try out.print("  - ghost_task_operator --help: {s}\n", .{if (report.task_operator_smoke.available) "ok" else "unavailable/failed"});
     try out.print("  - ghost_gip engine.status: {s}\n", .{if (report.gip_status_smoke.available) "ok" else "unavailable/failed"});
     try out.print("  - ghost_project_autopsy --version [smoke only]: {s}\n", .{if (report.autopsy_smoke.available) "ok" else "unavailable/not-installed"});
+    try printKnowledgePackCapabilityHuman(out, report.knowledge_pack_capabilities, "  - ");
     try out.print("\nNo mutation performed. No scan was run. {s}\n", .{if (run_build_check) "`zig build --help` was run; no build artifacts were requested." else "No build was run."});
     if (!report.ok) {
         try out.print("\nSuggested next steps:\n", .{});
@@ -255,6 +262,7 @@ fn printTesterReport(report: DoctorReport, debug: bool) !void {
         }
     }
     try out.print("ghost_project_autopsy: {s}\n", .{if (report.autopsy_smoke.available) "available" else "not-installed"});
+    try printKnowledgePackCapabilityHuman(out, report.knowledge_pack_capabilities, "");
     try out.print("\nSuggested next commands:\n", .{});
     try out.print("1. ghost status\n", .{});
     try out.print("2. ghost ask hello --debug\n", .{});
@@ -303,7 +311,57 @@ fn printJson(report: DoctorReport, debug: bool) !void {
     }
     try out.writeAll("]");
     try out.print(",\"smoke\":{{\"ghost_task_operator_help\":{},\"ghost_gip_engine_status\":{},\"ghost_project_autopsy_version_smoke\":{}}}", .{ report.task_operator_smoke.available, report.gip_status_smoke.available, report.autopsy_smoke.available });
+    try out.writeAll(",\"knowledge_pack_capabilities\":{");
+    try jsonField(out, "binary_path", report.knowledge_pack_capabilities.binary_path, true);
+    try out.print(",\"capabilities_available\":{},\"validate_autopsy_guidance_supported\":{}", .{ report.knowledge_pack_capabilities.capabilities_available, report.knowledge_pack_capabilities.validate_autopsy_guidance_supported });
+    try out.writeAll(",\"supported_schema_versions\":[");
+    for (report.knowledge_pack_capabilities.supported_schema_versions, 0..) |schema, i| {
+        if (i > 0) try out.writeAll(",");
+        try writeJsonString(out, schema);
+    }
+    try out.print("],\"supported_validation_limit_flags\":{{\"max_guidance_bytes\":{},\"max_array_items\":{},\"max_string_bytes\":{}}}", .{
+        report.knowledge_pack_capabilities.supported_validation_limit_flags.max_guidance_bytes,
+        report.knowledge_pack_capabilities.supported_validation_limit_flags.max_array_items,
+        report.knowledge_pack_capabilities.supported_validation_limit_flags.max_string_bytes,
+    });
+    try jsonField(out, "warning", report.knowledge_pack_capabilities.warning, false);
+    try out.writeAll("}");
     try out.writeAll("}\n");
+}
+
+fn printKnowledgePackCapabilityHuman(writer: anytype, diagnostic: packs.CapabilityDiagnostic, prefix: []const u8) !void {
+    const detail_prefix = if (prefix.len > 0) "    " else "";
+    try writer.print("{s}ghost_knowledge_pack capabilities --json [diagnostic/read-only]: {s}\n", .{ prefix, if (diagnostic.capabilities_available) "available" else "unavailable" });
+    try writer.print("{s}validate-autopsy-guidance supported: {s}\n", .{ detail_prefix, yesNo(diagnostic.validate_autopsy_guidance_supported) });
+    try writer.print("{s}supported schema versions: ", .{detail_prefix});
+    if (diagnostic.supported_schema_versions.len == 0) {
+        try writer.print("unknown\n", .{});
+    } else {
+        for (diagnostic.supported_schema_versions, 0..) |schema, i| {
+            if (i > 0) try writer.print(", ", .{});
+            try writer.print("{s}", .{schema});
+        }
+        try writer.print("\n", .{});
+    }
+    try writer.print("{s}supported validation limit flags: ", .{detail_prefix});
+    var wrote = false;
+    if (diagnostic.supported_validation_limit_flags.max_guidance_bytes) {
+        try writer.print("--max-guidance-bytes", .{});
+        wrote = true;
+    }
+    if (diagnostic.supported_validation_limit_flags.max_array_items) {
+        try writer.print("{s}--max-array-items", .{if (wrote) ", " else ""});
+        wrote = true;
+    }
+    if (diagnostic.supported_validation_limit_flags.max_string_bytes) {
+        try writer.print("{s}--max-string-bytes", .{if (wrote) ", " else ""});
+        wrote = true;
+    }
+    if (!wrote) try writer.print("unknown", .{});
+    try writer.print("\n", .{});
+    if (diagnostic.warning) |warning| {
+        try writer.print("{s}compatibility warning: {s}. Upgrade/rebuild ghost_engine if this command is needed.\n", .{ detail_prefix, warning });
+    }
 }
 
 fn jsonField(writer: anytype, name: []const u8, value: ?[]const u8, first: bool) !void {

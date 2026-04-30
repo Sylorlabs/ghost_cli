@@ -69,7 +69,18 @@ coverage, and pack guidance trace fields when the engine returns them. Coverage
 may report inputs requested, inputs read, bytes read, skipped inputs,
 truncation/budget hits, and unknowns caused by unread or truncated regions. No
 full-content claim is made when coverage reports truncation, skips, or unread
-regions. `--json` preserves raw engine stdout exactly. `--debug` writes the
+regions. When input or artifact coverage reports skipped, truncated, budget-hit,
+unread, or coverage-derived unknown regions, human output prints a prominent
+`COVERAGE WARNING` block near the top:
+
+```text
+COVERAGE WARNING
+- Some referenced input was truncated or skipped.
+- Ghost did not inspect all provided material.
+- Treat conclusions as partial and non-authorizing.
+```
+
+`--json` preserves raw engine stdout exactly. `--debug` writes the
 engine binary path, GIP kind, argv/stdin payload summary, input file ref count,
 exit code, and parse status to stderr.
 
@@ -218,10 +229,11 @@ Usage: `ghost doctor --full`
 Usage: `ghost doctor --run-build-check`
 
 Default doctor is fast and non-mutating. It does not build the engine, run
-expensive tests, execute verifiers, mutate packs, or change negative knowledge.
+expensive tests, execute verifiers, run validation, mutate packs, or change negative knowledge.
 It reports the CLI version/path, current directory, `GHOST_ENGINE_ROOT`, resolved
 engine binaries, executable bits, Zig version, OS/arch, terminal, PATH
-resolution, and bounded smoke checks.
+resolution, bounded smoke checks, and knowledge-pack validation capability
+compatibility.
 
 Binary resolution is shared with normal command execution. Candidates are classified as `engine-root`, `engine-root-zig-out`, `dev-fallback-candidate`, or `PATH-candidate`, with status `executable`, `found-not-executable`, or `missing`. If `--engine-root`/`GHOST_ENGINE_ROOT` is set, normal execution resolves only the explicit root candidates and fails early if they are missing or not executable; dev fallback and PATH candidates remain visible as diagnostics.
 
@@ -242,6 +254,15 @@ also runs a **bounded, labeled, read-only smoke check**
 context/project autopsy scan is run by help, doctor/status diagnostics, TUI
 launch, TUI idle rendering, non-TTY fallback, or invalid slash commands. Autopsy
 output is never treated as proof by the CLI.
+
+`ghost doctor` and `ghost status` also run the bounded read-only diagnostic
+`ghost_knowledge_pack capabilities --json` when that binary is executable. This
+diagnostic does not run validation and does not mutate packs. It reports whether
+capabilities are available, whether `validate-autopsy-guidance` is advertised,
+which schema versions are supported, and which validation limit flags are
+advertised. Missing or old capability output is reported as a compatibility
+warning with an upgrade/rebuild suggestion; it does not make doctor fail hard
+unless normal binary availability checks already fail.
 
 `ghost doctor --report` prints a copy-paste tester report with OS, arch, cheap CPU/RAM/GPU probes, Zig version, Ghost version, engine root, resolved binaries, doctor result, and suggested next commands.
 

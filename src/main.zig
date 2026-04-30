@@ -158,7 +158,19 @@ pub fn main() !void {
             .json = parsed.options.json_out,
             .debug = parsed.options.debug_mode,
         }),
-        .packs => try runPacks(allocator, root, parsed),
+        .packs => try packs.executeFromArgs(allocator, root, parsed.leftover_args.items, .{
+            .subcommand = "list",
+            .pack_id = parsed.options.pack_id,
+            .version = parsed.options.version,
+            .manifest = parsed.options.manifest,
+            .all_mounted = parsed.options.all_mounted,
+            .project_shard = parsed.options.project_shard,
+            .max_guidance_bytes = parsed.options.max_guidance_bytes,
+            .max_array_items = parsed.options.max_array_items,
+            .max_string_bytes = parsed.options.max_string_bytes,
+            .json = parsed.options.json_out,
+            .debug = parsed.options.debug_mode,
+        }),
         .learn => try runLearn(allocator, root, parsed),
         .tui => try tui.execute(allocator, root, .{
             .reasoning = parsed.options.reasoning_level,
@@ -184,7 +196,7 @@ pub fn main() !void {
             .json = parsed.options.json_out,
             .debug = parsed.options.debug_mode,
         }),
-        .context => try runContext(allocator, root, parsed),
+        .context => try context_cmd.executeFromArgs(allocator, root, parsed.leftover_args.items, parsed.options.json_out, parsed.options.debug_mode),
     }
 }
 
@@ -308,69 +320,6 @@ fn runChatLike(allocator: std.mem.Allocator, root: ?[]const u8, parsed: *ParsedC
     });
 }
 
-fn runPacks(allocator: std.mem.Allocator, root: ?[]const u8, parsed: ParsedCli) !void {
-    const sub = if (parsed.leftover_args.items.len > 0) parsed.leftover_args.items[0] else "list";
-    const p_id = if (parsed.options.pack_id) |pack_id| pack_id else if (parsed.leftover_args.items.len > 1 and !std.mem.startsWith(u8, parsed.leftover_args.items[1], "--")) parsed.leftover_args.items[1] else null;
-    var manifest = parsed.options.manifest;
-    var project_shard = parsed.options.project_shard;
-    var all_mounted = parsed.options.all_mounted;
-    var max_guidance_bytes = parsed.options.max_guidance_bytes;
-    var max_array_items = parsed.options.max_array_items;
-    var max_string_bytes = parsed.options.max_string_bytes;
-
-    var i: usize = 1;
-    while (i < parsed.leftover_args.items.len) : (i += 1) {
-        const arg = parsed.leftover_args.items[i];
-        if (std.mem.eql(u8, arg, "--manifest")) {
-            i += 1;
-            if (i >= parsed.leftover_args.items.len) try failMissingValue("--manifest");
-            manifest = parsed.leftover_args.items[i];
-        } else if (std.mem.startsWith(u8, arg, "--manifest=")) {
-            manifest = arg["--manifest=".len..];
-        } else if (std.mem.eql(u8, arg, "--project-shard")) {
-            i += 1;
-            if (i >= parsed.leftover_args.items.len) try failMissingValue("--project-shard");
-            project_shard = parsed.leftover_args.items[i];
-        } else if (std.mem.startsWith(u8, arg, "--project-shard=")) {
-            project_shard = arg["--project-shard=".len..];
-        } else if (std.mem.eql(u8, arg, "--all-mounted")) {
-            all_mounted = true;
-        } else if (std.mem.eql(u8, arg, "--max-guidance-bytes")) {
-            i += 1;
-            if (i >= parsed.leftover_args.items.len) try failMissingValue("--max-guidance-bytes");
-            max_guidance_bytes = parsed.leftover_args.items[i];
-        } else if (std.mem.startsWith(u8, arg, "--max-guidance-bytes=")) {
-            max_guidance_bytes = arg["--max-guidance-bytes=".len..];
-        } else if (std.mem.eql(u8, arg, "--max-array-items")) {
-            i += 1;
-            if (i >= parsed.leftover_args.items.len) try failMissingValue("--max-array-items");
-            max_array_items = parsed.leftover_args.items[i];
-        } else if (std.mem.startsWith(u8, arg, "--max-array-items=")) {
-            max_array_items = arg["--max-array-items=".len..];
-        } else if (std.mem.eql(u8, arg, "--max-string-bytes")) {
-            i += 1;
-            if (i >= parsed.leftover_args.items.len) try failMissingValue("--max-string-bytes");
-            max_string_bytes = parsed.leftover_args.items[i];
-        } else if (std.mem.startsWith(u8, arg, "--max-string-bytes=")) {
-            max_string_bytes = arg["--max-string-bytes=".len..];
-        }
-    }
-
-    try packs.execute(allocator, root, .{
-        .subcommand = sub,
-        .pack_id = p_id,
-        .version = parsed.options.version,
-        .manifest = manifest,
-        .all_mounted = all_mounted,
-        .project_shard = project_shard,
-        .max_guidance_bytes = max_guidance_bytes,
-        .max_array_items = max_array_items,
-        .max_string_bytes = max_string_bytes,
-        .json = parsed.options.json_out,
-        .debug = parsed.options.debug_mode,
-    });
-}
-
 fn runLearn(allocator: std.mem.Allocator, root: ?[]const u8, parsed: ParsedCli) !void {
     const sub = if (parsed.leftover_args.items.len > 0) parsed.leftover_args.items[0] else {
         try std.io.getStdErr().writer().print("Usage: ghost learn <candidates|show|export>\n", .{});
@@ -387,98 +336,6 @@ fn runLearn(allocator: std.mem.Allocator, root: ?[]const u8, parsed: ParsedCli) 
         .json = parsed.options.json_out,
         .debug = parsed.options.debug_mode,
     });
-}
-
-fn runContext(allocator: std.mem.Allocator, root: ?[]const u8, parsed: ParsedCli) !void {
-    const sub = if (parsed.leftover_args.items.len > 0) parsed.leftover_args.items[0] else {
-        try std.io.getStdErr().writer().print("Usage: ghost context autopsy [--json] [--debug] [--input-file <path>] [--input-max-bytes <bytes>] <description>\n", .{});
-        std.process.exit(1);
-    };
-    if (!std.mem.eql(u8, sub, "autopsy")) {
-        try std.io.getStdErr().writer().print("Unknown context command: {s}\nUsage: ghost context autopsy [--json] [--debug] [--input-file <path>] [--input-max-bytes <bytes>] <description>\n", .{sub});
-        std.process.exit(1);
-    }
-    var input_files = std.ArrayList([]const u8).init(allocator);
-    defer input_files.deinit();
-    var input_label: ?[]const u8 = null;
-    var input_purpose: ?[]const u8 = null;
-    var input_reason: ?[]const u8 = null;
-    var input_max_bytes: ?u64 = null;
-    var description: ?[]const u8 = null;
-
-    var i: usize = 1;
-    while (i < parsed.leftover_args.items.len) : (i += 1) {
-        const arg = parsed.leftover_args.items[i];
-        if (std.mem.eql(u8, arg, "--input-file")) {
-            i += 1;
-            if (i >= parsed.leftover_args.items.len) try failMissingValue("--input-file");
-            try input_files.append(parsed.leftover_args.items[i]);
-        } else if (std.mem.startsWith(u8, arg, "--input-file=")) {
-            const value = arg["--input-file=".len..];
-            if (value.len == 0) try failMissingValue("--input-file");
-            try input_files.append(value);
-        } else if (std.mem.eql(u8, arg, "--input-label")) {
-            i += 1;
-            if (i >= parsed.leftover_args.items.len) try failMissingValue("--input-label");
-            input_label = parsed.leftover_args.items[i];
-        } else if (std.mem.startsWith(u8, arg, "--input-label=")) {
-            input_label = arg["--input-label=".len..];
-        } else if (std.mem.eql(u8, arg, "--input-purpose")) {
-            i += 1;
-            if (i >= parsed.leftover_args.items.len) try failMissingValue("--input-purpose");
-            input_purpose = parsed.leftover_args.items[i];
-        } else if (std.mem.startsWith(u8, arg, "--input-purpose=")) {
-            input_purpose = arg["--input-purpose=".len..];
-        } else if (std.mem.eql(u8, arg, "--input-reason")) {
-            i += 1;
-            if (i >= parsed.leftover_args.items.len) try failMissingValue("--input-reason");
-            input_reason = parsed.leftover_args.items[i];
-        } else if (std.mem.startsWith(u8, arg, "--input-reason=")) {
-            input_reason = arg["--input-reason=".len..];
-        } else if (std.mem.eql(u8, arg, "--input-max-bytes")) {
-            i += 1;
-            if (i >= parsed.leftover_args.items.len) try failMissingValue("--input-max-bytes");
-            input_max_bytes = try parseInputMaxBytes(parsed.leftover_args.items[i]);
-        } else if (std.mem.startsWith(u8, arg, "--input-max-bytes=")) {
-            input_max_bytes = try parseInputMaxBytes(arg["--input-max-bytes=".len..]);
-        } else if (std.mem.startsWith(u8, arg, "--input-")) {
-            try std.io.getStdErr().writer().print("Unknown context autopsy input option: {s}\n", .{arg});
-            std.process.exit(1);
-        } else if (description == null) {
-            description = arg;
-        } else {
-            try std.io.getStdErr().writer().print("Unexpected extra context autopsy argument: {s}\n", .{arg});
-            std.process.exit(1);
-        }
-    }
-
-    try context_cmd.executeAutopsy(allocator, root, .{
-        .description = description,
-        .input_files = input_files.items,
-        .input_label = input_label,
-        .input_purpose = input_purpose,
-        .input_reason = input_reason,
-        .input_max_bytes = input_max_bytes,
-        .json = parsed.options.json_out,
-        .debug = parsed.options.debug_mode,
-    });
-}
-
-fn failMissingValue(flag: []const u8) !noreturn {
-    try std.io.getStdErr().writer().print("{s} requires a value\n", .{flag});
-    std.process.exit(1);
-}
-
-fn parseInputMaxBytes(value: []const u8) !u64 {
-    const parsed = std.fmt.parseUnsigned(u64, value, 10) catch {
-        try std.io.getStdErr().writer().print("Invalid --input-max-bytes value: {s}\n", .{value});
-        std.process.exit(1);
-    };
-    if (parsed == 0) {
-        try std.io.getStdErr().writer().print("--input-max-bytes must be greater than 0\n", .{});
-        std.process.exit(1);
-    }
-    return parsed;
 }
 
 fn printHelp(writer: anytype) !void {
@@ -542,6 +399,9 @@ fn printHelp(writer: anytype) !void {
 }
 
 fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
+    if (kind == .context) return context_cmd.printHelp(writer);
+    if (kind == .packs) return packs.printHelp(writer);
+
     const command = commandByKind(kind).?;
     try writer.print("{s}\n\nUsage: {s}\n\n{s}\n", .{ command.name, command.usage, command.help });
     switch (kind) {
@@ -609,50 +469,7 @@ fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
             \\  This scan runs only when this command is explicitly invoked.
             \\
         , .{}),
-        .context => try writer.print(
-            \\
-            \\Subcommands:
-            \\  autopsy <description>  Run an explicit context.autopsy GIP request
-            \\
-            \\Options:
-            \\  --json                 Preserve raw GIP stdout exactly
-            \\  --debug                Diagnostics to stderr
-            \\  --input-file <path>     Add an explicit bounded file input ref; repeatable
-            \\  --input-max-bytes <n>   Shared maxBytes value for each input ref
-            \\  --input-label <label>   Shared optional label for input refs
-            \\  --input-purpose <text>  Shared optional purpose for input refs
-            \\  --input-reason <text>   Shared optional reason for input refs
-            \\
-            \\Safety:
-            \\  This request runs only when this command is explicitly invoked.
-            \\  File inputs are explicit and are read by the engine through bounded refs.
-            \\  Output is DRAFT / NON-AUTHORIZING.
-            \\  It does not run scans, execute verifiers, mutate packs, or mutate negative knowledge.
-            \\  When coverage reports truncation, skips, or unread regions, no full-content claim is made.
-            \\
-        , .{}),
-        .packs => try writer.print(
-            \\
-            \\Subcommands:
-            \\  list
-            \\  inspect <pack-id> [--version=<v>]
-            \\  mount <pack-id> [--version=<v>]
-            \\  unmount <pack-id> [--version=<v>]
-            \\  validate-autopsy-guidance --manifest=<path> [--json]
-            \\  validate-autopsy-guidance --pack-id=<id> --version=<v> [--json]
-            \\  validate-autopsy-guidance --all-mounted --project-shard=<id> [--json]
-            \\  validate-autopsy-guidance --manifest=<path> [--max-guidance-bytes=<n>] [--max-array-items=<n>] [--max-string-bytes=<n>]
-            \\
-            \\Safety:
-            \\  Validation is explicit and review-only. It does not mutate packs,
-            \\  auto-fix guidance, auto-promote guidance, or prove support. The
-            \\  command checks engine capabilities before routing advanced validation.
-            \\  Human output renders clean success, warning, and error summaries.
-            \\  `--json` preserves raw engine stdout exactly.
-            \\  Current engine schema: ghost.autopsy_guidance.v1; legacy guidance
-            \\  may be accepted by the engine as a warning for compatibility.
-            \\
-        , .{}),
+        .context, .packs => unreachable,
         .learn => try writer.print(
             \\
             \\Subcommands:

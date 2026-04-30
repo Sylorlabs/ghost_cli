@@ -498,6 +498,17 @@ pub fn printContextAutopsyResult(writer: anytype, envelope: json_contracts.Conte
         },
     };
 
+    const input_coverage = result_obj.get("inputCoverage") orelse result_obj.get("input_coverage") orelse autopsy_obj.get("inputCoverage") orelse autopsy_obj.get("input_coverage");
+    const artifact_coverage = result_obj.get("artifactCoverage") orelse result_obj.get("artifact_coverage") orelse autopsy_obj.get("artifactCoverage") orelse autopsy_obj.get("artifact_coverage");
+    if ((input_coverage != null and coverageNeedsWarning(input_coverage.?)) or
+        (artifact_coverage != null and coverageNeedsWarning(artifact_coverage.?)))
+    {
+        try writer.print("{s}COVERAGE WARNING{s}\n", .{ red, reset });
+        try writer.print("- Some referenced input was truncated or skipped.\n", .{});
+        try writer.print("- Ghost did not inspect all provided material.\n", .{});
+        try writer.print("- Treat conclusions as partial and non-authorizing.\n\n", .{});
+    }
+
     if (autopsy_obj.get("contextCase") orelse autopsy_obj.get("context_case")) |case_value| {
         try writer.print("{s}Context Case:{s}\n", .{ bold, reset });
         try printJsonValue(writer, case_value, 2);
@@ -513,7 +524,7 @@ pub fn printContextAutopsyResult(writer: anytype, envelope: json_contracts.Conte
     try printContextSection(writer, autopsy_obj, "evidenceExpectations", "evidence_expectations", "Evidence Expectations");
     try printContextSection(writer, autopsy_obj, "packInfluences", "pack_influences", "Pack Influence");
 
-    if (result_obj.get("inputCoverage") orelse result_obj.get("input_coverage") orelse autopsy_obj.get("inputCoverage") orelse autopsy_obj.get("input_coverage")) |coverage| {
+    if (input_coverage) |coverage| {
         try writer.print("{s}Input Coverage:{s}\n", .{ bold, reset });
         try printJsonValue(writer, coverage, 2);
         try writer.print("\n", .{});
@@ -525,7 +536,7 @@ pub fn printContextAutopsyResult(writer: anytype, envelope: json_contracts.Conte
         try writer.print("\n", .{});
     }
 
-    if (result_obj.get("artifactCoverage") orelse result_obj.get("artifact_coverage")) |coverage| {
+    if (artifact_coverage) |coverage| {
         try writer.print("{s}Artifact Coverage:{s}\n", .{ bold, reset });
         try printJsonValue(writer, coverage, 2);
         try writer.print("\n", .{});
@@ -547,6 +558,73 @@ fn isEmptyJsonList(value: std.json.Value) bool {
     return switch (value) {
         .array => |arr| arr.items.len == 0,
         else => false,
+    };
+}
+
+fn coverageNeedsWarning(value: std.json.Value) bool {
+    return switch (value) {
+        .object => |obj| blk: {
+            var it = obj.iterator();
+            while (it.next()) |entry| {
+                const key = entry.key_ptr.*;
+                const child = entry.value_ptr.*;
+                if (isCoverageWarningKey(key) and jsonValueIndicatesPresence(child)) break :blk true;
+                if (coverageNeedsWarning(child)) break :blk true;
+            }
+            break :blk false;
+        },
+        .array => |arr| blk: {
+            for (arr.items) |item| if (coverageNeedsWarning(item)) break :blk true;
+            break :blk false;
+        },
+        else => false,
+    };
+}
+
+fn isCoverageWarningKey(key: []const u8) bool {
+    const warning_keys = [_][]const u8{
+        "skippedInputs",
+        "skipped_inputs",
+        "inputsSkipped",
+        "inputs_skipped",
+        "filesSkipped",
+        "files_skipped",
+        "skippedFiles",
+        "skipped_files",
+        "truncatedInputs",
+        "truncated_inputs",
+        "inputsTruncated",
+        "inputs_truncated",
+        "filesTruncated",
+        "files_truncated",
+        "truncatedFiles",
+        "truncated_files",
+        "budgetHits",
+        "budget_hits",
+        "budgetHit",
+        "budget_hit",
+        "unreadRegions",
+        "unread_regions",
+        "regionsUnread",
+        "regions_unread",
+        "unknowns",
+    };
+    for (warning_keys) |candidate| {
+        if (std.mem.eql(u8, key, candidate)) return true;
+    }
+    return false;
+}
+
+fn jsonValueIndicatesPresence(value: std.json.Value) bool {
+    return switch (value) {
+        .array => |arr| arr.items.len > 0,
+        .object => |obj| obj.count() > 0,
+        .bool => |b| b,
+        .integer => |i| i > 0,
+        .float => |f| f > 0,
+        .string => |s| s.len > 0,
+        .null => false,
+        else => true,
     };
 }
 

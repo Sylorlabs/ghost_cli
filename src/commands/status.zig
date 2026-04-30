@@ -1,5 +1,6 @@
 const std = @import("std");
 const locator = @import("../engine/locator.zig");
+const packs = @import("packs.zig");
 
 pub fn execute(allocator: std.mem.Allocator, engine_root: ?[]const u8, debug: bool, build_version: []const u8) !void {
     const stdout = std.io.getStdOut().writer();
@@ -50,7 +51,46 @@ pub fn execute(allocator: std.mem.Allocator, engine_root: ?[]const u8, debug: bo
         try stdout.print("\n\x1b[32m[+] Core engine binaries located successfully.\x1b[0m\n", .{});
     }
 
+    var capability_diagnostic = try packs.collectCapabilityDiagnostic(allocator, engine_root, debug);
+    defer capability_diagnostic.deinit();
+    try stdout.print("\nKnowledge Pack Validation Capabilities (diagnostic/read-only):\n", .{});
+    try stdout.print("  capabilities available: {s}\n", .{yesNo(capability_diagnostic.capabilities_available)});
+    try stdout.print("  validate-autopsy-guidance supported: {s}\n", .{yesNo(capability_diagnostic.validate_autopsy_guidance_supported)});
+    try stdout.print("  supported schema versions: ", .{});
+    if (capability_diagnostic.supported_schema_versions.len == 0) {
+        try stdout.print("unknown\n", .{});
+    } else {
+        for (capability_diagnostic.supported_schema_versions, 0..) |schema, i| {
+            if (i > 0) try stdout.print(", ", .{});
+            try stdout.print("{s}", .{schema});
+        }
+        try stdout.print("\n", .{});
+    }
+    try stdout.print("  supported validation limit flags: ", .{});
+    var wrote_flag = false;
+    if (capability_diagnostic.supported_validation_limit_flags.max_guidance_bytes) {
+        try stdout.print("--max-guidance-bytes", .{});
+        wrote_flag = true;
+    }
+    if (capability_diagnostic.supported_validation_limit_flags.max_array_items) {
+        try stdout.print("{s}--max-array-items", .{if (wrote_flag) ", " else ""});
+        wrote_flag = true;
+    }
+    if (capability_diagnostic.supported_validation_limit_flags.max_string_bytes) {
+        try stdout.print("{s}--max-string-bytes", .{if (wrote_flag) ", " else ""});
+        wrote_flag = true;
+    }
+    if (!wrote_flag) try stdout.print("unknown", .{});
+    try stdout.print("\n", .{});
+    if (capability_diagnostic.warning) |warning| {
+        try stdout.print("  compatibility warning: {s}. Upgrade/rebuild ghost_engine if this command is needed.\n", .{warning});
+    }
+
     var cwd_buf: [1024]u8 = undefined;
     const cwd = std.fs.cwd().realpath(".", &cwd_buf) catch "Unknown";
     try stdout.print("\nWorking Directory: {s}\n", .{cwd});
+}
+
+fn yesNo(value: bool) []const u8 {
+    return if (value) "yes" else "no";
 }

@@ -19,7 +19,24 @@ pub const PacksOptions = struct {
     debug: bool = false,
 };
 
-const ValidationLimitFlags = struct {
+pub const CapabilityDiagnostic = struct {
+    binary_path: ?[]u8 = null,
+    capabilities_available: bool = false,
+    validate_autopsy_guidance_supported: bool = false,
+    supported_schema_versions: []const []const u8 = &.{},
+    supported_validation_limit_flags: ValidationLimitFlags = .{},
+    warning: ?[]u8 = null,
+    allocator: std.mem.Allocator,
+
+    pub fn deinit(self: *CapabilityDiagnostic) void {
+        if (self.binary_path) |path| self.allocator.free(path);
+        for (self.supported_schema_versions) |schema| self.allocator.free(schema);
+        self.allocator.free(self.supported_schema_versions);
+        if (self.warning) |warning| self.allocator.free(warning);
+    }
+};
+
+pub const ValidationLimitFlags = struct {
     max_guidance_bytes: bool = false,
     max_array_items: bool = false,
     max_string_bytes: bool = false,
@@ -102,6 +119,89 @@ const ValidationSummary = struct {
         message: []const u8,
     };
 };
+
+pub fn printHelp(writer: anytype) !void {
+    try writer.print(
+        \\packs
+        \\
+        \\Usage: ghost packs <list|inspect|mount|unmount|validate-autopsy-guidance> [options]
+        \\
+        \\Manage knowledge packs
+        \\
+        \\Subcommands:
+        \\  list
+        \\  inspect <pack-id> [--version=<v>]
+        \\  mount <pack-id> [--version=<v>]
+        \\  unmount <pack-id> [--version=<v>]
+        \\  validate-autopsy-guidance --manifest=<path> [--json]
+        \\  validate-autopsy-guidance --pack-id=<id> --version=<v> [--json]
+        \\  validate-autopsy-guidance --all-mounted --project-shard=<id> [--json]
+        \\  validate-autopsy-guidance --manifest=<path> [--max-guidance-bytes=<n>] [--max-array-items=<n>] [--max-string-bytes=<n>]
+        \\
+        \\Safety:
+        \\  Validation is explicit and review-only. It does not mutate packs,
+        \\  auto-fix guidance, auto-promote guidance, or prove support. The
+        \\  command checks engine capabilities before routing advanced validation.
+        \\  Human output renders clean success, warning, and error summaries.
+        \\  `--json` preserves raw engine stdout exactly.
+        \\  Current engine schema: ghost.autopsy_guidance.v1; legacy guidance
+        \\  may be accepted by the engine as a warning for compatibility.
+        \\
+    , .{});
+}
+
+pub fn executeFromArgs(
+    allocator: std.mem.Allocator,
+    engine_root: ?[]const u8,
+    args: []const []const u8,
+    base: PacksOptions,
+) !void {
+    const sub = if (args.len > 0) args[0] else "list";
+    const p_id = if (base.pack_id) |pack_id| pack_id else if (args.len > 1 and !std.mem.startsWith(u8, args[1], "--")) args[1] else null;
+    var options = base;
+    options.subcommand = sub;
+    options.pack_id = p_id;
+
+    var i: usize = 1;
+    while (i < args.len) : (i += 1) {
+        const arg = args[i];
+        if (std.mem.eql(u8, arg, "--manifest")) {
+            i += 1;
+            if (i >= args.len) try failMissingValue("--manifest");
+            options.manifest = args[i];
+        } else if (std.mem.startsWith(u8, arg, "--manifest=")) {
+            options.manifest = arg["--manifest=".len..];
+        } else if (std.mem.eql(u8, arg, "--project-shard")) {
+            i += 1;
+            if (i >= args.len) try failMissingValue("--project-shard");
+            options.project_shard = args[i];
+        } else if (std.mem.startsWith(u8, arg, "--project-shard=")) {
+            options.project_shard = arg["--project-shard=".len..];
+        } else if (std.mem.eql(u8, arg, "--all-mounted")) {
+            options.all_mounted = true;
+        } else if (std.mem.eql(u8, arg, "--max-guidance-bytes")) {
+            i += 1;
+            if (i >= args.len) try failMissingValue("--max-guidance-bytes");
+            options.max_guidance_bytes = args[i];
+        } else if (std.mem.startsWith(u8, arg, "--max-guidance-bytes=")) {
+            options.max_guidance_bytes = arg["--max-guidance-bytes=".len..];
+        } else if (std.mem.eql(u8, arg, "--max-array-items")) {
+            i += 1;
+            if (i >= args.len) try failMissingValue("--max-array-items");
+            options.max_array_items = args[i];
+        } else if (std.mem.startsWith(u8, arg, "--max-array-items=")) {
+            options.max_array_items = arg["--max-array-items=".len..];
+        } else if (std.mem.eql(u8, arg, "--max-string-bytes")) {
+            i += 1;
+            if (i >= args.len) try failMissingValue("--max-string-bytes");
+            options.max_string_bytes = args[i];
+        } else if (std.mem.startsWith(u8, arg, "--max-string-bytes=")) {
+            options.max_string_bytes = arg["--max-string-bytes=".len..];
+        }
+    }
+
+    try execute(allocator, engine_root, options);
+}
 
 pub fn execute(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: PacksOptions) !void {
     if (std.mem.eql(u8, options.subcommand, "list")) {
@@ -289,9 +389,7 @@ fn executeValidateAutopsyGuidance(allocator: std.mem.Allocator, engine_root: ?[]
 
     try argv.append("validate-autopsy-guidance");
     if (options.manifest) |manifest| {
-        const resolved_manifest = try std.fs.path.resolve(allocator, &.{manifest});
-        defer allocator.free(resolved_manifest);
-        const arg = try std.fmt.allocPrint(allocator, "--manifest={s}", .{resolved_manifest});
+        const arg = try std.fmt.allocPrint(allocator, "--manifest={s}", .{manifest});
         try owned_args.append(arg);
         try argv.append(arg);
     }
@@ -555,6 +653,66 @@ fn hasFlag(flags: []const []const u8, name: []const u8) bool {
     return false;
 }
 
+pub fn collectCapabilityDiagnostic(allocator: std.mem.Allocator, engine_root: ?[]const u8, debug: bool) !CapabilityDiagnostic {
+    var diagnostic = CapabilityDiagnostic{ .allocator = allocator };
+
+    const bin_path = locator.findEngineBinary(allocator, engine_root, .ghost_knowledge_pack) catch |err| {
+        diagnostic.warning = try std.fmt.allocPrint(allocator, "ghost_knowledge_pack capabilities unavailable: {s}", .{@errorName(err)});
+        return diagnostic;
+    };
+    diagnostic.binary_path = bin_path;
+
+    const args = &[_][]const u8{ bin_path, "capabilities", "--json" };
+    if (debug) try printDebugArgv(std.io.getStdErr().writer(), "knowledge-pack capability diagnostic argv", args);
+
+    const result = process.runEngineCommand(allocator, args) catch |err| {
+        diagnostic.warning = try std.fmt.allocPrint(allocator, "ghost_knowledge_pack capabilities failed: {s}", .{@errorName(err)});
+        return diagnostic;
+    };
+    defer {
+        allocator.free(result.stdout);
+        allocator.free(result.stderr);
+    }
+
+    if (debug) {
+        try std.io.getStdErr().writer().print("[DEBUG] knowledge-pack capability diagnostic exit_code={d}\n", .{result.exit_code});
+    }
+
+    if (result.exit_code != 0) {
+        diagnostic.warning = try std.fmt.allocPrint(allocator, "ghost_knowledge_pack capabilities exited {d}", .{result.exit_code});
+        return diagnostic;
+    }
+
+    var parsed = std.json.parseFromSlice(PackCapabilities, allocator, result.stdout, .{ .ignore_unknown_fields = true }) catch |err| {
+        diagnostic.warning = try std.fmt.allocPrint(allocator, "ghost_knowledge_pack capabilities JSON could not be parsed: {s}", .{@errorName(err)});
+        return diagnostic;
+    };
+    defer parsed.deinit();
+
+    diagnostic.capabilities_available = true;
+    diagnostic.validate_autopsy_guidance_supported = hasCommand(parsed.value.commands, "validate-autopsy-guidance") and parsed.value.validateAutopsyGuidance != null;
+    if (parsed.value.validateAutopsyGuidance) |validation| {
+        diagnostic.supported_validation_limit_flags = .{
+            .max_guidance_bytes = hasFlag(validation.flags, "--max-guidance-bytes"),
+            .max_array_items = hasFlag(validation.flags, "--max-array-items"),
+            .max_string_bytes = hasFlag(validation.flags, "--max-string-bytes"),
+        };
+        var schemas = std.ArrayList([]const u8).init(allocator);
+        errdefer {
+            for (schemas.items) |schema| allocator.free(schema);
+            schemas.deinit();
+        }
+        for (validation.supportedSchemaVersions) |schema| {
+            try schemas.append(try allocator.dupe(u8, schema));
+        }
+        diagnostic.supported_schema_versions = try schemas.toOwnedSlice();
+    }
+    if (!diagnostic.validate_autopsy_guidance_supported) {
+        diagnostic.warning = try allocator.dupe(u8, "validate-autopsy-guidance is not advertised; upgrade/rebuild ghost_engine for advanced validation UX");
+    }
+    return diagnostic;
+}
+
 fn printDebugArgv(writer: anytype, label: []const u8, argv: []const []const u8) !void {
     try writer.print("[DEBUG] {s}=", .{label});
     for (argv, 0..) |arg, idx| {
@@ -562,4 +720,9 @@ fn printDebugArgv(writer: anytype, label: []const u8, argv: []const []const u8) 
         try writer.print("'{s}'", .{arg});
     }
     try writer.print("\n", .{});
+}
+
+fn failMissingValue(flag: []const u8) !noreturn {
+    try std.io.getStdErr().writer().print("{s} requires a value\n", .{flag});
+    std.process.exit(1);
 }
