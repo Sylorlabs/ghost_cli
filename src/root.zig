@@ -11,9 +11,11 @@ const state = @import("tui/state.zig");
 const tui_app = @import("tui/app.zig");
 const tui_render = @import("tui/render.zig");
 const tui_slash = @import("tui/slash.zig");
+const tui_terminal = @import("tui/terminal.zig");
 
 comptime {
     _ = tui_input;
+    _ = tui_terminal;
 }
 
 fn renderEngineJson(allocator: std.mem.Allocator, json: []const u8) ![]u8 {
@@ -646,6 +648,94 @@ test "TUI session state clear history" {
     try testing.expectEqual(@as(usize, 0), s.history.items.len);
 }
 
+fn testTurn(allocator: std.mem.Allocator, index: usize, input_text: []const u8) !state.Turn {
+    return .{
+        .index = index,
+        .input = try allocator.dupe(u8, input_text),
+        .reasoning = .balanced,
+        .context_artifact = null,
+        .response = null,
+        .raw_output = try allocator.dupe(u8, "raw"),
+        .rendered_output = try allocator.dupe(u8, "rendered"),
+        .elapsed_ms = 10,
+        .input_runes = stats.countRunes(input_text),
+        .output_runes = 8,
+        .json_ok = true,
+    };
+}
+
+test "TUI history pruning retains bounded turns and frees owned buffers structurally" {
+    var s = state.SessionState.initWithLimit(testing.allocator, "test", null, false, 2);
+    defer s.deinit();
+
+    try s.appendTurn(try testTurn(testing.allocator, s.nextTurnIndex(), "one"));
+    try s.appendTurn(try testTurn(testing.allocator, s.nextTurnIndex(), "two"));
+    try s.appendTurn(try testTurn(testing.allocator, s.nextTurnIndex(), "three"));
+
+    try testing.expectEqual(@as(usize, 2), s.history.items.len);
+    try testing.expectEqual(@as(usize, 3), s.total_turns);
+    try testing.expectEqual(@as(usize, 1), s.pruned_turns);
+    try testing.expectEqual(@as(usize, 1), s.freed_turns);
+    try testing.expectEqualStrings("two", s.history.items[0].input);
+    try testing.expectEqualStrings("three", s.history.items[1].input);
+}
+
+test "TUI resize repaint works after history pruning" {
+    var s = state.SessionState.initWithLimit(testing.allocator, "test", null, false, 1);
+    defer s.deinit();
+    s.previous_render_rows = 24;
+    s.previous_render_cols = 80;
+    s.previous_fixed_rows = 3;
+    s.previous_panel_bottom = 21;
+    s.previous_suggestion_height = 4;
+
+    try s.appendTurn(try testTurn(testing.allocator, s.nextTurnIndex(), "old"));
+    try s.appendTurn(try testTurn(testing.allocator, s.nextTurnIndex(), "new"));
+
+    var out_buf = std.ArrayList(u8).init(testing.allocator);
+    defer out_buf.deinit();
+    try tui_render.renderFrameWithSize(out_buf.writer(), &s, .{ .color = false }, .{ .rows = 36, .cols = 100 });
+
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "+-- TURN 2") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "[YOU]  new") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "[YOU]  old") == null);
+}
+
+var fake_terminal_refreshes: usize = 0;
+fn fakeTerminalSize() tui_terminal.TerminalSize {
+    fake_terminal_refreshes += 1;
+    return .{ .rows = 40, .cols = 120 };
+}
+
+var fake_ram_refreshes: usize = 0;
+fn fakeRam() ?usize {
+    fake_ram_refreshes += 1;
+    return 4096;
+}
+
+test "TUI size and RAM refresh caches avoid per-key polling" {
+    fake_terminal_refreshes = 0;
+    fake_ram_refreshes = 0;
+    var s = state.SessionState.init(testing.allocator, "test", null, false);
+    defer s.deinit();
+
+    s.refreshTerminalSize(0, fakeTerminalSize);
+    s.refreshTerminalSize(10, fakeTerminalSize);
+    s.refreshTerminalSize(state.terminal_refresh_interval_ms, fakeTerminalSize);
+    try testing.expectEqual(@as(usize, 2), fake_terminal_refreshes);
+
+    s.refreshRam(0, fakeRam);
+    s.refreshRam(10, fakeRam);
+    s.refreshRam(state.ram_refresh_interval_ms, fakeRam);
+    try testing.expectEqual(@as(usize, 2), fake_ram_refreshes);
+}
+
+test "TUI terminal size default behavior is isolated and portable" {
+    try testing.expectEqual(tui_terminal.TerminalSize{ .rows = 24, .cols = 80 }, tui_terminal.fallbackSize());
+    try testing.expectEqual(tui_terminal.TerminalSize{ .rows = 24, .cols = 80 }, tui_terminal.validOrDefault(0, 0));
+    try testing.expectEqual(tui_terminal.TerminalSize{ .rows = 12, .cols = 40 }, tui_terminal.validOrDefault(12, 40));
+}
+
 test "TUI slash command parser covers operator commands" {
     try testing.expectEqual(tui_app.SlashKind.help, tui_app.parseSlashCommand("/help").kind);
     try testing.expectEqual(tui_app.SlashKind.quit, tui_app.parseSlashCommand("/quit").kind);
@@ -666,6 +756,63 @@ test "TUI slash command parser covers operator commands" {
     const context = tui_app.parseSlashCommand("/context src/main.zig");
     try testing.expectEqual(tui_app.SlashKind.context, context.kind);
     try testing.expectEqualStrings("src/main.zig", context.arg.?);
+}
+
+test "TUI read-only mode blocks engine-invoking slash commands and prompts" {
+    try testing.expect(tui_app.isReadOnlyBlockedCommand(tui_app.parseSlashCommand("/autopsy .")));
+    try testing.expect(tui_app.isReadOnlyBlockedCommand(tui_app.parseSlashCommand("/doctor")));
+    try testing.expect(!tui_app.isReadOnlyBlockedCommand(tui_app.parseSlashCommand("/help")));
+    try testing.expect(!tui_app.isReadOnlyBlockedCommand(tui_app.parseSlashCommand("/status")));
+    try testing.expect(!tui_app.isReadOnlyBlockedCommand(tui_app.parseSlashCommand("/context README.md")));
+    try testing.expect(!tui_app.shouldSubmitToEngineInMode("normal prompt", true));
+    try testing.expect(tui_app.shouldSubmitToEngineInMode("normal prompt", false));
+
+    var s = state.SessionState.init(testing.allocator, "test", null, false);
+    defer s.deinit();
+    s.read_only = true;
+    s.terminal_size = .{ .rows = 24, .cols = 80 };
+
+    var out_buf = std.ArrayList(u8).init(testing.allocator);
+    defer out_buf.deinit();
+
+    const mock_root = "/tmp/ghost-read-only-blocked";
+    const marker = mock_root ++ "/autopsy-marker";
+    const prompt_marker = mock_root ++ "/prompt-marker";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+    {
+        const file = try std.fs.cwd().createFile(mock_root ++ "/ghost_project_autopsy", .{ .mode = 0o755 });
+        defer file.close();
+        try file.writeAll("#!/bin/sh\ntouch '" ++ marker ++ "'\nprintf '{}'\n");
+    }
+    {
+        const file = try std.fs.cwd().createFile(mock_root ++ "/ghost_task_operator", .{ .mode = 0o755 });
+        defer file.close();
+        try file.writeAll("#!/bin/sh\ntouch '" ++ prompt_marker ++ "'\nprintf '{}'\n");
+    }
+
+    _ = try tui_app.handleSlash(testing.allocator, mock_root, &s, "/autopsy .", out_buf.writer(), .{ .color = false });
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "Read-only mode: command blocked: /autopsy") != null);
+    try testing.expectError(error.FileNotFound, std.fs.cwd().access(marker, .{}));
+
+    out_buf.clearRetainingCapacity();
+    try tui_app.handleSubmit(testing.allocator, mock_root, &s, "hello", out_buf.writer(), .{ .color = false });
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "Read-only mode: engine prompt blocked") != null);
+    try testing.expectError(error.FileNotFound, std.fs.cwd().access(prompt_marker, .{}));
+}
+
+test "TUI read-only mode allows local session commands" {
+    var s = state.SessionState.init(testing.allocator, "test", null, false);
+    defer s.deinit();
+    s.read_only = true;
+    s.terminal_size = .{ .rows = 24, .cols = 80 };
+
+    var out_buf = std.ArrayList(u8).init(testing.allocator);
+    defer out_buf.deinit();
+    _ = try tui_app.handleSlash(testing.allocator, null, &s, "/context README.md", out_buf.writer(), .{ .color = false });
+
+    try testing.expectEqualStrings("README.md", s.context_artifact.?);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "context=README.md") != null);
 }
 
 test "TUI slash command suggestions use prefix and fuzzy matching" {
@@ -731,6 +878,42 @@ test "TUI slash command suggestions use prefix and fuzzy matching" {
     try tui_render.renderSlashSuggestions(out_buf.writer(), &session, 20, .{ .color = false });
     try testing.expectEqual(@as(u16, 0), session.previous_suggestion_height);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "\x1b[9;1H\x1b[K") == null);
+}
+
+test "TUI tiny terminal layout hides suggestions and avoids reserved rows" {
+    const tiny5 = tui_render.layoutFor(.{ .rows = 5, .cols = 80 }, "/", false);
+    try testing.expect(tiny5.tiny);
+    try testing.expectEqual(@as(u16, 0), tiny5.suggestion_height);
+    try testing.expect(tiny5.input_row <= 5);
+
+    const tinyNarrow = tui_render.layoutFor(.{ .rows = 10, .cols = 12 }, "/", false);
+    try testing.expect(tinyNarrow.tiny);
+    try testing.expectEqual(@as(u16, 0), tinyNarrow.suggestion_height);
+
+    const rows8 = tui_render.layoutFor(.{ .rows = 8, .cols = 80 }, "/", false);
+    try testing.expect(!rows8.tiny);
+    try testing.expect(rows8.suggestion_height <= rows8.suggestion_panel_bottom);
+    try testing.expect(rows8.suggestion_panel_bottom < rows8.status_row);
+    try testing.expect(rows8.status_row < rows8.footer_row);
+    try testing.expect(rows8.footer_row < rows8.input_row);
+
+    const rows10 = tui_render.layoutFor(.{ .rows = 10, .cols = 80 }, "/", false);
+    try testing.expect(!rows10.tiny);
+    try testing.expect(rows10.suggestion_height <= rows10.suggestion_panel_bottom);
+    try testing.expect(rows10.suggestion_panel_bottom < rows10.status_row);
+}
+
+test "TUI tiny terminal render does not draw slash suggestions" {
+    var s = state.SessionState.init(testing.allocator, "test", null, false);
+    defer s.deinit();
+    try s.current_input.appendSlice("/");
+
+    var out_buf = std.ArrayList(u8).init(testing.allocator);
+    defer out_buf.deinit();
+    try tui_render.renderFrameWithSize(out_buf.writer(), &s, .{ .color = false }, .{ .rows = 5, .cols = 80 });
+
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "terminal too small") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "slash commands") == null);
 }
 
 test "TUI fuzzy slash command suggestions render from live table" {

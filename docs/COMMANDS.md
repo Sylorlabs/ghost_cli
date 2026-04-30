@@ -147,9 +147,9 @@ advertises them:
 ### `ghost tui`
 Interactive Ghost Console TUI. Provides a live cockpit view for interacting with the engine.
 
-Usage: `ghost tui [--reasoning=quick|balanced|deep|max] [--context-artifact=<path>] [--no-color|--color=auto|always|never] [--compact]`
+Usage: `ghost tui [--reasoning=quick|balanced|deep|max] [--context-artifact=<path>] [--no-color|--color=auto|always|never] [--compact] [--read-only] [--max-history-turns=<n>]`
 
-Engine prompt/response turns are persisted in TUI session history and rendered
+Engine prompt/response turns are retained in bounded TUI session history and rendered
 with `YOU` and `GHOST` labels plus turn separators. `SYSTEM`, `COMMAND`, and
 `ERROR` are render-only labels for local session status, local command output,
 and local errors. Ghost responses still use the same renderer as terminal
@@ -157,6 +157,17 @@ chat/ask output, including correction, negative-knowledge, and epistemic
 sections when the engine reports them. The status bar includes compact counters
 for corrections, applied/proposed negative knowledge, verifier requirements,
 suppressions, and routing warnings.
+
+By default, the TUI retains up to 500 turns. `--max-history-turns=<n>` changes
+that retained-turn bound; older turns are pruned from the local display history.
+The footer reports retained, total, and pruned turn counts.
+
+`--read-only` launches the TUI in local/read-only mode. It allows local/session
+commands such as `/help`, `/status`, `/reasoning`, `/debug`, `/json`, `/clear`,
+and `/context`, but blocks submitted prompts plus slash commands that invoke
+engine operations beyond local session state. `/doctor` and `/autopsy` are
+blocked with `Read-only mode: command blocked: /name`. Read-only mode is visible
+in the TUI status bar.
 
 If stdin/stdout is not an interactive TTY, `ghost`/`ghost tui` exits gracefully
 with a message. The covered smoke path verifies that no CLI-owned TUI command,
@@ -185,7 +196,11 @@ with lightweight fuzzy matches for compact command fragments:
 
 The suggestion area grows upward from the lower command region as more commands match, shrinks as fewer commands match, and reserves terminal rows so history does not overlap the command list. Errors render red, warnings render yellow, and labels remain plain ASCII when color is disabled.
 
-The TUI reads live terminal dimensions on each frame, redraws periodically while idle so resize changes are picked up without another keypress, and clips command-panel rows to the current terminal width.
+The TUI caches terminal dimensions and refreshes them on startup and periodic
+redraw, so resize changes are picked up without probing the terminal on every
+keypress. Command-panel rows are clipped to the current terminal width. Very
+small terminals use a compact fallback and hide slash suggestions rather than
+overlapping the status/footer/input rows.
 
 Invalid slash commands are rejected locally with `Not a valid command: /name` and `Type /help for available commands`. They are not sent to the engine as chat prompts.
 
@@ -196,8 +211,8 @@ Invalid slash commands are rejected locally with `Not a valid command: /name` an
 - `/debug on|off`: Toggle debug diagnostics
 - `/json on|off`: Toggle raw JSON capture for submitted prompts
 - `/clear`: Clear the local TUI history
-- `/doctor`: Explicitly run read-only doctor diagnostics
-- `/autopsy <path>`: Explicitly run Project Autopsy for a path
+- `/doctor`: Explicitly run read-only doctor diagnostics; blocked by TUI `--read-only`
+- `/autopsy <path>`: Explicitly run Project Autopsy for a path; blocked by TUI `--read-only`
 - `/context <path>`: Set context artifact path
 
 ### `ghost learn`

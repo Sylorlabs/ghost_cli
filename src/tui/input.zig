@@ -103,7 +103,48 @@ pub const RawMode = struct {
         return RawMode{ .original_termios = original };
     }
 
-    pub fn disable(self: RawMode) void {
-        std.posix.tcsetattr(std.posix.STDIN_FILENO, .FLUSH, self.original_termios) catch {};
+    pub fn disable(self: RawMode) !void {
+        try std.posix.tcsetattr(std.posix.STDIN_FILENO, .FLUSH, self.original_termios);
     }
 };
+
+pub const TerminalGuard = struct {
+    raw_mode: RawMode,
+    terminal_initialized: bool = false,
+    restored: bool = false,
+
+    pub fn enable() !TerminalGuard {
+        return .{ .raw_mode = try RawMode.enable() };
+    }
+
+    pub fn markTerminalInitialized(self: *TerminalGuard) void {
+        self.terminal_initialized = true;
+    }
+
+    pub fn restore(self: *TerminalGuard, terminal_writer: anytype, warning_writer: anytype) void {
+        if (self.restored) return;
+        self.restored = true;
+
+        if (self.terminal_initialized) {
+            @import("render.zig").deinitTerminal(terminal_writer) catch |err| {
+                warnCleanupFailure(warning_writer, "screen", err);
+            };
+        }
+
+        self.raw_mode.disable() catch |err| {
+            warnCleanupFailure(warning_writer, "raw mode", err);
+        };
+    }
+};
+
+pub fn warnCleanupFailure(writer: anytype, label: []const u8, err: anyerror) void {
+    writer.print("warning: terminal cleanup failed during {s}: {s}\n", .{ label, @errorName(err) }) catch {};
+}
+
+test "cleanup warning path is visible" {
+    var out = std.ArrayList(u8).init(std.testing.allocator);
+    defer out.deinit();
+
+    warnCleanupFailure(out.writer(), "raw mode", error.AccessDenied);
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "warning: terminal cleanup failed during raw mode: AccessDenied") != null);
+}

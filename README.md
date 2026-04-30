@@ -75,6 +75,7 @@ ghost context autopsy --debug "I need marketing advice for a launch"
 # Interactive TUI Console
 ghost tui
 ghost tui --reasoning=deep --compact --color=auto
+ghost tui --read-only
 
 # List knowledge packs
 ghost packs list
@@ -144,6 +145,13 @@ does not run doctor, status, context/project autopsy, verifiers, scans, pack
 mutation, or negative-knowledge mutation. Explicit slash commands and submitted
 prompts may invoke engine binaries according to their command contract.
 
+`ghost --read-only` and `ghost tui --read-only` launch the TUI in a local
+read-only mode. Local/session commands such as `/help`, `/status`, `/reasoning`,
+`/debug`, `/json`, `/clear`, and `/context` remain available, while submitted
+prompts plus `/doctor` and `/autopsy` are blocked locally. The blocked-command
+message is `Read-only mode: command blocked: /name`, and the status bar shows
+`read_only=on`.
+
 Typing `/` shows lightweight native slash-command suggestions. Prefix matches
 stay first, and compact fuzzy fragments such as `/rsn`, `/dbg`, `/ast`, and
 `/ctx` suggest `/reasoning`, `/debug`, `/autopsy`, and `/context`. Invalid slash
@@ -153,14 +161,19 @@ The suggestion area grows upward from the lower command region when more matches
 are visible, shrinks again as matches narrow, and reserves terminal rows so
 history stays separate. Native ANSI color stays restrained: errors are red,
 warnings are yellow, and the same labels remain readable with `--no-color`.
-The TUI reads the live terminal dimensions on each frame, redraws periodically
-while idle so resizes are picked up without another keypress, and clips command
-panel rows to the current width.
+The TUI caches terminal dimensions and RAM/status metrics, refreshing them on
+startup and periodic redraw instead of probing on every keypress. Resizes are
+picked up without another keypress, command-panel rows are clipped to the
+current width, and very small terminals hide suggestions rather than overlapping
+the footer/input rows.
 
-Engine prompt/response turns are persisted in TUI session history and rendered
+Engine prompt/response turns are retained in bounded TUI session history and rendered
 with `YOU` and `GHOST` labels. `SYSTEM`, `COMMAND`, and `ERROR` labels are
 render-only local messages for session status, local command output, and local
-errors; they are not persisted as structured turn history entries.
+errors; they are not persisted as structured turn history entries. The default
+retained history limit is 500 turns and can be changed with
+`--max-history-turns=<n>`; the footer reports retained, total, and pruned turn
+counts.
 
 Slash commands:
 

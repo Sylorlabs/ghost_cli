@@ -2,11 +2,9 @@ const std = @import("std");
 const state = @import("state.zig");
 const slash = @import("slash.zig");
 const stats = @import("stats.zig");
+const terminal = @import("terminal.zig");
 
-pub const TerminalSize = struct {
-    rows: u16,
-    cols: u16,
-};
+pub const TerminalSize = terminal.TerminalSize;
 
 pub const Style = struct {
     color: bool,
@@ -49,21 +47,14 @@ pub const Style = struct {
 };
 
 pub fn getTerminalSize() TerminalSize {
-    var winsize = std.posix.winsize{
-        .row = 0,
-        .col = 0,
-        .xpixel = 0,
-        .ypixel = 0,
-    };
-    const err = std.os.linux.ioctl(std.posix.STDOUT_FILENO, std.os.linux.T.IOCGWINSZ, @intFromPtr(&winsize));
-    if (err == 0 and winsize.row > 0 and winsize.col > 0) {
-        return .{ .rows = winsize.row, .cols = winsize.col };
-    }
-    return .{ .rows = 24, .cols = 80 };
+    return terminal.getSize();
 }
 
 pub fn initTerminal(writer: anytype, style: Style) !void {
-    const size = getTerminalSize();
+    try initTerminalWithSize(writer, style, getTerminalSize());
+}
+
+pub fn initTerminalWithSize(writer: anytype, style: Style, size: TerminalSize) !void {
     try writer.writeAll("\x1b[2J\x1b[H");
     try writer.print("{s} GHOST OPERATOR CONSOLE {s} native terminal | renderer only | no startup scans{s}\n", .{
         style.header(),
@@ -82,7 +73,14 @@ pub fn deinitTerminal(writer: anytype) !void {
 }
 
 pub fn render(writer: anytype, s: *state.SessionState, style: Style) !void {
-    const size = getTerminalSize();
+    try renderWithSize(writer, s, style, getTerminalSize());
+}
+
+pub fn renderWithSize(writer: anytype, s: *state.SessionState, style: Style, size: TerminalSize) !void {
+    if (isTiny(size)) {
+        try renderTiny(writer, s, style, size);
+        return;
+    }
     const input_row = size.rows;
     const footer_row = size.rows - 1;
     const status_row = size.rows - 2;
@@ -92,19 +90,20 @@ pub fn render(writer: anytype, s: *state.SessionState, style: Style) !void {
 
     try writer.print("\x1b[2;{d}r", .{historyBottomRow(size, suggestion_height)});
 
-    try writer.print("\x1b[1;1H{s}\x1b[K GHOST {s} | engine={s} | mode=session | reasoning={s} | turns={d} | draft={d} verified={d} unresolved={d}{s}", .{
+    try writer.print("\x1b[1;1H{s}\x1b[K GHOST {s} | engine={s} | mode=session | reasoning={s} | retained={d}/{d} | draft={d} verified={d} unresolved={d}{s}", .{
         style.header(),
         s.version,
         s.engine_root_label orelse "deferred",
         s.reasoning.toStr(),
         s.history.items.len,
+        s.total_turns,
         s.draft_count,
         s.verified_count,
         s.unresolved_count,
         style.reset(),
     });
 
-    try writer.print("\x1b[{d};1H{s}\x1b[K status={s} | corr={d} nk={d}/{d} verifier_req={d} suppress={d} route={d} | debug={s} json={s}{s}", .{
+    try writer.print("\x1b[{d};1H{s}\x1b[K status={s} | corr={d} nk={d}/{d} verifier_req={d} suppress={d} route={d} | debug={s} json={s} read_only={s}{s}", .{
         status_row,
         style.status(),
         s.last_command_status,
@@ -116,47 +115,61 @@ pub fn render(writer: anytype, s: *state.SessionState, style: Style) !void {
         s.last_counters.routing_warnings,
         if (s.debug) "on" else "off",
         if (s.json_mode) "on" else "off",
+        if (s.read_only) "on" else "off",
         style.reset(),
     });
 
     const ram_str = if (s.last_ram_bytes) |b| try stats.formatBytes(s.allocator, b) else try s.allocator.dupe(u8, "n/a");
     defer s.allocator.free(ram_str);
-    try writer.print("\x1b[{d};1H{s}\x1b[K context={s} | engine_root={s} | ram={s} | keys=Ctrl+R reasoning Ctrl+D debug Ctrl+L clear Ctrl+C quit | /help{s}", .{
+    try writer.print("\x1b[{d};1H{s}\x1b[K context={s} | engine_root={s} | ram={s} | retained={d} total={d} pruned={d} | keys=Ctrl+R Ctrl+D Ctrl+L Ctrl+C | /help{s}", .{
         footer_row,
         style.dim(),
         s.context_artifact orelse "none",
         s.engine_root_label orelse "auto",
         ram_str,
+        s.history.items.len,
+        s.total_turns,
+        s.pruned_turns,
         style.reset(),
     });
 
-    try renderSlashSuggestions(writer, s, suggestion_panel_bottom, style);
+    try renderSlashSuggestionsWithSize(writer, s, suggestion_panel_bottom, style, size);
 
     try renderInputLine(writer, s, input_row, style);
 }
 
 pub fn renderCompact(writer: anytype, s: *state.SessionState, style: Style) !void {
-    const size = getTerminalSize();
+    try renderCompactWithSize(writer, s, style, getTerminalSize());
+}
+
+pub fn renderCompactWithSize(writer: anytype, s: *state.SessionState, style: Style, size: TerminalSize) !void {
+    if (isTiny(size)) {
+        try renderTiny(writer, s, style, size);
+        return;
+    }
     const status_row = size.rows - 1;
     const suggestion_panel_bottom = status_row - 1;
     const suggestion_height = suggestionHeight(s.current_input.items, size, true);
     try prepareFrame(writer, s, size, suggestion_height, suggestion_panel_bottom, 2, style);
 
     try writer.print("\x1b[2;{d}r", .{historyBottomRow(size, suggestion_height)});
-    try writer.print("\x1b[{d};1H{s}\x1b[K Ghost {s} | {s} | turns={d} draft={d} verified={d} unresolved={d} | debug={s} | context={s}{s}", .{
+    try writer.print("\x1b[{d};1H{s}\x1b[K Ghost {s} | {s} | retained={d}/{d} pruned={d} draft={d} verified={d} unresolved={d} | debug={s} read_only={s} | context={s}{s}", .{
         status_row,
         style.status(),
         s.version,
         s.reasoning.toStr(),
         s.history.items.len,
+        s.total_turns,
+        s.pruned_turns,
         s.draft_count,
         s.verified_count,
         s.unresolved_count,
         if (s.debug) "on" else "off",
+        if (s.read_only) "on" else "off",
         s.context_artifact orelse "none",
         style.reset(),
     });
-    try renderSlashSuggestions(writer, s, suggestion_panel_bottom, style);
+    try renderSlashSuggestionsWithSize(writer, s, suggestion_panel_bottom, style, size);
 
     try renderInputLine(writer, s, size.rows, style);
 }
@@ -185,15 +198,22 @@ fn renderInputLine(writer: anytype, s: *state.SessionState, row: u16, style: Sty
 }
 
 pub fn renderFrame(writer: anytype, s: *state.SessionState, style: Style) !void {
+    try renderFrameWithSize(writer, s, style, getTerminalSize());
+}
+
+pub fn renderFrameWithSize(writer: anytype, s: *state.SessionState, style: Style, size: TerminalSize) !void {
     if (s.compact) {
-        try renderCompact(writer, s, style);
+        try renderCompactWithSize(writer, s, style, size);
     } else {
-        try render(writer, s, style);
+        try renderWithSize(writer, s, style, size);
     }
 }
 
 pub fn renderHelp(writer: anytype, style: Style) !void {
-    const size = getTerminalSize();
+    try renderHelpWithSize(writer, style, getTerminalSize());
+}
+
+pub fn renderHelpWithSize(writer: anytype, style: Style, size: TerminalSize) !void {
     try writer.print("\x1b[{d};1H", .{historyBottomRow(size, 0)});
     try writer.print("\n{s}[COMMAND]{s} Ghost TUI Help\n", .{ style.cyan(), style.reset() });
     for (slash.commands) |command| {
@@ -210,9 +230,12 @@ pub fn renderStatus(writer: anytype, s: *state.SessionState, style: Style) !void
         \\
         \\{s}SYSTEM{s} TUI Session Status
         \\  turns={d}
+        \\  total_turns={d}
+        \\  pruned_turns={d}
         \\  reasoning={s}
         \\  debug={s}
         \\  json={s}
+        \\  read_only={s}
         \\  context={s}
         \\  engine_root={s}
         \\  last={s}
@@ -221,9 +244,12 @@ pub fn renderStatus(writer: anytype, s: *state.SessionState, style: Style) !void
         style.cyan(),
         style.reset(),
         s.history.items.len,
+        s.total_turns,
+        s.pruned_turns,
         s.reasoning.toStr(),
         if (s.debug) "on" else "off",
         if (s.json_mode) "on" else "off",
+        if (s.read_only) "on" else "off",
         s.context_artifact orelse "none",
         s.engine_root_label orelse "auto",
         s.last_command_status,
@@ -240,7 +266,7 @@ pub fn renderNonTty(writer: anytype) !void {
 }
 
 pub fn renderInputStats(writer: anytype, s: *state.SessionState, style: Style) !void {
-    const size = getTerminalSize();
+    const size = s.terminal_size;
     try writer.print("\x1b[{d};1H{s}\x1b[K input={d} runes | context={s}{s}", .{
         size.rows - 1,
         style.dim(),
@@ -251,8 +277,10 @@ pub fn renderInputStats(writer: anytype, s: *state.SessionState, style: Style) !
 }
 
 pub fn renderTurn(writer: anytype, turn: state.Turn, style: Style) !void {
-    const size = getTerminalSize();
+    try renderTurnWithSize(writer, turn, style, getTerminalSize());
+}
 
+pub fn renderTurnWithSize(writer: anytype, turn: state.Turn, style: Style, size: TerminalSize) !void {
     try writer.print("\x1b[{d};1H", .{historyBottomRow(size, 0)});
     try writeTurn(writer, turn, style);
 }
@@ -294,7 +322,10 @@ pub fn renderInvalidSlashCommand(writer: anytype, style: Style, command: []const
 }
 
 pub fn clearHistoryArea(writer: anytype) !void {
-    const size = getTerminalSize();
+    try clearHistoryAreaWithSize(writer, getTerminalSize());
+}
+
+pub fn clearHistoryAreaWithSize(writer: anytype, size: TerminalSize) !void {
     // Move to 1,1
     try writer.writeAll("\x1b[1;1H");
     // Clear lines from 1 to height-2
@@ -306,6 +337,10 @@ pub fn clearHistoryArea(writer: anytype) !void {
 }
 
 pub fn renderSlashSuggestions(writer: anytype, s: *state.SessionState, panel_bottom: u16, style: Style) !void {
+    try renderSlashSuggestionsWithSize(writer, s, panel_bottom, style, getTerminalSize());
+}
+
+pub fn renderSlashSuggestionsWithSize(writer: anytype, s: *state.SessionState, panel_bottom: u16, style: Style, size: TerminalSize) !void {
     const input_text = s.current_input.items;
     const height = suggestionHeightForPanel(input_text, panel_bottom);
     try clearSuggestionPanel(writer, panel_bottom, @max(height, s.previous_suggestion_height));
@@ -318,7 +353,6 @@ pub fn renderSlashSuggestions(writer: anytype, s: *state.SessionState, panel_bot
 
     const token = slash.suggestionToken(input_text);
     const count = slash.matchingCount(token);
-    const size = getTerminalSize();
     const width = panelWidth(size);
     if (count == 0) {
         try printPanelBorder(writer, top, width, " slash commands ");
@@ -380,6 +414,72 @@ fn suggestionHeightForPanel(input_text: []const u8, panel_bottom: u16) u16 {
 fn maxSuggestionHeight(panel_bottom: u16) u16 {
     if (panel_bottom <= 2) return 0;
     return @min(@as(u16, slash.commands.len + 2), panel_bottom - 1);
+}
+
+pub const Layout = struct {
+    tiny: bool,
+    input_row: u16,
+    status_row: u16,
+    footer_row: u16,
+    suggestion_panel_bottom: u16,
+    suggestion_height: u16,
+};
+
+pub fn layoutFor(size: TerminalSize, input_text: []const u8, compact: bool) Layout {
+    const tiny = isTiny(size);
+    if (tiny) {
+        const input_row = @max(size.rows, 1);
+        return .{
+            .tiny = true,
+            .input_row = input_row,
+            .status_row = 1,
+            .footer_row = if (size.rows >= 2) 2 else 1,
+            .suggestion_panel_bottom = 1,
+            .suggestion_height = 0,
+        };
+    }
+    const fixed_rows: u16 = if (compact) 2 else 3;
+    const input_row = size.rows;
+    const footer_row = if (compact) size.rows - 1 else size.rows - 1;
+    const status_row = if (compact) size.rows - 1 else size.rows - 2;
+    const suggestion_panel_bottom = status_row - 1;
+    const height = suggestionHeight(input_text, size, compact);
+    return .{
+        .tiny = false,
+        .input_row = input_row,
+        .status_row = status_row,
+        .footer_row = footer_row,
+        .suggestion_panel_bottom = suggestion_panel_bottom,
+        .suggestion_height = @min(height, fixed_rows + suggestion_panel_bottom),
+    };
+}
+
+fn isTiny(size: TerminalSize) bool {
+    return size.rows < 6 or size.cols < 20;
+}
+
+fn renderTiny(writer: anytype, s: *state.SessionState, style: Style, size: TerminalSize) !void {
+    const input_row = @max(size.rows, 1);
+    try writer.writeAll("\x1b[r");
+    try writer.print("\x1b[1;1H{s}\x1b[K Ghost TUI: terminal too small ({d}x{d}){s}", .{
+        style.status(),
+        size.cols,
+        size.rows,
+        style.reset(),
+    });
+    if (size.rows >= 2) {
+        try writer.print("\x1b[2;1H{s}\x1b[K read_only={s} retained={d} total={d} pruned={d}{s}", .{
+            style.dim(),
+            if (s.read_only) "on" else "off",
+            s.history.items.len,
+            s.total_turns,
+            s.pruned_turns,
+            style.reset(),
+        });
+    }
+    s.previous_suggestion_height = 0;
+    s.previous_panel_bottom = 1;
+    try renderInputLine(writer, s, input_row, style);
 }
 
 fn clearSuggestionPanel(writer: anytype, panel_bottom: u16, height: u16) !void {

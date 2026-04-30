@@ -10,6 +10,7 @@ const learn = @import("commands/learn.zig");
 const autopsy = @import("commands/autopsy.zig");
 const context_cmd = @import("commands/context.zig");
 const tui = @import("commands/tui.zig");
+const tui_state = @import("tui/state.zig");
 const json_contracts = @import("engine/json_contracts.zig");
 
 const build_version = "v0.1.0-hardened";
@@ -76,6 +77,8 @@ const CliOptions = struct {
     debug_mode: bool = false,
     color_mode: tui.ColorMode = .auto,
     compact: bool = false,
+    read_only: bool = false,
+    max_history_turns: usize = tui_state.default_max_history_turns,
     reasoning_level: ?json_contracts.ReasoningLevel = null,
     context_artifact: ?[]const u8 = null,
     message: ?[]const u8 = null,
@@ -178,6 +181,8 @@ pub fn main() !void {
             .debug = parsed.options.debug_mode,
             .color = parsed.options.color_mode,
             .compact = parsed.options.compact,
+            .read_only = parsed.options.read_only,
+            .max_history_turns = parsed.options.max_history_turns,
             .version = build_version,
             .engine_root_label = root,
         }),
@@ -243,6 +248,18 @@ fn parseFlag(arg: []const u8, options: *CliOptions) !bool {
         };
     } else if (std.mem.eql(u8, arg, "--compact")) {
         options.compact = true;
+    } else if (std.mem.eql(u8, arg, "--read-only")) {
+        options.read_only = true;
+    } else if (std.mem.startsWith(u8, arg, "--max-history-turns=")) {
+        const raw = arg["--max-history-turns=".len..];
+        options.max_history_turns = std.fmt.parseInt(usize, raw, 10) catch {
+            try std.io.getStdErr().writer().print("Invalid --max-history-turns value: {s}. Use a positive integer.\n", .{raw});
+            std.process.exit(1);
+        };
+        if (options.max_history_turns == 0) {
+            try std.io.getStdErr().writer().print("Invalid --max-history-turns value: 0. Use a positive integer.\n", .{});
+            std.process.exit(1);
+        }
     } else if (std.mem.eql(u8, arg, "--approve")) {
         options.approve = true;
     } else if (std.mem.eql(u8, arg, "--report")) {
@@ -302,6 +319,8 @@ fn runDefaultTui(allocator: std.mem.Allocator, options: CliOptions) !void {
         .debug = options.debug_mode,
         .color = options.color_mode,
         .compact = options.compact,
+        .read_only = options.read_only,
+        .max_history_turns = options.max_history_turns,
         .version = build_version,
         .engine_root_label = root_tui,
     });
@@ -376,6 +395,8 @@ fn printHelp(writer: anytype) !void {
         \\  --no-color             Disable ANSI color in native TUI surfaces
         \\  --color=<mode>         auto|always|never
         \\  --compact              Use tighter native TUI layout
+        \\  --read-only            Launch TUI in local/read-only mode
+        \\  --max-history-turns=<n> Bound retained TUI turns (default 500)
         \\
         \\Advanced/debug options:
         \\
@@ -436,11 +457,14 @@ fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
             \\  --no-color             Disable ANSI color
             \\  --color=<mode>         auto|always|never
             \\  --compact              Tighter layout
+            \\  --read-only            Block engine-invoking TUI commands/prompts
+            \\  --max-history-turns=<n> Bound retained TUI turns (default 500)
             \\
             \\Slash commands:
             \\  /help, /quit, /status, /reasoning <level>, /debug on|off, /json on|off
             \\  /clear, /doctor, /autopsy <path>, /context <path>
             \\  Typing / shows prefix-first fuzzy suggestions. Invalid slash commands are rejected locally.
+            \\  In --read-only mode, /doctor, /autopsy, and submitted prompts are blocked locally.
             \\
             \\Safety:
             \\  Launching or idling in the TUI does not start doctor/status, context/project autopsy,

@@ -84,6 +84,8 @@ test "help text lists all top-level commands" {
     try testing.expect(std.mem.indexOf(u8, res.stderr, "Knowledge:") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "Advanced:") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "Interface:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "--read-only") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "--max-history-turns=<n>") != null);
 }
 
 test "subcommand help works without resolving engine" {
@@ -95,6 +97,8 @@ test "subcommand help works without resolving engine" {
     try testing.expectEqual(@as(u32, 0), tui_res.term.Exited);
     try testing.expect(std.mem.indexOf(u8, tui_res.stderr, "Usage: ghost tui") != null);
     try testing.expect(std.mem.indexOf(u8, tui_res.stderr, "/autopsy <path>") != null);
+    try testing.expect(std.mem.indexOf(u8, tui_res.stderr, "--read-only") != null);
+    try testing.expect(std.mem.indexOf(u8, tui_res.stderr, "--max-history-turns=<n>") != null);
     try testing.expect(std.mem.indexOf(u8, tui_res.stderr, "prefix-first fuzzy suggestions") != null);
     try testing.expect(std.mem.indexOf(u8, tui_res.stderr, "Explicit slash commands and submitted prompts may invoke engine binaries") != null);
 
@@ -128,6 +132,28 @@ test "subcommand help works without resolving engine" {
     try testing.expect(std.mem.indexOf(u8, context_autopsy_res.stderr, "--input-max-bytes <n>") != null);
 }
 
+test "TUI read-only help works with command parser" {
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "tui", "--read-only", "--help", "--engine-root=/tmp/ghost-help-missing" });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "Usage: ghost tui") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "--read-only") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "blocked locally") != null);
+}
+
+test "TUI max history turns rejects zero" {
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "tui", "--max-history-turns=0", "--help" });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+    try testing.expect(res.term.Exited != 0);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "Invalid --max-history-turns value") != null);
+}
+
 test "advanced renderer options parse consistently" {
     const res = try runCmd(testing.allocator, &[_][]const u8{
         "./zig-out/bin/ghost",
@@ -136,6 +162,8 @@ test "advanced renderer options parse consistently" {
         "--no-color",
         "--color=never",
         "--compact",
+        "--read-only",
+        "--max-history-turns=25",
         "--reasoning=max",
     });
     defer {
@@ -144,6 +172,7 @@ test "advanced renderer options parse consistently" {
     }
     try testing.expectEqual(@as(u32, 0), res.term.Exited);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "--compact") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "--read-only") != null);
 }
 
 test "invalid reasoning fails clearly" {

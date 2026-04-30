@@ -4,6 +4,7 @@ const render = @import("render.zig");
 const input = @import("input.zig");
 const slash = @import("slash.zig");
 const stats = @import("stats.zig");
+const terminal = @import("terminal.zig");
 const runner = @import("../engine/runner.zig");
 const json_contracts = @import("../engine/json_contracts.zig");
 const terminal_render = @import("../render/terminal.zig");
@@ -25,6 +26,8 @@ pub const RunOptions = struct {
     debug: bool = false,
     color: ColorMode = .auto,
     compact: bool = false,
+    read_only: bool = false,
+    max_history_turns: usize = state.default_max_history_turns,
     version: []const u8,
     engine_root_label: ?[]const u8 = null,
 };
@@ -37,6 +40,17 @@ pub fn shouldSubmitToEngine(text: []const u8) bool {
     return slash.shouldSubmitToEngine(text);
 }
 
+pub fn shouldSubmitToEngineInMode(text: []const u8, read_only: bool) bool {
+    return !read_only and slash.shouldSubmitToEngine(text);
+}
+
+pub fn isReadOnlyBlockedCommand(command: SlashCommand) bool {
+    return switch (command.kind) {
+        .doctor, .autopsy => true,
+        else => false,
+    };
+}
+
 pub fn run(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: RunOptions) !void {
     if (!input.isTty()) {
         try render.renderNonTty(std.io.getStdErr().writer());
@@ -46,26 +60,36 @@ pub fn run(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: RunO
     const color_enabled = try colorEnabled(allocator, options.color);
     const style = render.Style{ .color = color_enabled };
 
-    var s = state.SessionState.init(allocator, options.version, options.engine_root_label, options.compact);
+    if (options.max_history_turns == 0) return error.InvalidHistoryLimit;
+
+    var s = state.SessionState.initWithLimit(allocator, options.version, options.engine_root_label, options.compact, options.max_history_turns);
     defer s.deinit();
 
     if (options.reasoning) |r| s.reasoning = r;
     if (options.context_artifact) |c| s.context_artifact = try allocator.dupe(u8, c);
     s.debug = options.debug;
+    s.read_only = options.read_only;
 
     const stdin = std.io.getStdIn();
     const stdout = std.io.getStdOut();
     const writer = stdout.writer();
+    const stderr = std.io.getStdErr();
+    const warning_writer = stderr.writer();
 
-    var raw_mode = try input.RawMode.enable();
-    defer raw_mode.disable();
+    var terminal_guard = try input.TerminalGuard.enable();
+    defer terminal_guard.restore(writer, warning_writer);
 
-    try render.initTerminal(writer, style);
-    defer render.deinitTerminal(writer) catch {};
+    s.refreshTerminalSize(std.time.milliTimestamp(), terminal.getSize);
+    s.refreshRam(std.time.milliTimestamp(), stats.getCliRamRss);
+
+    try render.initTerminalWithSize(writer, style, s.terminal_size);
+    terminal_guard.markTerminalInitialized();
 
     while (true) {
-        s.last_ram_bytes = stats.getCliRamRss();
-        try render.renderFrame(writer, &s, style);
+        const now_ms = std.time.milliTimestamp();
+        s.refreshTerminalSize(now_ms, terminal.getSize);
+        s.refreshRam(now_ms, stats.getCliRamRss);
+        try render.renderFrameWithSize(writer, &s, style, s.terminal_size);
 
         const key = try input.readKey(stdin.reader());
         switch (key) {
@@ -79,7 +103,7 @@ pub fn run(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: RunO
                     },
                     'L' => {
                         s.clearHistory();
-                        try render.clearHistoryArea(writer);
+                        try render.clearHistoryAreaWithSize(writer, s.terminal_size);
                     },
                     else => {},
                 }
@@ -182,13 +206,19 @@ fn colorEnabled(allocator: std.mem.Allocator, mode: ColorMode) !bool {
     };
 }
 
-fn handleSlash(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *state.SessionState, text: []const u8, writer: anytype, style: render.Style) !?bool {
+pub fn handleSlash(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *state.SessionState, text: []const u8, writer: anytype, style: render.Style) !?bool {
     const command = parseSlashCommand(text);
+    if (s.read_only and isReadOnlyBlockedCommand(command)) {
+        const token = slash.suggestionToken(text);
+        s.last_command_status = "read-only blocked";
+        try render.renderErrorMessage(writer, style, "Read-only mode: command blocked: {s}", .{token});
+        return false;
+    }
     switch (command.kind) {
         .none => return null,
         .quit => return true,
         .help => {
-            try render.renderHelp(writer, style);
+            try render.renderHelpWithSize(writer, style, s.terminal_size);
             s.last_command_status = "help";
         },
         .status => {
@@ -197,7 +227,7 @@ fn handleSlash(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *state
         },
         .clear => {
             s.clearHistory();
-            try render.clearHistoryArea(writer);
+            try render.clearHistoryAreaWithSize(writer, s.terminal_size);
         },
         .reasoning => {
             const level_str = command.arg orelse "";
@@ -265,7 +295,13 @@ fn handleSlash(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *state
     return false;
 }
 
-fn handleSubmit(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *state.SessionState, cmd_text: []const u8, writer: anytype, style: render.Style) !void {
+pub fn handleSubmit(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *state.SessionState, cmd_text: []const u8, writer: anytype, style: render.Style) !void {
+    if (s.read_only) {
+        s.last_command_status = "read-only blocked";
+        try render.renderErrorMessage(writer, style, "Read-only mode: engine prompt blocked", .{});
+        return;
+    }
+
     const start_time = std.time.milliTimestamp();
 
     var arena = std.heap.ArenaAllocator.init(allocator);
@@ -328,7 +364,7 @@ fn handleSubmit(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *stat
     }
 
     const turn = state.Turn{
-        .index = s.history.items.len + 1,
+        .index = s.nextTurnIndex(),
         .input = try allocator.dupe(u8, cmd_text),
         .reasoning = s.reasoning,
         .context_artifact = if (s.context_artifact) |ca| try allocator.dupe(u8, ca) else null,
@@ -341,7 +377,8 @@ fn handleSubmit(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *stat
         .json_ok = json_ok,
     };
 
-    try s.history.append(turn);
+    try s.appendTurn(turn);
+    s.refreshRam(std.time.milliTimestamp(), stats.getCliRamRss);
     s.last_command_status = if (res.exit_code == 0) "engine response" else "engine error";
-    try render.renderTurn(writer, turn, style);
+    try render.renderTurnWithSize(writer, turn, style, s.terminal_size);
 }
