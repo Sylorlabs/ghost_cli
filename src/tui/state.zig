@@ -35,6 +35,10 @@ pub const SessionState = struct {
     verified_count: usize,
     unresolved_count: usize,
     previous_suggestion_height: u16,
+    previous_panel_bottom: u16,
+    previous_fixed_rows: u16,
+    previous_render_rows: u16,
+    previous_render_cols: u16,
     suggestion_index: usize,
 
     pub fn init(allocator: std.mem.Allocator, version: []const u8, engine_root_label: ?[]const u8, compact: bool) SessionState {
@@ -58,6 +62,10 @@ pub const SessionState = struct {
             .verified_count = 0,
             .unresolved_count = 0,
             .previous_suggestion_height = 0,
+            .previous_panel_bottom = 0,
+            .previous_fixed_rows = 0,
+            .previous_render_rows = 0,
+            .previous_render_cols = 0,
             .suggestion_index = 0,
         };
     }

@@ -88,6 +88,7 @@ pub fn render(writer: anytype, s: *state.SessionState, style: Style) !void {
     const status_row = size.rows - 2;
     const suggestion_panel_bottom = status_row - 1;
     const suggestion_height = suggestionHeight(s.current_input.items, size, false);
+    try prepareFrame(writer, s, size, suggestion_height, suggestion_panel_bottom, 3, style);
 
     try writer.print("\x1b[2;{d}r", .{historyBottomRow(size, suggestion_height)});
 
@@ -139,6 +140,8 @@ pub fn renderCompact(writer: anytype, s: *state.SessionState, style: Style) !voi
     const status_row = size.rows - 1;
     const suggestion_panel_bottom = status_row - 1;
     const suggestion_height = suggestionHeight(s.current_input.items, size, true);
+    try prepareFrame(writer, s, size, suggestion_height, suggestion_panel_bottom, 2, style);
+
     try writer.print("\x1b[2;{d}r", .{historyBottomRow(size, suggestion_height)});
     try writer.print("\x1b[{d};1H{s}\x1b[K Ghost {s} | {s} | turns={d} draft={d} verified={d} unresolved={d} | debug={s} | context={s}{s}", .{
         status_row,
@@ -251,7 +254,10 @@ pub fn renderTurn(writer: anytype, turn: state.Turn, style: Style) !void {
     const size = getTerminalSize();
 
     try writer.print("\x1b[{d};1H", .{historyBottomRow(size, 0)});
+    try writeTurn(writer, turn, style);
+}
 
+fn writeTurn(writer: anytype, turn: state.Turn, style: Style) !void {
     try writer.print("{s}+-- TURN {d} | {s} | {d}ms | json={s} --+{s}\n", .{ style.dim(), turn.index, turn.reasoning.toStr(), turn.elapsed_ms, if (turn.json_ok) "ok" else "raw", style.reset() });
     try writer.print("{s}[YOU]  {s}{s}\n", .{ style.cyan(), style.reset(), turn.input });
     try writer.print("{s}[GHOST]{s}\n", .{ style.cyan(), style.reset() });
@@ -304,6 +310,7 @@ pub fn renderSlashSuggestions(writer: anytype, s: *state.SessionState, panel_bot
     const height = suggestionHeightForPanel(input_text, panel_bottom);
     try clearSuggestionPanel(writer, panel_bottom, @max(height, s.previous_suggestion_height));
     s.previous_suggestion_height = height;
+    s.previous_panel_bottom = panel_bottom;
 
     if (height == 0) return;
 
@@ -385,6 +392,44 @@ fn clearSuggestionPanel(writer: anytype, panel_bottom: u16, height: u16) !void {
     }
 }
 
+fn prepareFrame(writer: anytype, s: *state.SessionState, size: TerminalSize, suggestion_height: u16, panel_bottom: u16, fixed_rows: u16, style: Style) !void {
+    if (s.previous_render_rows == 0) {
+        s.previous_render_rows = size.rows;
+        s.previous_render_cols = size.cols;
+        s.previous_fixed_rows = fixed_rows;
+        s.previous_panel_bottom = panel_bottom;
+        return;
+    }
+
+    const resized = s.previous_render_rows != size.rows or s.previous_render_cols != size.cols or s.previous_fixed_rows != fixed_rows;
+    if (resized) {
+        try repaintFrame(writer, s, size, suggestion_height, fixed_rows, style);
+    } else if (s.previous_panel_bottom != panel_bottom) {
+        if (s.previous_suggestion_height > 0 and s.previous_panel_bottom > 0) {
+            try clearSuggestionPanel(writer, s.previous_panel_bottom, s.previous_suggestion_height);
+            s.previous_suggestion_height = 0;
+        }
+    }
+
+    s.previous_render_rows = size.rows;
+    s.previous_render_cols = size.cols;
+    s.previous_fixed_rows = fixed_rows;
+    s.previous_panel_bottom = panel_bottom;
+}
+
+fn repaintFrame(writer: anytype, s: *state.SessionState, size: TerminalSize, suggestion_height: u16, fixed_rows: u16, style: Style) !void {
+    try writer.writeAll("\x1b[r\x1b[2J\x1b[H");
+    try writer.print("\x1b[2;{d}r", .{historyBottomRow(size, suggestion_height)});
+    try writer.writeAll("\x1b[2;1H");
+    for (s.history.items) |turn| {
+        try writeTurn(writer, turn, style);
+    }
+    s.previous_suggestion_height = 0;
+    s.previous_render_rows = size.rows;
+    s.previous_render_cols = size.cols;
+    s.previous_fixed_rows = fixed_rows;
+}
+
 fn historyBottomRow(size: TerminalSize, suggestion_height: u16) u16 {
     const base_bottom: u16 = if (size.rows > 5) size.rows - 4 else 1;
     if (suggestion_height == 0) return base_bottom;
@@ -447,4 +492,42 @@ fn writeTruncated(writer: anytype, text: []const u8, width: usize) !void {
     if (width == 0) return;
     const written = @min(text.len, width);
     try writer.writeAll(text[0..written]);
+}
+
+test "resize repaint clears screen and replays stored turns" {
+    const testing = std.testing;
+    var session = state.SessionState.init(testing.allocator, "test", null, false);
+    defer session.deinit();
+    session.previous_render_rows = 24;
+    session.previous_render_cols = 80;
+    session.previous_fixed_rows = 3;
+    session.previous_panel_bottom = 21;
+    session.previous_suggestion_height = 4;
+    try session.history.append(.{
+        .index = 1,
+        .input = try testing.allocator.dupe(u8, "hello"),
+        .reasoning = .balanced,
+        .context_artifact = null,
+        .response = null,
+        .raw_output = try testing.allocator.dupe(u8, "{}"),
+        .rendered_output = try testing.allocator.dupe(u8, "world\n"),
+        .elapsed_ms = 7,
+        .input_runes = 5,
+        .output_runes = 5,
+        .json_ok = true,
+    });
+
+    var out = std.ArrayList(u8).init(testing.allocator);
+    defer out.deinit();
+
+    try prepareFrame(out.writer(), &session, .{ .rows = 36, .cols = 100 }, 0, 33, 3, .{ .color = false });
+
+    try testing.expect(std.mem.indexOf(u8, out.items, "\x1b[r\x1b[2J\x1b[H") != null);
+    try testing.expect(std.mem.indexOf(u8, out.items, "+-- TURN 1") != null);
+    try testing.expect(std.mem.indexOf(u8, out.items, "[YOU]  hello") != null);
+    try testing.expect(std.mem.indexOf(u8, out.items, "world") != null);
+    try testing.expectEqual(@as(u16, 36), session.previous_render_rows);
+    try testing.expectEqual(@as(u16, 100), session.previous_render_cols);
+    try testing.expectEqual(@as(u16, 33), session.previous_panel_bottom);
+    try testing.expectEqual(@as(u16, 0), session.previous_suggestion_height);
 }
