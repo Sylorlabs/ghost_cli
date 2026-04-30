@@ -19,22 +19,22 @@ pub const Key = union(enum) {
 };
 
 pub fn readKey(reader: anytype) !Key {
-    var buf: [8]u8 = undefined;
+    var buf: [1]u8 = undefined;
     const n = try reader.read(&buf);
     if (n == 0) return .unsupported;
 
-    if (n == 1) {
-        const c = buf[0];
-        if (c == 13 or c == 10) return .enter;
-        if (c == 27) return .esc;
-        if (c == 127 or c == 8) return .backspace;
-        if (c == 9) return .tab;
-        if (c < 32) return Key{ .ctrl = c + 64 };
-        return Key{ .char = c };
-    }
+    const c = buf[0];
+    if (c == 13 or c == 10) return .enter;
+    if (c == 127 or c == 8) return .backspace;
+    if (c == 9) return .tab;
+    if (c < 32 and c != 27) return Key{ .ctrl = c + 64 };
+    if (c != 27) return Key{ .char = c };
 
-    if (n >= 3 and buf[0] == 27 and buf[1] == '[') {
-        return switch (buf[2]) {
+    var seq: [2]u8 = undefined;
+    const seq_len = try reader.read(&seq);
+    if (seq_len == 0) return .esc;
+    if (seq_len >= 2 and seq[0] == '[') {
+        return switch (seq[1]) {
             'A' => .up,
             'B' => .down,
             'C' => .right,
@@ -43,7 +43,32 @@ pub fn readKey(reader: anytype) !Key {
         };
     }
 
-    return .unsupported;
+    return .esc;
+}
+
+test "readKey consumes pasted text one key at a time" {
+    var stream = std.io.fixedBufferStream("/notreal\r");
+    const reader = stream.reader();
+
+    try std.testing.expectEqual(Key{ .char = '/' }, try readKey(reader));
+    try std.testing.expectEqual(Key{ .char = 'n' }, try readKey(reader));
+    try std.testing.expectEqual(Key{ .char = 'o' }, try readKey(reader));
+    try std.testing.expectEqual(Key{ .char = 't' }, try readKey(reader));
+    try std.testing.expectEqual(Key{ .char = 'r' }, try readKey(reader));
+    try std.testing.expectEqual(Key{ .char = 'e' }, try readKey(reader));
+    try std.testing.expectEqual(Key{ .char = 'a' }, try readKey(reader));
+    try std.testing.expectEqual(Key{ .char = 'l' }, try readKey(reader));
+    try std.testing.expectEqual(Key.enter, try readKey(reader));
+}
+
+test "readKey keeps arrow escape handling" {
+    var stream = std.io.fixedBufferStream("\x1b[A\x1b[B\x1b[C\x1b[D");
+    const reader = stream.reader();
+
+    try std.testing.expectEqual(Key.up, try readKey(reader));
+    try std.testing.expectEqual(Key.down, try readKey(reader));
+    try std.testing.expectEqual(Key.right, try readKey(reader));
+    try std.testing.expectEqual(Key.left, try readKey(reader));
 }
 
 pub const RawMode = struct {

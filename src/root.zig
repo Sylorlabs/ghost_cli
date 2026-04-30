@@ -5,11 +5,16 @@ const paths = @import("config/paths.zig");
 const locator = @import("engine/locator.zig");
 const json_contracts = @import("engine/json_contracts.zig");
 const terminal = @import("render/terminal.zig");
+const tui_input = @import("tui/input.zig");
 const stats = @import("tui/stats.zig");
 const state = @import("tui/state.zig");
 const tui_app = @import("tui/app.zig");
 const tui_render = @import("tui/render.zig");
 const tui_slash = @import("tui/slash.zig");
+
+comptime {
+    _ = tui_input;
+}
 
 fn renderEngineJson(allocator: std.mem.Allocator, json: []const u8) ![]u8 {
     var parsed = try json_contracts.parseEngineJson(allocator, json);
