@@ -100,13 +100,38 @@ Usage: `ghost packs validate-autopsy-guidance --manifest=path/to/manifest.json`
 Usage: `ghost packs validate-autopsy-guidance --pack-id=zig_runtime_sync --version=1.0.0`
 Usage: `ghost packs validate-autopsy-guidance --all-mounted --project-shard=my-project`
 Usage: `ghost packs validate-autopsy-guidance --json --manifest=path/to/manifest.json`
+Usage: `ghost packs validate-autopsy-guidance --manifest=path/to/manifest.json --max-guidance-bytes=524288 --max-array-items=128 --max-string-bytes=2048`
 
 This is an explicit review-only validation command. It does not mutate packs,
 auto-fix guidance, auto-promote guidance, run automatically from TUI launch,
-doctor, status, or startup, and does not treat valid guidance as proof. Human
-mode preserves engine pass/fail/warning output and propagates validation errors
-as command failures. `--json` asks the engine for JSON and preserves raw engine
-stdout exactly.
+doctor, status, or startup, and does not treat valid guidance as proof.
+
+Before routing validation, the CLI queries
+`ghost_knowledge_pack capabilities --json` and requires the engine to advertise
+`validate-autopsy-guidance`, the required target flags, and at least one
+supported autopsy guidance schema version. If capabilities are unavailable or
+incomplete, the command fails with a compatibility error that includes the
+resolved engine binary path/version when known and suggests `ghost doctor` or an
+engine upgrade. Help remains offline and does not require engine availability.
+
+The currently supported schema reported by the engine is
+`ghost.autopsy_guidance.v1`. Legacy unversioned guidance shapes remain accepted
+by the engine for compatibility, but they render as warnings rather than proof
+or promotion.
+
+Human mode renders concise pass, warning, and error summaries from the engine's
+JSON validation contract and suppresses raw Zig traces or low-level stderr.
+Validation failures still exit non-zero. `--json` asks the engine for JSON and
+preserves raw engine stdout exactly. `--debug` writes diagnostics to stderr,
+including the engine path, capability parse result, routed argv, exit code, and
+validation parse status.
+
+Limit override flags are routed only when the engine capabilities endpoint
+advertises them:
+
+- `--max-guidance-bytes=<n>`
+- `--max-array-items=<n>`
+- `--max-string-bytes=<n>`
 
 ### `ghost tui`
 Interactive Ghost Console TUI. Provides a live cockpit view for interacting with the engine.

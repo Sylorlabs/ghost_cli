@@ -83,6 +83,7 @@ ghost packs mount zig_runtime_sync --version=1.0.0
 ghost packs validate-autopsy-guidance --manifest=path/to/manifest.json
 ghost packs validate-autopsy-guidance --pack-id=zig_runtime_sync --version=1.0.0
 ghost packs validate-autopsy-guidance --all-mounted --project-shard=my-project
+ghost packs validate-autopsy-guidance --manifest=path/to/manifest.json --max-guidance-bytes=524288
 
 # Feedback and Distillation (Learn)
 ghost learn candidates --project-shard=my-project
@@ -104,7 +105,7 @@ ghost doctor --report
 - **Reinforcement**: Local experience gathered during chat and task sessions.
 - **Distillation Candidates**: Reviewed and aggregated knowledge ready for promotion.
 - **Exported Packs**: User-approved knowledge units that act as non-authorizing hints for future reasoning.
-- **Autopsy Guidance Validation**: Explicit `ghost packs validate-autopsy-guidance` checks pack guidance shape/content via the engine. It is review-only: no pack mutation, no auto-fix, no auto-promotion, and no proof upgrade.
+- **Autopsy Guidance Validation**: Explicit `ghost packs validate-autopsy-guidance` checks pack guidance shape/content via the engine. It first checks `ghost_knowledge_pack capabilities --json`, requires an advertised validation command and supported schema versions, and routes validation limit overrides only when advertised. Human mode renders clean success, warning, and error summaries without raw Zig traces; `--json` preserves raw engine stdout exactly. It is review-only: no pack mutation, no auto-fix, no auto-promotion, and no proof upgrade.
 - **Truth**: Proof and support gates in the engine still decide final validity of any claim.
 
 

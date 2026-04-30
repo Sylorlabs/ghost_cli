@@ -38,6 +38,28 @@ fn writeMockExecutable(path: []const u8, body: []const u8) !void {
     try file.writeAll(body);
 }
 
+const real_engine_root = "../ghost_engine";
+
+fn writeRealPackFixture(comptime root: []const u8, guidance_json: []const u8) !void {
+    std.fs.cwd().deleteTree(root) catch {};
+    try std.fs.cwd().makePath(root ++ "/autopsy");
+    try std.fs.cwd().makePath(root ++ "/corpus");
+    try std.fs.cwd().makePath(root ++ "/abstractions");
+
+    {
+        const file = try std.fs.cwd().createFile(root ++ "/autopsy/guidance.json", .{});
+        defer file.close();
+        try file.writeAll(guidance_json);
+    }
+    {
+        const file = try std.fs.cwd().createFile(root ++ "/manifest.json", .{});
+        defer file.close();
+        try file.writeAll(
+            \\{"schemaVersion":"ghost_knowledge_pack_v1","packId":"sample_pack","packVersion":"1.0.0","domainFamily":"test","trustClass":"project","compatibility":{"engineVersion":"V32","linuxFirst":true,"deterministicOnly":true,"mountSchema":"ghost_knowledge_pack_mounts_v1"},"storage":{"corpusManifestRelPath":"corpus/manifest.json","corpusFilesRelPath":"corpus","abstractionCatalogRelPath":"abstractions/abstractions.gabs","reuseCatalogRelPath":"abstractions/reuse.gabr","lineageStateRelPath":"abstractions/lineage.gabs","influenceManifestRelPath":"influence.json","autopsyGuidanceRelPath":"autopsy/guidance.json"},"provenance":{"packLineageId":"pack:sample_pack@1.0.0","sourceKind":"fixture","sourceId":"fixture","sourceState":"live","freshnessState":"active","sourceSummary":"fixture","sourceLineageSummary":"fixture"},"content":{"corpusItemCount":0,"conceptCount":0,"corpusHash":0,"abstractionHash":0,"reuseHash":0,"lineageHash":0,"corpusPreview":[],"conceptPreview":[]}}
+        );
+    }
+}
+
 test "help text lists all top-level commands" {
     const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "--help" });
     defer {
@@ -304,164 +326,207 @@ test "packs help lists validate autopsy guidance" {
     try testing.expect(std.mem.indexOf(u8, res.stderr, "does not mutate packs") != null);
 }
 
-test "packs validate autopsy guidance manifest routes to knowledge pack binary" {
-    const mock_root = "/tmp/ghost-cli-packs-validate-manifest";
-    const args_path = mock_root ++ "/args.txt";
-    try std.fs.cwd().makePath(mock_root);
-    defer std.fs.cwd().deleteTree(mock_root) catch {};
-
-    try writeMockExecutable(
-        mock_root ++ "/ghost_knowledge_pack",
-        "#!/bin/sh\n" ++
-            "printf '%s\\n' \"$@\" > '" ++ args_path ++ "'\n" ++
-            "printf 'autopsy guidance valid\\n'\n",
+test "packs validate autopsy guidance uses real engine capabilities and renders clean success" {
+    const fixture_root = "/tmp/ghost-cli-real-pack-valid";
+    try writeRealPackFixture(
+        fixture_root,
+        "{\"schema\":\"ghost.autopsy_guidance.v1\",\"packGuidance\":[{\"pack_id\":\"sample_pack\",\"signals\":[{\"name\":\"sig\",\"kind\":\"generic_signal\",\"confidence\":\"medium\",\"reason\":\"matched\"}]}]}",
     );
+    const manifest = fixture_root ++ "/manifest.json";
+    defer std.fs.cwd().deleteTree(fixture_root) catch {};
 
     const res = try runCmd(testing.allocator, &[_][]const u8{
         "./zig-out/bin/ghost",
         "packs",
         "validate-autopsy-guidance",
-        "--engine-root=" ++ mock_root,
-        "--manifest=fixtures/pack/manifest.json",
+        "--engine-root=" ++ real_engine_root,
+        "--manifest=" ++ manifest,
     });
     defer {
         testing.allocator.free(res.stdout);
         testing.allocator.free(res.stderr);
     }
-    const args = try std.fs.cwd().readFileAlloc(testing.allocator, args_path, 1024);
-    defer testing.allocator.free(args);
 
     try testing.expectEqual(@as(u32, 0), res.term.Exited);
-    try testing.expectEqualStrings("autopsy guidance valid\n", res.stdout);
-    try testing.expect(std.mem.indexOf(u8, args, "validate-autopsy-guidance\n--manifest=fixtures/pack/manifest.json\n") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Autopsy guidance validation passed.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Supported schema versions: ghost.autopsy_guidance.v1") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "result: pass") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "thread ") == null);
 }
 
-test "packs validate autopsy guidance pack id and version route" {
-    const mock_root = "/tmp/ghost-cli-packs-validate-pack-version";
-    const args_path = mock_root ++ "/args.txt";
-    try std.fs.cwd().makePath(mock_root);
-    defer std.fs.cwd().deleteTree(mock_root) catch {};
-
-    try writeMockExecutable(
-        mock_root ++ "/ghost_knowledge_pack",
-        "#!/bin/sh\n" ++
-            "printf '%s\\n' \"$@\" > '" ++ args_path ++ "'\n" ++
-            "printf 'warnings: none\\n'\n",
+test "packs validate autopsy guidance renders real engine warnings cleanly" {
+    const fixture_root = "/tmp/ghost-cli-real-pack-warning";
+    try writeRealPackFixture(
+        fixture_root,
+        "[{\"pack_id\":\"sample_pack\",\"signals\":[{\"name\":\"sig\",\"kind\":\"generic_signal\",\"confidence\":\"medium\",\"reason\":\"matched\"}]}]",
     );
+    const manifest = fixture_root ++ "/manifest.json";
+    defer std.fs.cwd().deleteTree(fixture_root) catch {};
 
     const res = try runCmd(testing.allocator, &[_][]const u8{
         "./zig-out/bin/ghost",
         "packs",
         "validate-autopsy-guidance",
-        "--engine-root=" ++ mock_root,
-        "--pack-id=pack-a",
-        "--version=1.2.3",
+        "--engine-root=" ++ real_engine_root,
+        "--manifest=" ++ manifest,
     });
     defer {
         testing.allocator.free(res.stdout);
         testing.allocator.free(res.stderr);
     }
-    const args = try std.fs.cwd().readFileAlloc(testing.allocator, args_path, 1024);
-    defer testing.allocator.free(args);
 
     try testing.expectEqual(@as(u32, 0), res.term.Exited);
-    try testing.expect(std.mem.indexOf(u8, args, "--pack-id=pack-a\n") != null);
-    try testing.expect(std.mem.indexOf(u8, args, "--version=1.2.3\n") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "passed with 1 warning") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "warning: legacy_unversioned_guidance") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "thread ") == null);
 }
 
-test "packs validate autopsy guidance all mounted project shard routes" {
-    const mock_root = "/tmp/ghost-cli-packs-validate-all-mounted";
-    const args_path = mock_root ++ "/args.txt";
-    try std.fs.cwd().makePath(mock_root);
-    defer std.fs.cwd().deleteTree(mock_root) catch {};
-
-    try writeMockExecutable(
-        mock_root ++ "/ghost_knowledge_pack",
-        "#!/bin/sh\n" ++
-            "printf '%s\\n' \"$@\" > '" ++ args_path ++ "'\n" ++
-            "printf 'mounted guidance checked\\n'\n",
+test "packs validate autopsy guidance failure renders clean error and stays nonzero" {
+    const fixture_root = "/tmp/ghost-cli-real-pack-error";
+    try writeRealPackFixture(
+        fixture_root,
+        "{\"schema\":\"ghost.autopsy_guidance.v99\",\"packGuidance\":[]}",
     );
+    const manifest = fixture_root ++ "/manifest.json";
+    defer std.fs.cwd().deleteTree(fixture_root) catch {};
 
     const res = try runCmd(testing.allocator, &[_][]const u8{
         "./zig-out/bin/ghost",
         "packs",
         "validate-autopsy-guidance",
-        "--engine-root=" ++ mock_root,
-        "--all-mounted",
-        "--project-shard=shard-a",
+        "--engine-root=" ++ real_engine_root,
+        "--manifest=" ++ manifest,
     });
     defer {
         testing.allocator.free(res.stdout);
         testing.allocator.free(res.stderr);
     }
-    const args = try std.fs.cwd().readFileAlloc(testing.allocator, args_path, 1024);
-    defer testing.allocator.free(args);
 
-    try testing.expectEqual(@as(u32, 0), res.term.Exited);
-    try testing.expect(std.mem.indexOf(u8, args, "--all-mounted\n--project-shard=shard-a\n") != null);
+    try testing.expect(res.term.Exited != 0);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Autopsy guidance validation failed: 1 error(s), 0 warning(s).") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "error: unsupported_schema") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "thread ") == null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "std/debug.zig") == null);
 }
 
-test "packs validate autopsy guidance json preserves raw engine stdout" {
-    const mock_root = "/tmp/ghost-cli-packs-validate-json";
-    const args_path = mock_root ++ "/args.txt";
-    const raw_json = "{\"status\":\"valid\",\"warnings\":[\"review guidance wording\"]}";
-    try std.fs.cwd().makePath(mock_root);
-    defer std.fs.cwd().deleteTree(mock_root) catch {};
-
-    const file = try std.fs.cwd().createFile(mock_root ++ "/ghost_knowledge_pack", .{ .mode = 0o755 });
-    try file.writeAll("#!/bin/sh\nprintf '%s\\n' \"$@\" > '");
-    try file.writeAll(args_path);
-    try file.writeAll("'\nprintf '%s' '");
-    try file.writeAll(raw_json);
-    try file.writeAll("'\n");
-    file.close();
+test "packs validate autopsy guidance json byte matches real engine stdout" {
+    const fixture_root = "/tmp/ghost-cli-real-pack-json";
+    try writeRealPackFixture(
+        fixture_root,
+        "{\"schema\":\"ghost.autopsy_guidance.v1\",\"packGuidance\":[{\"pack_id\":\"sample_pack\",\"signals\":[{\"name\":\"sig\",\"kind\":\"generic_signal\",\"confidence\":\"medium\",\"reason\":\"matched\"}]}]}",
+    );
+    const manifest = fixture_root ++ "/manifest.json";
+    defer std.fs.cwd().deleteTree(fixture_root) catch {};
 
     const res = try runCmd(testing.allocator, &[_][]const u8{
         "./zig-out/bin/ghost",
         "packs",
         "validate-autopsy-guidance",
-        "--engine-root=" ++ mock_root,
+        "--engine-root=" ++ real_engine_root,
         "--json",
-        "--manifest=fixtures/pack/manifest.json",
+        "--manifest=" ++ manifest,
     });
     defer {
         testing.allocator.free(res.stdout);
         testing.allocator.free(res.stderr);
     }
-    const args = try std.fs.cwd().readFileAlloc(testing.allocator, args_path, 1024);
-    defer testing.allocator.free(args);
+    const direct = try runCmd(testing.allocator, &[_][]const u8{
+        "../ghost_engine/zig-out/bin/ghost_knowledge_pack",
+        "validate-autopsy-guidance",
+        "--json",
+        "--manifest=" ++ manifest,
+    });
+    defer {
+        testing.allocator.free(direct.stdout);
+        testing.allocator.free(direct.stderr);
+    }
 
     try testing.expectEqual(@as(u32, 0), res.term.Exited);
-    try testing.expectEqualStrings(raw_json, res.stdout);
-    try testing.expect(std.mem.indexOf(u8, args, "--json\n") != null);
+    try testing.expectEqualStrings(direct.stdout, res.stdout);
 }
 
-test "packs validate autopsy guidance failure propagates nonzero" {
-    const mock_root = "/tmp/ghost-cli-packs-validate-failure";
-    try std.fs.cwd().makePath(mock_root);
-    defer std.fs.cwd().deleteTree(mock_root) catch {};
-
-    try writeMockExecutable(
-        mock_root ++ "/ghost_knowledge_pack",
-        "#!/bin/sh\n" ++
-            "printf 'validation failed: missing guidance id\\n'\n" ++
-            "exit 7\n",
+test "packs validate autopsy guidance debug diagnostics stay on stderr" {
+    const fixture_root = "/tmp/ghost-cli-real-pack-debug";
+    try writeRealPackFixture(
+        fixture_root,
+        "{\"schema\":\"ghost.autopsy_guidance.v99\",\"packGuidance\":[]}",
     );
+    const manifest = fixture_root ++ "/manifest.json";
+    defer std.fs.cwd().deleteTree(fixture_root) catch {};
 
     const res = try runCmd(testing.allocator, &[_][]const u8{
         "./zig-out/bin/ghost",
         "packs",
         "validate-autopsy-guidance",
-        "--engine-root=" ++ mock_root,
-        "--manifest=bad-manifest.json",
+        "--engine-root=" ++ real_engine_root,
+        "--debug",
+        "--manifest=" ++ manifest,
     });
     defer {
         testing.allocator.free(res.stdout);
         testing.allocator.free(res.stderr);
     }
 
-    try testing.expectEqual(@as(u32, 7), res.term.Exited);
-    try testing.expectEqualStrings("validation failed: missing guidance id\n", res.stdout);
+    try testing.expect(res.term.Exited != 0);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "[DEBUG]") == null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] capability engine_path=") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] capability parse_status=ok") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] validation argv=") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] validation exit_code=") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] validation parse_status=ok") != null);
+}
+
+test "packs validate autopsy guidance limit flags use real advertised support" {
+    const fixture_root = "/tmp/ghost-cli-real-pack-limits";
+    try writeRealPackFixture(
+        fixture_root,
+        "{\"schema\":\"ghost.autopsy_guidance.v1\",\"packGuidance\":[{\"pack_id\":\"sample_pack\",\"signals\":[{\"name\":\"sig\",\"kind\":\"generic_signal\",\"confidence\":\"medium\",\"reason\":\"matched\"}]}]}",
+    );
+    const manifest = fixture_root ++ "/manifest.json";
+    defer std.fs.cwd().deleteTree(fixture_root) catch {};
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "packs",
+        "validate-autopsy-guidance",
+        "--engine-root=" ++ real_engine_root,
+        "--manifest=" ++ manifest,
+        "--max-guidance-bytes=524288",
+        "--max-array-items=128",
+        "--max-string-bytes=2048",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Autopsy guidance validation passed.") != null);
+}
+
+test "packs validate autopsy guidance missing real capabilities fails before routing" {
+    const fixture_root = "/tmp/ghost-cli-real-pack-missing-caps";
+    try writeRealPackFixture(
+        fixture_root,
+        "{\"schema\":\"ghost.autopsy_guidance.v1\",\"packGuidance\":[]}",
+    );
+    const manifest = fixture_root ++ "/manifest.json";
+    defer std.fs.cwd().deleteTree(fixture_root) catch {};
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "packs",
+        "validate-autopsy-guidance",
+        "--engine-root=/tmp/ghost-cli-missing-real-engine",
+        "--manifest=" ++ manifest,
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expect(res.term.Exited != 0);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "Engine binary 'ghost_knowledge_pack' is missing") != null);
 }
 
 test "existing packs list command still works" {

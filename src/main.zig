@@ -84,6 +84,9 @@ const CliOptions = struct {
     pack_id: ?[]const u8 = null,
     manifest: ?[]const u8 = null,
     all_mounted: bool = false,
+    max_guidance_bytes: ?[]const u8 = null,
+    max_array_items: ?[]const u8 = null,
+    max_string_bytes: ?[]const u8 = null,
     approve: bool = false,
     version_flag: bool = false,
     help_flag: bool = false,
@@ -258,6 +261,12 @@ fn parseFlag(arg: []const u8, options: *CliOptions) !bool {
         options.manifest = arg["--manifest=".len..];
     } else if (std.mem.eql(u8, arg, "--all-mounted")) {
         options.all_mounted = true;
+    } else if (std.mem.startsWith(u8, arg, "--max-guidance-bytes=")) {
+        options.max_guidance_bytes = arg["--max-guidance-bytes=".len..];
+    } else if (std.mem.startsWith(u8, arg, "--max-array-items=")) {
+        options.max_array_items = arg["--max-array-items=".len..];
+    } else if (std.mem.startsWith(u8, arg, "--max-string-bytes=")) {
+        options.max_string_bytes = arg["--max-string-bytes=".len..];
     } else {
         return false;
     }
@@ -305,6 +314,9 @@ fn runPacks(allocator: std.mem.Allocator, root: ?[]const u8, parsed: ParsedCli) 
     var manifest = parsed.options.manifest;
     var project_shard = parsed.options.project_shard;
     var all_mounted = parsed.options.all_mounted;
+    var max_guidance_bytes = parsed.options.max_guidance_bytes;
+    var max_array_items = parsed.options.max_array_items;
+    var max_string_bytes = parsed.options.max_string_bytes;
 
     var i: usize = 1;
     while (i < parsed.leftover_args.items.len) : (i += 1) {
@@ -323,6 +335,24 @@ fn runPacks(allocator: std.mem.Allocator, root: ?[]const u8, parsed: ParsedCli) 
             project_shard = arg["--project-shard=".len..];
         } else if (std.mem.eql(u8, arg, "--all-mounted")) {
             all_mounted = true;
+        } else if (std.mem.eql(u8, arg, "--max-guidance-bytes")) {
+            i += 1;
+            if (i >= parsed.leftover_args.items.len) try failMissingValue("--max-guidance-bytes");
+            max_guidance_bytes = parsed.leftover_args.items[i];
+        } else if (std.mem.startsWith(u8, arg, "--max-guidance-bytes=")) {
+            max_guidance_bytes = arg["--max-guidance-bytes=".len..];
+        } else if (std.mem.eql(u8, arg, "--max-array-items")) {
+            i += 1;
+            if (i >= parsed.leftover_args.items.len) try failMissingValue("--max-array-items");
+            max_array_items = parsed.leftover_args.items[i];
+        } else if (std.mem.startsWith(u8, arg, "--max-array-items=")) {
+            max_array_items = arg["--max-array-items=".len..];
+        } else if (std.mem.eql(u8, arg, "--max-string-bytes")) {
+            i += 1;
+            if (i >= parsed.leftover_args.items.len) try failMissingValue("--max-string-bytes");
+            max_string_bytes = parsed.leftover_args.items[i];
+        } else if (std.mem.startsWith(u8, arg, "--max-string-bytes=")) {
+            max_string_bytes = arg["--max-string-bytes=".len..];
         }
     }
 
@@ -333,6 +363,9 @@ fn runPacks(allocator: std.mem.Allocator, root: ?[]const u8, parsed: ParsedCli) 
         .manifest = manifest,
         .all_mounted = all_mounted,
         .project_shard = project_shard,
+        .max_guidance_bytes = max_guidance_bytes,
+        .max_array_items = max_array_items,
+        .max_string_bytes = max_string_bytes,
         .json = parsed.options.json_out,
         .debug = parsed.options.debug_mode,
     });
@@ -494,6 +527,9 @@ fn printHelp(writer: anytype) !void {
         \\  --pack-id=<id>         Target pack ID for export
         \\  --manifest=<path>      Knowledge pack manifest path
         \\  --all-mounted          Target all mounted packs where supported
+        \\  --max-guidance-bytes=<n> Override autopsy guidance byte limit when engine supports it
+        \\  --max-array-items=<n>  Override autopsy guidance array item limit when engine supports it
+        \\  --max-string-bytes=<n> Override autopsy guidance string byte limit when engine supports it
         \\  --approve              Approve distillation export
         \\  --report               Print copy-paste tester report for doctor
         \\  --full                 Include optional doctor checks
@@ -605,10 +641,16 @@ fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
             \\  validate-autopsy-guidance --manifest=<path> [--json]
             \\  validate-autopsy-guidance --pack-id=<id> --version=<v> [--json]
             \\  validate-autopsy-guidance --all-mounted --project-shard=<id> [--json]
+            \\  validate-autopsy-guidance --manifest=<path> [--max-guidance-bytes=<n>] [--max-array-items=<n>] [--max-string-bytes=<n>]
             \\
             \\Safety:
             \\  Validation is explicit and review-only. It does not mutate packs,
-            \\  auto-fix guidance, auto-promote guidance, or prove support.
+            \\  auto-fix guidance, auto-promote guidance, or prove support. The
+            \\  command checks engine capabilities before routing advanced validation.
+            \\  Human output renders clean success, warning, and error summaries.
+            \\  `--json` preserves raw engine stdout exactly.
+            \\  Current engine schema: ghost.autopsy_guidance.v1; legacy guidance
+            \\  may be accepted by the engine as a warning for compatibility.
             \\
         , .{}),
         .learn => try writer.print(

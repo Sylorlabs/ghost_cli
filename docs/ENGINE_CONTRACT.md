@@ -96,15 +96,43 @@ their command contract.
 ## Knowledge Pack Autopsy Guidance Validation
 
 `ghost packs validate-autopsy-guidance` routes explicitly to
-`ghost_knowledge_pack validate-autopsy-guidance` with one of these target forms:
+`ghost_knowledge_pack validate-autopsy-guidance` only after a compatibility
+handshake against `ghost_knowledge_pack capabilities --json`.
+
+The CLI requires capabilities to advertise:
+
+- `validate-autopsy-guidance`
+- target flags `--manifest`, `--pack-id`, `--version`, `--all-mounted`,
+  `--project-shard`
+- `--json`
+- at least one supported autopsy guidance schema version
+
+If capabilities are unavailable, incomplete, or unparsable, the CLI fails before
+routing validation and prints a compatibility error with the resolved engine
+binary path and version when known. It suggests `ghost doctor` or upgrading /
+rebuilding `ghost_engine`. Command help remains offline and does not query the
+engine.
+
+Supported target forms:
 
 - `--manifest=<path>`
 - `--pack-id=<id> --version=<v>`
 - `--all-mounted --project-shard=<id>`
 
+The currently supported engine schema is `ghost.autopsy_guidance.v1`. The engine
+may accept legacy unversioned guidance shapes for compatibility; the CLI renders
+those as warnings in human mode. Validation limits are engine-owned. The CLI
+routes these overrides only when the capabilities endpoint advertises them:
+
+- `--max-guidance-bytes=<n>`
+- `--max-array-items=<n>`
+- `--max-string-bytes=<n>`
+
 The CLI does not parse, reinterpret, or upgrade validation results into proof.
-Human mode forwards engine stdout/stderr and propagates non-zero validation
+Human mode asks the engine for JSON, renders clean success, warning, and failure
+summaries, suppresses raw Zig traces/stderr, and propagates non-zero validation
 errors. JSON mode passes `--json` to the engine and preserves raw engine stdout
-exactly. The command is never run automatically by help, startup, TUI launch,
-doctor, or status, and it does not mutate packs, auto-fix guidance, or
-auto-promote guidance.
+exactly. Debug diagnostics go to stderr and include engine path, capability
+result, routed argv, exit code, and parse status. The command is never run
+automatically by help, startup, TUI launch, doctor, or status, and it does not
+mutate packs, auto-fix guidance, or auto-promote guidance.
