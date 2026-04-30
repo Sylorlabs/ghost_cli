@@ -92,3 +92,19 @@ their command contract.
 6. Engine stderr is written to stderr in JSON passthrough mode and reported on stderr for human mode failures.
 7. When `JSON` formatting cannot be parsed (e.g., an engine panic or bad trace log), the CLI falls back to dumping raw text output without interpretation.
 8. If JSON is parsed but no recognized fields exist, it renders "Status: Parsed JSON, unrecognized contract".
+
+## Knowledge Pack Autopsy Guidance Validation
+
+`ghost packs validate-autopsy-guidance` routes explicitly to
+`ghost_knowledge_pack validate-autopsy-guidance` with one of these target forms:
+
+- `--manifest=<path>`
+- `--pack-id=<id> --version=<v>`
+- `--all-mounted --project-shard=<id>`
+
+The CLI does not parse, reinterpret, or upgrade validation results into proof.
+Human mode forwards engine stdout/stderr and propagates non-zero validation
+errors. JSON mode passes `--json` to the engine and preserves raw engine stdout
+exactly. The command is never run automatically by help, startup, TUI launch,
+doctor, or status, and it does not mutate packs, auto-fix guidance, or
+auto-promote guidance.

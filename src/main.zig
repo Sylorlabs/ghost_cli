@@ -64,7 +64,7 @@ const command_registry = [_]CommandDef{
     .{ .name = "context", .kind = .context, .group = .inspection, .help = "Context Autopsy pass (explicit GIP request only)", .usage = "ghost context autopsy [--json] [--debug] [--input-file <path>] <description>" },
     .{ .name = "status", .kind = .status, .group = .inspection, .help = "Show engine availability/status", .usage = "ghost status [--debug]" },
     .{ .name = "doctor", .kind = .doctor, .group = .inspection, .help = "Run read-only environment diagnostics", .usage = "ghost doctor [--json|--report] [--debug] [--full] [--run-build-check]" },
-    .{ .name = "packs", .kind = .packs, .group = .knowledge, .help = "Manage knowledge packs", .usage = "ghost packs <list|inspect|mount|unmount> [options]" },
+    .{ .name = "packs", .kind = .packs, .group = .knowledge, .help = "Manage knowledge packs", .usage = "ghost packs <list|inspect|mount|unmount|validate-autopsy-guidance> [options]" },
     .{ .name = "learn", .kind = .learn, .group = .knowledge, .help = "Feedback/distillation surface", .usage = "ghost learn <candidates|show|export> [options]" },
     .{ .name = "debug", .kind = .debug, .group = .advanced, .help = "Advanced raw engine diagnostics", .usage = "ghost debug raw <engine-binary> [args...]" },
     .{ .name = "tui", .kind = .tui, .group = .interface, .help = "Interactive Ghost operator console", .usage = "ghost tui [options]" },
@@ -82,6 +82,8 @@ const CliOptions = struct {
     version: ?[]const u8 = null,
     project_shard: ?[]const u8 = null,
     pack_id: ?[]const u8 = null,
+    manifest: ?[]const u8 = null,
+    all_mounted: bool = false,
     approve: bool = false,
     version_flag: bool = false,
     help_flag: bool = false,
@@ -252,6 +254,10 @@ fn parseFlag(arg: []const u8, options: *CliOptions) !bool {
         options.project_shard = arg["--project-shard=".len..];
     } else if (std.mem.startsWith(u8, arg, "--pack-id=")) {
         options.pack_id = arg["--pack-id=".len..];
+    } else if (std.mem.startsWith(u8, arg, "--manifest=")) {
+        options.manifest = arg["--manifest=".len..];
+    } else if (std.mem.eql(u8, arg, "--all-mounted")) {
+        options.all_mounted = true;
     } else {
         return false;
     }
@@ -295,11 +301,38 @@ fn runChatLike(allocator: std.mem.Allocator, root: ?[]const u8, parsed: *ParsedC
 
 fn runPacks(allocator: std.mem.Allocator, root: ?[]const u8, parsed: ParsedCli) !void {
     const sub = if (parsed.leftover_args.items.len > 0) parsed.leftover_args.items[0] else "list";
-    const p_id = if (parsed.leftover_args.items.len > 1) parsed.leftover_args.items[1] else null;
+    const p_id = if (parsed.options.pack_id) |pack_id| pack_id else if (parsed.leftover_args.items.len > 1 and !std.mem.startsWith(u8, parsed.leftover_args.items[1], "--")) parsed.leftover_args.items[1] else null;
+    var manifest = parsed.options.manifest;
+    var project_shard = parsed.options.project_shard;
+    var all_mounted = parsed.options.all_mounted;
+
+    var i: usize = 1;
+    while (i < parsed.leftover_args.items.len) : (i += 1) {
+        const arg = parsed.leftover_args.items[i];
+        if (std.mem.eql(u8, arg, "--manifest")) {
+            i += 1;
+            if (i >= parsed.leftover_args.items.len) try failMissingValue("--manifest");
+            manifest = parsed.leftover_args.items[i];
+        } else if (std.mem.startsWith(u8, arg, "--manifest=")) {
+            manifest = arg["--manifest=".len..];
+        } else if (std.mem.eql(u8, arg, "--project-shard")) {
+            i += 1;
+            if (i >= parsed.leftover_args.items.len) try failMissingValue("--project-shard");
+            project_shard = parsed.leftover_args.items[i];
+        } else if (std.mem.startsWith(u8, arg, "--project-shard=")) {
+            project_shard = arg["--project-shard=".len..];
+        } else if (std.mem.eql(u8, arg, "--all-mounted")) {
+            all_mounted = true;
+        }
+    }
+
     try packs.execute(allocator, root, .{
         .subcommand = sub,
         .pack_id = p_id,
         .version = parsed.options.version,
+        .manifest = manifest,
+        .all_mounted = all_mounted,
+        .project_shard = project_shard,
         .json = parsed.options.json_out,
         .debug = parsed.options.debug_mode,
     });
@@ -459,6 +492,8 @@ fn printHelp(writer: anytype) !void {
         \\  --version=<v>          Specific version for packs/distillation
         \\  --project-shard=<s>    Project shard ID for distillation
         \\  --pack-id=<id>         Target pack ID for export
+        \\  --manifest=<path>      Knowledge pack manifest path
+        \\  --all-mounted          Target all mounted packs where supported
         \\  --approve              Approve distillation export
         \\  --report               Print copy-paste tester report for doctor
         \\  --full                 Include optional doctor checks
@@ -567,6 +602,13 @@ fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
             \\  inspect <pack-id> [--version=<v>]
             \\  mount <pack-id> [--version=<v>]
             \\  unmount <pack-id> [--version=<v>]
+            \\  validate-autopsy-guidance --manifest=<path> [--json]
+            \\  validate-autopsy-guidance --pack-id=<id> --version=<v> [--json]
+            \\  validate-autopsy-guidance --all-mounted --project-shard=<id> [--json]
+            \\
+            \\Safety:
+            \\  Validation is explicit and review-only. It does not mutate packs,
+            \\  auto-fix guidance, auto-promote guidance, or prove support.
             \\
         , .{}),
         .learn => try writer.print(

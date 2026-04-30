@@ -93,6 +93,21 @@ Usage: `ghost packs mount zig_runtime_sync`
 Unmount a knowledge pack.
 Usage: `ghost packs unmount zig_runtime_sync`
 
+#### `ghost packs validate-autopsy-guidance`
+Validate Knowledge Pack autopsy guidance through `ghost_knowledge_pack`.
+
+Usage: `ghost packs validate-autopsy-guidance --manifest=path/to/manifest.json`
+Usage: `ghost packs validate-autopsy-guidance --pack-id=zig_runtime_sync --version=1.0.0`
+Usage: `ghost packs validate-autopsy-guidance --all-mounted --project-shard=my-project`
+Usage: `ghost packs validate-autopsy-guidance --json --manifest=path/to/manifest.json`
+
+This is an explicit review-only validation command. It does not mutate packs,
+auto-fix guidance, auto-promote guidance, run automatically from TUI launch,
+doctor, status, or startup, and does not treat valid guidance as proof. Human
+mode preserves engine pass/fail/warning output and propagates validation errors
+as command failures. `--json` asks the engine for JSON and preserves raw engine
+stdout exactly.
+
 ### `ghost tui`
 Interactive Ghost Console TUI. Provides a live cockpit view for interacting with the engine.
 
