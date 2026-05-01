@@ -221,6 +221,38 @@ staged corpus is invisible until apply-staged succeeds. It is not semantic
 search, and mounted pack corpus is not included yet. There are no Transformers,
 embeddings, or model adapters in this CLI path.
 
+## Correction Proposal
+
+`ghost correction propose --file <request.json>` routes explicitly to
+`ghost_gip --stdin` with GIP `kind: "correction.propose"`. The CLI reads the
+request file, validates that the top-level kind is `correction.propose`, and
+sends the file bytes unchanged. The CLI does not define a correction
+mini-language and does not infer or auto-fill correction fields from previous
+CLI output.
+
+Human mode renders only the engine's correction proposal result. It labels the
+output `CORRECTION CANDIDATE ONLY`, `NOT PROOF`, `REVIEW REQUIRED`,
+`NO KNOWLEDGE MUTATED`, `NO VERIFIERS EXECUTED`, `NOT ACCEPTED`, and
+`NOT PERSISTED`. It renders correction candidate details, correction type,
+disputed output, user correction, evidence refs, learning candidates, unknowns,
+mutation flags, and authority flags without upgrading authority.
+
+User corrections are signals, not proof. Correction proposals are
+candidate-only and review-required. Rendering them does not mutate corpus,
+packs, negative knowledge, or verifier state; does not execute verifier/check
+candidates; does not persist learning candidates; does not accept corrections;
+and does not affect future behavior. There is no hidden learning and no
+`correction.accept` command yet.
+
+`--json` preserves raw engine stdout exactly. `--debug` writes diagnostics to
+stderr only: engine binary path, GIP kind, input file path, stdin byte count,
+exit code, and parse status.
+
+This command is explicit only. Help, startup, TUI launch, non-TTY fallback,
+`ghost doctor`, `ghost status`, `ghost corpus ask`, `ghost rules evaluate`,
+`ghost context autopsy`, and `ghost packs validate-autopsy-guidance` do not run
+`correction.propose`.
+
 ## Rule Evaluation
 
 `ghost rules evaluate --file <request.json>` routes explicitly to
@@ -261,8 +293,8 @@ code, and parse status.
 
 This operation is explicit only. Help, startup, TUI launch/idle, no-arg
 non-TTY fallback, `ghost doctor`, `ghost status`, `ghost corpus ask`,
-`ghost context autopsy`, and `ghost packs validate-autopsy-guidance` do not run
-`rule.evaluate`.
+`ghost correction propose`, `ghost context autopsy`, and
+`ghost packs validate-autopsy-guidance` do not run `rule.evaluate`.
 
 ## Context Autopsy Coverage Warnings
 

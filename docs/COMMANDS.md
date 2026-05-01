@@ -4,7 +4,7 @@ Top-level help is organized around Ghost operator workflows:
 
 - **Core**: `ask`, `chat`, `fix`, `verify`
 - **Inspection**: `autopsy`, `context`, `status`, `doctor`
-- **Knowledge**: `packs`, `corpus`, `learn`
+- **Knowledge**: `packs`, `corpus`, `correction`, `learn`
 - **Advanced**: `rules`, `debug`
 - **Interface**: `tui`
 
@@ -20,9 +20,10 @@ ghost
 ```
 
 This is a renderer/front-door path. No doctor/status diagnostic, context/project
-autopsy scan, verifier execution, pack mutation, or negative-knowledge mutation
-is started by launch or idle rendering. Explicit slash commands and submitted
-prompts may invoke engine binaries according to their command contract.
+autopsy scan, correction proposal, verifier execution, pack mutation, or
+negative-knowledge mutation is started by launch or idle rendering. Explicit
+slash commands and submitted prompts may invoke engine binaries according to
+their command contract.
 
 ### `ghost chat`
 Conversational interface to task operator.
@@ -155,6 +156,45 @@ negative knowledge, or grant proof/support.
 
 This command is explicit only. It does not run from help, startup, TUI launch,
 doctor, status, `corpus ask`, `context autopsy`, or pack validation.
+
+`--json` preserves raw GIP stdout exactly. `--debug` writes diagnostics to
+stderr only, including engine path, GIP kind, input file path, stdin byte count,
+exit code, and parse status.
+
+### `ghost correction`
+Explicit correction proposal commands.
+
+#### `ghost correction propose`
+Run an explicit correction proposal through `ghost_gip` operation
+`correction.propose`.
+
+Usage: `ghost correction propose --file request.json`
+Usage: `ghost correction propose --json --file request.json`
+Usage: `ghost correction propose --debug --file request.json`
+
+The file must be a full GIP-compatible JSON request with top-level
+`kind: "correction.propose"`. The CLI reads the file, validates that kind, and
+sends the bytes unchanged to `ghost_gip --stdin`. It does not invent a
+correction mini-language and does not auto-fill fields from previous CLI output.
+
+Human-readable output renders the correction candidate, correction type,
+original operation/request information when present, disputed output, user
+correction, evidence refs, proposed learning outputs, learning candidates,
+unknowns, mutation flags, and authority flags. It prints these required safety
+labels: `CORRECTION CANDIDATE ONLY`, `NOT PROOF`, `REVIEW REQUIRED`,
+`NO KNOWLEDGE MUTATED`, `NO VERIFIERS EXECUTED`, `NOT ACCEPTED`, and
+`NOT PERSISTED`.
+
+User corrections are signals, not proof. Correction proposals are
+candidate-only and review-required. Rendering them does not mutate corpus,
+packs, or negative knowledge; does not execute verifier/check candidates; does
+not persist learning candidates; does not accept the correction; and does not
+affect future behavior. There is no hidden learning and no `correction.accept`
+command yet.
+
+This command is explicit only. It does not run from help, startup, TUI launch,
+doctor, status, `corpus ask`, `rules evaluate`, `context autopsy`, or pack
+validation.
 
 `--json` preserves raw GIP stdout exactly. `--debug` writes diagnostics to
 stderr only, including engine path, GIP kind, input file path, stdin byte count,
@@ -299,8 +339,8 @@ in the TUI status bar.
 
 If stdin/stdout is not an interactive TTY, `ghost`/`ghost tui` exits gracefully
 with a message. The covered smoke path verifies that no CLI-owned TUI command,
-doctor check, context/project autopsy scan, verifier, pack mutation, or
-negative-knowledge mutation is started from that non-TTY fallback.
+doctor check, context/project autopsy scan, correction proposal, verifier, pack
+mutation, or negative-knowledge mutation is started from that non-TTY fallback.
 
 #### Keybindings
 - `Ctrl+C`: Quit

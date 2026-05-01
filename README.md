@@ -44,8 +44,8 @@ Binary resolution is explicit: candidates are reported as engine-root, engine-ro
 
 **Running `ghost` with no arguments launches the interactive TUI console.**
 In a non-interactive pipe or script, the TUI path exits cleanly and reports that
-no CLI-owned TUI command, doctor check, context/project autopsy scan, verifier,
-or pack mutation was started from that fallback path.
+no CLI-owned TUI command, doctor check, context/project autopsy scan, correction
+proposal, verifier, or pack mutation was started from that fallback path.
 
 ### Examples
 
@@ -85,6 +85,11 @@ ghost rules evaluate --file request.json
 ghost rules evaluate --json --file request.json
 ghost rules evaluate --debug --file request.json
 
+# Explicit correction proposal through GIP
+ghost correction propose --file request.json
+ghost correction propose --json --file request.json
+ghost correction propose --debug --file request.json
+
 # Interactive TUI Console
 ghost tui
 ghost tui --reasoning=deep --compact --color=auto
@@ -123,6 +128,7 @@ ghost doctor --report
 - **Corpus Lifecycle**: Explicit `ghost corpus ingest` stages corpus through `ghost_corpus_ingest`; explicit `ghost corpus apply-staged` promotes staged corpus into the live shard corpus. Staged corpus is not visible to `ghost corpus ask` before apply. `--json` preserves raw engine stdout; the verified engine emits JSON for ingest/apply without accepting a separate engine `--json` flag.
 - **Corpus Ask**: Explicit `ghost corpus ask` calls `ghost_gip` operation `corpus.ask` against live shard corpus excerpts. Human output is **DRAFT** and **NON-AUTHORIZING**, renders bounded evidence and unknowns, labels learning candidates as candidate-only/not-persisted, renders `similarCandidates` separately as non-authorizing routing hints, and preserves raw stdout under `--json`. If `capacityTelemetry` reports pressure or `capacity_limited` unknowns are present, it prints **CAPACITY / COVERAGE WARNING**: skipped, dropped, truncated, or capped data is partial coverage and cannot support an answer. Exact evidence is required for answer drafts; approximate similarity hints are not proof or Evidence Used. Retrieval is bounded local matching, not semantic search; there are no Transformers/embeddings/model adapters, and mounted pack corpus is not included yet.
 - **Rule Evaluation**: Explicit `ghost rules evaluate --file <request.json>` calls `ghost_gip` operation `rule.evaluate` with the request file bytes. Human output is **DRAFT / NON-AUTHORIZING** and renders fired rules, candidates, obligations, unknowns, explanation traces, safety flags, and **RULE CAPACITY WARNING / NON-AUTHORIZING** when capacity telemetry reports pressure. Rule outputs are candidates only, not proof; capacity-limited evaluation is incomplete; verifiers/checks are not executed; packs, corpus, and negative knowledge are not mutated. Evaluation is deterministic bounded structural matching only: no recursive inference, no Prolog, no Transformers, no embeddings, no model adapters, and no semantic search.
+- **Correction Proposal**: Explicit `ghost correction propose --file <request.json>` calls `ghost_gip` operation `correction.propose` with the request file bytes. Human output renders correction candidates and learning candidates as **CORRECTION CANDIDATE ONLY**, **NOT PROOF**, **REVIEW REQUIRED**, **NO KNOWLEDGE MUTATED**, **NO VERIFIERS EXECUTED**, **NOT ACCEPTED**, and **NOT PERSISTED**. User corrections are signals, not proof; proposals do not mutate corpus, packs, or negative knowledge, do not execute verifier/check candidates, do not affect future behavior, and do not run as hidden learning. There is no `correction.accept` command yet.
 - **Truth**: Proof and support gates in the engine still decide final validity of any claim.
 
 
@@ -140,7 +146,7 @@ Top-level help is grouped by operator workflow:
 
 - Core: `ask`, `chat`, `fix`, `verify`
 - Inspection: `autopsy`, `context`, `status`, `doctor`
-- Knowledge: `packs`, `corpus`, `learn`
+- Knowledge: `packs`, `corpus`, `correction`, `learn`
 - Advanced: `rules`, `debug`
 - Interface: `tui`
 

@@ -259,7 +259,7 @@ pub fn renderStatus(writer: anytype, s: *state.SessionState, style: Style) !void
 pub fn renderNonTty(writer: anytype) !void {
     try writer.writeAll(
         \\Ghost TUI requires an interactive TTY.
-        \\No CLI-owned TUI command was run. No doctor check, context/project autopsy scan, verifier, pack mutation, or negative-knowledge mutation was started from this non-TTY fallback.
+        \\No CLI-owned TUI command was run. No doctor check, context/project autopsy scan, correction proposal, verifier, pack mutation, or negative-knowledge mutation was started from this non-TTY fallback.
         \\Use `ghost --help`, `ghost ask ...`, or run `ghost tui` from a terminal.
         \\
     );
