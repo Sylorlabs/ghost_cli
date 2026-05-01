@@ -190,6 +190,14 @@ the engine reports `no_corpus_available`, `insufficient_evidence`, or
 `conflicting_evidence`, no answer is rendered; the CLI states that no answer was
 produced and shows the unknown/conflict status.
 
+If `capacityTelemetry` reports pressure or unknowns include `capacity_limited`,
+human mode displays a prominent **CAPACITY / COVERAGE WARNING** before the
+answer and evidence sections. The warning states that Ghost did not inspect or
+retain all potentially relevant data, results are partial and non-authorizing,
+and skipped, dropped, truncated, or capped data cannot support an answer. Exact
+retained evidence may still produce `answerDraft`, but the warning remains
+separate from Evidence Used and Proof.
+
 `similarCandidates` are displayed separately as **Similarity Hints /
 NON-AUTHORIZING**. They are approximate local SimHash routing hints, not
 evidence, proof, or answer support. The CLI may show corpus item/path, Hamming
@@ -241,6 +249,11 @@ Rule outputs are candidate-only and non-authorizing. Check candidates are not
 executed by the CLI. Evidence expectations remain pending obligations and are
 not proof. The CLI does not mutate packs, corpus, or negative knowledge, and it
 does not discharge proof/support gates.
+
+If `capacityTelemetry` reports pressure, human mode displays **RULE CAPACITY
+WARNING / NON-AUTHORIZING**. Output caps, fired-rule caps, rejected outputs, and
+budget hits mean rule evaluation is incomplete. Capacity telemetry is rendered
+as a non-authorizing warning only; it is not evidence, proof, or support.
 
 `--json` preserves raw engine stdout exactly. `--debug` writes diagnostics to
 stderr only: engine path, GIP kind, input file path, stdin byte count, exit

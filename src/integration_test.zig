@@ -964,6 +964,72 @@ test "rules evaluate human output labels candidates obligations traces as non-au
     try testing.expect(std.mem.indexOf(u8, res.stdout, "treatedAsProof") != null);
 }
 
+test "rules evaluate human capacity telemetry renders non-authorizing warning" {
+    const mock_root = "/tmp/ghost-cli-rules-capacity";
+    const request_path = mock_root ++ "/request.json";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    {
+        const request = try std.fs.cwd().createFile(request_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"rule.evaluate\",\"facts\":[],\"rules\":[]}");
+    }
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s' '{\"gipVersion\":\"gip.v0.1\",\"kind\":\"rule.evaluate\",\"status\":\"ok\",\"result\":{\"ruleEvaluation\":{\"nonAuthorizing\":true,\"candidateOnly\":true,\"proofDischarged\":false,\"supportGranted\":false,\"factsConsidered\":4,\"rulesConsidered\":3,\"outputsEmitted\":1,\"budgetExhausted\":false,\"capacityTelemetry\":{\"maxOutputsHit\":true,\"maxRulesHit\":true,\"maxFiredRulesHit\":true,\"rejectedOutputs\":2,\"budgetHits\":1,\"capacityWarnings\":[\"output cap hit\"]},\"firedRules\":[{\"id\":\"rule.capacity\",\"name\":\"Capacity rule\"}],\"emittedCandidates\":[{\"kind\":\"risk_candidate\",\"id\":\"risk.capacity\",\"summary\":\"capacity risk\"}],\"emittedObligations\":[],\"emittedUnknowns\":[],\"explanationTrace\":[{\"ruleId\":\"rule.capacity\",\"fired\":true}],\"safetyFlags\":{\"commandsExecuted\":false,\"verifiersExecuted\":false,\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"proofDischarged\":false,\"supportGranted\":false}}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "rules", "evaluate", "--engine-root=" ++ mock_root, "--file", request_path });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    const warning_idx = std.mem.indexOf(u8, res.stdout, "RULE CAPACITY WARNING / NON-AUTHORIZING") orelse return error.TestExpectedEqual;
+    const candidates_idx = std.mem.indexOf(u8, res.stdout, "Emitted Candidates:") orelse return error.TestExpectedEqual;
+    try testing.expect(warning_idx < candidates_idx);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Rule outputs are candidates only.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Capacity-limited rule evaluation is incomplete.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "No proof/support gate was discharged.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "maxOutputsHit: true") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "maxRulesHit: true") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "maxFiredRulesHit: true") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "rejectedOutputs: 2") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "budgetHits: 1") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "capacityWarnings") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Fired Rules:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Safety Flags:") != null);
+}
+
+test "rules evaluate zero capacity telemetry renders normal candidates without warning" {
+    const mock_root = "/tmp/ghost-cli-rules-capacity-clean";
+    const request_path = mock_root ++ "/request.json";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    {
+        const request = try std.fs.cwd().createFile(request_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"rule.evaluate\",\"facts\":[],\"rules\":[]}");
+    }
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s' '{\"gipVersion\":\"gip.v0.1\",\"kind\":\"rule.evaluate\",\"status\":\"ok\",\"result\":{\"ruleEvaluation\":{\"nonAuthorizing\":true,\"candidateOnly\":true,\"proofDischarged\":false,\"supportGranted\":false,\"factsConsidered\":1,\"rulesConsidered\":1,\"outputsEmitted\":1,\"budgetExhausted\":false,\"capacityTelemetry\":{\"maxOutputsHit\":false,\"maxRulesHit\":false,\"maxFiredRulesHit\":false,\"rejectedOutputs\":0,\"budgetHits\":0,\"capacityWarnings\":[]},\"firedRules\":[{\"id\":\"rule.clean\",\"name\":\"Clean rule\"}],\"emittedCandidates\":[{\"kind\":\"risk_candidate\",\"id\":\"risk.clean\",\"summary\":\"clean risk\"}],\"emittedObligations\":[],\"emittedUnknowns\":[],\"explanationTrace\":[{\"ruleId\":\"rule.clean\",\"fired\":true}],\"safetyFlags\":{\"commandsExecuted\":false,\"verifiersExecuted\":false,\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"proofDischarged\":false,\"supportGranted\":false}}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "rules", "evaluate", "--engine-root=" ++ mock_root, "--file", request_path });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Emitted Candidates:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "RULE CAPACITY WARNING / NON-AUTHORIZING") == null);
+}
+
 test "rules evaluate recursive invalid result renders clean error" {
     const mock_root = "/tmp/ghost-cli-rules-invalid";
     const request_path = mock_root ++ "/request.json";
@@ -1215,6 +1281,98 @@ test "corpus ask human matching evidence renders draft answer and evidence" {
     try testing.expect(std.mem.indexOf(u8, res.stdout, "negativeKnowledgeMutation: false") != null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "commandsExecuted: false") != null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "verifiersExecuted: false") != null);
+}
+
+test "corpus ask human capacity telemetry renders coverage warning with answer and evidence" {
+    const mock_root = "/tmp/ghost-cli-corpus-capacity";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\n" ++
+            "cat >/dev/null\n" ++
+            "printf '%s' '{\"corpusAsk\":{\"status\":\"answered\",\"state\":\"draft\",\"permission\":\"none\",\"answerDraft\":\"Exact evidence still supports this draft.\",\"evidenceUsed\":[{\"itemId\":\"item-1\",\"path\":\"corpus/live.jsonl\",\"snippet\":\"exact retained evidence\",\"reason\":\"exact match\"}],\"unknowns\":[{\"kind\":\"capacity_limited\",\"reason\":\"retrieval coverage was partial\"}],\"candidateFollowups\":[],\"learningCandidates\":[],\"capacityTelemetry\":{\"truncatedInputs\":1,\"truncatedSnippets\":2,\"skippedInputs\":3,\"skippedFiles\":4,\"budgetHits\":1,\"maxResultsHit\":true,\"exactCandidateCapHit\":true,\"sketchCandidateCapHit\":false,\"capacityWarnings\":[\"partial coverage\"],\"expansionRecommended\":true,\"spilloverRecommended\":false},\"trace\":{\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "corpus", "ask", "--engine-root=" ++ mock_root, "capacity question" });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    const warning_idx = std.mem.indexOf(u8, res.stdout, "CAPACITY / COVERAGE WARNING") orelse return error.TestExpectedEqual;
+    const answer_idx = std.mem.indexOf(u8, res.stdout, "Answer Draft:") orelse return error.TestExpectedEqual;
+    const evidence_idx = std.mem.indexOf(u8, res.stdout, "Evidence Used:") orelse return error.TestExpectedEqual;
+    try testing.expect(warning_idx < answer_idx);
+    try testing.expect(answer_idx < evidence_idx);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Results are partial and non-authorizing.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Dropped, skipped, truncated, or capped data cannot support an answer.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "truncatedInputs: 1") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "truncatedSnippets: 2") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "skippedInputs: 3") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "skippedFiles: 4") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "budgetHits: 1") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "maxResultsHit: true") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "exactCandidateCapHit: true") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "sketchCandidateCapHit: false") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "capacityWarnings") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "expansionRecommended: true") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "spilloverRecommended: false") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "capacity_limited") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Exact evidence still supports this draft.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "exact retained evidence") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Proof") == null);
+}
+
+test "corpus ask human capacity_limited unknown renders coverage warning without telemetry" {
+    const mock_root = "/tmp/ghost-cli-corpus-capacity-unknown";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\n" ++
+            "cat >/dev/null\n" ++
+            "printf '%s' '{\"corpusAsk\":{\"status\":\"unknown\",\"state\":\"unresolved\",\"permission\":\"unresolved\",\"evidenceUsed\":[],\"unknowns\":[{\"kind\":\"capacity_limited\",\"reason\":\"max result cap was hit\"}],\"candidateFollowups\":[],\"learningCandidates\":[],\"trace\":{\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "corpus", "ask", "--engine-root=" ++ mock_root, "capacity unknown" });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "CAPACITY / COVERAGE WARNING") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "capacity_limited") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "No answer was produced.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Evidence Used:") == null);
+}
+
+test "corpus ask human zero capacity telemetry renders cleanly" {
+    const mock_root = "/tmp/ghost-cli-corpus-capacity-clean";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\n" ++
+            "cat >/dev/null\n" ++
+            "printf '%s' '{\"corpusAsk\":{\"status\":\"answered\",\"state\":\"draft\",\"permission\":\"none\",\"answerDraft\":\"Exact evidence supports this draft.\",\"evidenceUsed\":[{\"itemId\":\"item-1\",\"path\":\"corpus/live.jsonl\",\"snippet\":\"exact evidence\",\"reason\":\"exact match\"}],\"unknowns\":[],\"candidateFollowups\":[],\"learningCandidates\":[],\"capacityTelemetry\":{\"truncatedInputs\":0,\"truncatedSnippets\":0,\"skippedInputs\":0,\"skippedFiles\":0,\"budgetHits\":0,\"maxResultsHit\":false,\"exactCandidateCapHit\":false,\"sketchCandidateCapHit\":false,\"capacityWarnings\":[],\"expansionRecommended\":false,\"spilloverRecommended\":false},\"trace\":{\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "corpus", "ask", "--engine-root=" ++ mock_root, "clean capacity" });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Answer Draft:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Evidence Used:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "CAPACITY / COVERAGE WARNING") == null);
 }
 
 test "corpus ask human weak evidence renders unknown and no answer" {

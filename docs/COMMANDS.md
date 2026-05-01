@@ -93,6 +93,14 @@ answer was produced and renders the unknowns. `candidateFollowups` are rendered
 as candidates. `learningCandidates` are labeled **CANDIDATE ONLY / NOT
 PERSISTED**.
 
+When `capacityTelemetry` reports pressure or unknowns include
+`capacity_limited`, the CLI prints `CAPACITY / COVERAGE WARNING` near the top.
+This means Ghost did not inspect or retain all potentially relevant data.
+Skipped, dropped, truncated, or capped data is partial coverage and cannot
+support an answer. Exact evidence is still required for `answerDraft`; exact
+retained evidence may produce a draft while the warning discloses incomplete
+coverage.
+
 `similarCandidates` may appear as **Similarity Hints / NON-AUTHORIZING**. They
 are approximate local SimHash routing hints with fields such as corpus item/path,
 Hamming distance, similarity score, reason `simhash_near_duplicate`, and
@@ -133,6 +141,11 @@ fired rules, emitted candidates, emitted obligations, unknowns, explanation
 trace, and safety flags. It prints these required safety labels:
 `RULE OUTPUTS ARE CANDIDATES ONLY`, `NOT PROOF`, `VERIFIERS NOT EXECUTED`, and
 `PACKS / CORPUS / NEGATIVE KNOWLEDGE NOT MUTATED`.
+
+When `capacityTelemetry` reports pressure, the CLI prints `RULE CAPACITY
+WARNING / NON-AUTHORIZING`. Output, fired-rule, or rule caps mean evaluation is
+incomplete: emitted rule outputs remain candidates only, rejected or capped
+outputs are not proof, and no support gate was discharged.
 
 Rule evaluation is deterministic bounded rule matching over request-local facts
 and rules. It is not recursive inference, not Prolog, not semantic search, and

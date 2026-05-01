@@ -29,6 +29,8 @@ pub fn printHelp(writer: anytype) !void {
         \\  It is structural matching only: no recursive inference, no Prolog,
         \\  no Transformers, embeddings, model adapters, semantic search, or network calls.
         \\  RULE OUTPUTS ARE CANDIDATES ONLY.
+        \\  Capacity telemetry is explicit: capped or rejected rule outputs mean
+        \\  incomplete candidate evaluation, not proof or support.
         \\  NOT PROOF.
         \\  VERIFIERS NOT EXECUTED.
         \\  PACKS / CORPUS / NEGATIVE KNOWLEDGE NOT MUTATED.
@@ -63,6 +65,7 @@ fn printEvaluateHelp(writer: anytype) !void {
         \\  Deterministic bounded rule evaluation over request-local facts/rules.
         \\  No recursive inference / no Prolog.
         \\  RULE OUTPUTS ARE CANDIDATES ONLY.
+        \\  Capacity warnings mean incomplete candidate evaluation.
         \\  NOT PROOF.
         \\  VERIFIERS NOT EXECUTED.
         \\  PACKS / CORPUS / NEGATIVE KNOWLEDGE NOT MUTATED.
@@ -248,6 +251,10 @@ fn printRuleEvaluationResult(writer: anytype, value: std.json.Value) !void {
     try printIntField(writer, rule, "outputsEmitted", "Outputs Emitted");
     try printBoolField(writer, rule, "budgetExhausted", "Budget Exhausted");
 
+    if (rule.get("capacityTelemetry")) |telemetry| {
+        if (hasCapacityPressure(telemetry)) try printRuleCapacityWarning(writer, telemetry);
+    }
+
     try printSection(writer, rule, "firedRules", "Fired Rules");
     try printSection(writer, rule, "emittedCandidates", "Emitted Candidates");
     try printSection(writer, rule, "emittedObligations", "Emitted Obligations");
@@ -256,6 +263,30 @@ fn printRuleEvaluationResult(writer: anytype, value: std.json.Value) !void {
     try printSection(writer, rule, "safetyFlags", "Safety Flags");
 
     try writer.print("\nNotice: rule.evaluate is deterministic bounded rule matching only. It does not infer recursive facts, execute verifiers, mutate packs/corpus/negative knowledge, or grant proof/support.\n", .{});
+}
+
+fn printRuleCapacityWarning(writer: anytype, telemetry: std.json.Value) !void {
+    try writer.print("\nRULE CAPACITY WARNING / NON-AUTHORIZING\n", .{});
+    try writer.print("- Rule outputs are candidates only.\n", .{});
+    try writer.print("- Capacity-limited rule evaluation is incomplete.\n", .{});
+    try writer.print("- No proof/support gate was discharged.\n", .{});
+
+    const obj = switch (telemetry) {
+        .object => |obj| obj,
+        else => {
+            try writer.print("capacityTelemetry:\n", .{});
+            try printJsonValue(writer, telemetry, 2);
+            try writer.print("\n", .{});
+            return;
+        },
+    };
+    try printCapacityField(writer, obj, "maxOutputsHit");
+    try printCapacityField(writer, obj, "maxRulesHit");
+    try printCapacityField(writer, obj, "maxFiredRulesHit");
+    try printCapacityField(writer, obj, "rejectedOutputs");
+    try printCapacityField(writer, obj, "budgetHits");
+    try printCapacityField(writer, obj, "capacityWarnings");
+    try writer.print("\n", .{});
 }
 
 fn findRuleEvaluation(value: std.json.Value) ?std.json.Value {
@@ -311,6 +342,55 @@ fn printIntField(writer: anytype, obj: std.json.ObjectMap, field: []const u8, la
         .integer => |i| try writer.print("{s}: {d}\n", .{ label, i }),
         else => {},
     }
+}
+
+fn printCapacityField(writer: anytype, obj: std.json.ObjectMap, field: []const u8) !void {
+    const value = obj.get(field) orelse return;
+    try writer.print("- {s}: ", .{field});
+    try printInlineJsonValue(writer, value);
+    try writer.print("\n", .{});
+}
+
+fn printInlineJsonValue(writer: anytype, value: std.json.Value) !void {
+    switch (value) {
+        .string => |s| try writer.print("{s}", .{s}),
+        .integer => |i| try writer.print("{d}", .{i}),
+        .float => |f| try writer.print("{d}", .{f}),
+        .bool => |b| try writer.print("{s}", .{if (b) "true" else "false"}),
+        .null => try writer.print("null", .{}),
+        else => try std.json.stringify(value, .{}, writer),
+    }
+}
+
+fn hasCapacityPressure(value: std.json.Value) bool {
+    const obj = switch (value) {
+        .object => |obj| obj,
+        else => return true,
+    };
+    return hasPressureField(obj, "maxOutputsHit") or
+        hasPressureField(obj, "maxRulesHit") or
+        hasPressureField(obj, "maxFiredRulesHit") or
+        hasPressureField(obj, "rejectedOutputs") or
+        hasPressureField(obj, "budgetHits") or
+        hasPressureField(obj, "capacityWarnings");
+}
+
+fn hasPressureField(obj: std.json.ObjectMap, field: []const u8) bool {
+    const value = obj.get(field) orelse return false;
+    return isPressureValue(value);
+}
+
+fn isPressureValue(value: std.json.Value) bool {
+    return switch (value) {
+        .bool => |b| b,
+        .integer => |i| i != 0,
+        .float => |f| f != 0,
+        .string => |s| s.len > 0,
+        .array => |arr| arr.items.len > 0,
+        .object => |obj| obj.count() > 0,
+        .null => false,
+        else => true,
+    };
 }
 
 fn isEmptyJsonList(value: std.json.Value) bool {

@@ -49,6 +49,8 @@ pub fn printHelp(writer: anytype) !void {
         \\  Retrieval is bounded local matching, not semantic search.
         \\  Exact evidence is required for answer drafts. Similarity hints may
         \\  appear as NON-AUTHORIZING routing hints only.
+        \\  Capacity telemetry is explicit: skipped, dropped, truncated, or
+        \\  capped data means partial coverage and cannot support an answer.
         \\  No Transformers, embeddings, model adapters, hidden learning, pack
         \\  mutation, negative-knowledge mutation, verifier execution, or
         \\  automatic startup corpus operation is performed by this command group.
@@ -124,6 +126,8 @@ fn printAskHelp(writer: anytype) !void {
         \\  Retrieval is bounded local matching over live shard corpus excerpts.
         \\  Exact evidence is required for answer drafts. Similarity hints may
         \\  appear as NON-AUTHORIZING routing hints only, never as evidence.
+        \\  Capacity warnings mean partial coverage: skipped, dropped,
+        \\  truncated, or capped data cannot support an answer.
         \\  It is not semantic search, and mounted pack corpus is not included.
         \\  It does not use Transformers, embeddings, or model adapters.
         \\  It does not mutate corpus, mutate packs, mutate negative knowledge,
@@ -526,11 +530,15 @@ fn printCorpusAskResult(writer: anytype, value: std.json.Value) !void {
     if (getString(corpus, "permission")) |permission| try writer.print("Permission: {s}\n", .{permission});
 
     const unknowns = corpus.get("unknowns");
+    const capacity_telemetry = corpus.get("capacityTelemetry");
     const evidence = corpus.get("evidenceUsed");
     const similar_candidates = corpus.get("similarCandidates");
     const has_answer = corpus.get("answerDraft") != null;
     const has_evidence = if (evidence) |e| !isEmptyJsonList(e) else false;
     const has_similar_candidates = if (similar_candidates) |s| !isEmptyJsonList(s) else false;
+    if ((if (capacity_telemetry) |telemetry| hasCapacityPressure(telemetry) else false) or hasUnknownKind(unknowns, "capacity_limited")) {
+        try printCorpusCapacityWarning(writer, capacity_telemetry);
+    }
     if (corpus.get("answerDraft")) |answer| {
         try writer.print("\nAnswer Draft:\n", .{});
         try printJsonValue(writer, answer, 2);
@@ -601,6 +609,88 @@ fn printCorpusAskResult(writer: anytype, value: std.json.Value) !void {
 
     try writer.print("\nNotice: This output is a DRAFT and NON-AUTHORIZING.\n", .{});
     try writer.print("Corpus ask uses bounded local matching over live corpus excerpts only; similarity hints are not evidence, it is not semantic search, and it does not include mounted pack corpus yet.\n", .{});
+}
+
+fn printCorpusCapacityWarning(writer: anytype, telemetry: ?std.json.Value) !void {
+    try writer.print("\nCAPACITY / COVERAGE WARNING\n", .{});
+    try writer.print("- Ghost did not inspect or retain all potentially relevant data.\n", .{});
+    try writer.print("- Results are partial and non-authorizing.\n", .{});
+    try writer.print("- Dropped, skipped, truncated, or capped data cannot support an answer.\n", .{});
+
+    const value = telemetry orelse return;
+    const obj = switch (value) {
+        .object => |obj| obj,
+        else => {
+            try writer.print("capacityTelemetry:\n", .{});
+            try printJsonValue(writer, value, 2);
+            return;
+        },
+    };
+    try printCapacityField(writer, obj, "truncatedInputs");
+    try printCapacityField(writer, obj, "truncatedSnippets");
+    try printCapacityField(writer, obj, "skippedInputs");
+    try printCapacityField(writer, obj, "skippedFiles");
+    try printCapacityField(writer, obj, "budgetHits");
+    try printCapacityField(writer, obj, "maxResultsHit");
+    try printCapacityField(writer, obj, "exactCandidateCapHit");
+    try printCapacityField(writer, obj, "sketchCandidateCapHit");
+    try printCapacityField(writer, obj, "capacityWarnings");
+    try printCapacityField(writer, obj, "expansionRecommended");
+    try printCapacityField(writer, obj, "spilloverRecommended");
+}
+
+fn printCapacityField(writer: anytype, obj: std.json.ObjectMap, field: []const u8) !void {
+    const value = obj.get(field) orelse return;
+    try writer.print("- {s}: ", .{field});
+    try printInlineJsonValue(writer, value);
+    try writer.print("\n", .{});
+}
+
+fn printInlineJsonValue(writer: anytype, value: std.json.Value) !void {
+    switch (value) {
+        .string => |s| try writer.print("{s}", .{s}),
+        .integer => |i| try writer.print("{d}", .{i}),
+        .float => |f| try writer.print("{d}", .{f}),
+        .bool => |b| try writer.print("{s}", .{if (b) "true" else "false"}),
+        .null => try writer.print("null", .{}),
+        else => try std.json.stringify(value, .{}, writer),
+    }
+}
+
+fn hasCapacityPressure(value: std.json.Value) bool {
+    const obj = switch (value) {
+        .object => |obj| obj,
+        else => return true,
+    };
+    return hasPressureField(obj, "truncatedInputs") or
+        hasPressureField(obj, "truncatedSnippets") or
+        hasPressureField(obj, "skippedInputs") or
+        hasPressureField(obj, "skippedFiles") or
+        hasPressureField(obj, "budgetHits") or
+        hasPressureField(obj, "maxResultsHit") or
+        hasPressureField(obj, "exactCandidateCapHit") or
+        hasPressureField(obj, "sketchCandidateCapHit") or
+        hasPressureField(obj, "capacityWarnings") or
+        hasPressureField(obj, "expansionRecommended") or
+        hasPressureField(obj, "spilloverRecommended");
+}
+
+fn hasPressureField(obj: std.json.ObjectMap, field: []const u8) bool {
+    const value = obj.get(field) orelse return false;
+    return isPressureValue(value);
+}
+
+fn isPressureValue(value: std.json.Value) bool {
+    return switch (value) {
+        .bool => |b| b,
+        .integer => |i| i != 0,
+        .float => |f| f != 0,
+        .string => |s| s.len > 0,
+        .array => |arr| arr.items.len > 0,
+        .object => |obj| obj.count() > 0,
+        .null => false,
+        else => true,
+    };
 }
 
 fn findCorpusAsk(value: std.json.Value) ?std.json.Value {
