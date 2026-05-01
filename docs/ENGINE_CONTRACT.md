@@ -6,6 +6,7 @@
 - `ghost_code_intel`
 - `ghost_patch_candidates`
 - `ghost_knowledge_pack`
+- `ghost_gip`
 
 ## JSON Output Contract
 The CLI expects structured JSON output from the engine when `--render=json` is provided.
@@ -145,6 +146,35 @@ validation limit flags. It does not run validation, mutate packs, auto-fix
 guidance, auto-promote guidance, or treat capability availability as proof.
 Unavailable or unparsable capabilities render a compatibility warning and an
 engine upgrade/rebuild suggestion.
+
+## Corpus Ask
+
+`ghost corpus ask` routes explicitly to `ghost_gip --stdin` with GIP
+`kind: "corpus.ask"`. The CLI request body includes `question`, optional
+`projectShard`, optional `maxResults`, optional `maxSnippetBytes`, and optional
+`requireCitations`. `ghost ask` remains the chat/task-operator one-shot command.
+
+Human mode renders only the engine's corpus ask result. It labels the output
+DRAFT and NON-AUTHORIZING, renders `answerDraft` only when present, renders
+bounded `evidenceUsed`, and renders `unknowns`, `candidateFollowups`,
+`learningCandidates`, and trace fields without upgrading authority. If the
+engine reports `no_corpus_available`, `insufficient_evidence`, or
+`conflicting_evidence`, no answer is rendered; the CLI states that no answer was
+produced and shows the unknown/conflict status.
+
+`learningCandidates` are displayed as CANDIDATE ONLY / NOT PERSISTED. Rendering
+them does not persist learning, mutate corpus, mutate packs, mutate negative
+knowledge, run commands, or run verifiers. Trace flags such as
+`corpusMutation`, `packMutation`, `negativeKnowledgeMutation`,
+`commandsExecuted`, and `verifiersExecuted` are display-only engine facts.
+
+`--json` preserves raw engine stdout exactly. `--debug` writes diagnostics to
+stderr only: engine binary path, GIP kind, argv/stdin summary, exit code, and
+parse status.
+
+The engine retrieval limitation is user-visible: corpus ask is bounded lexical
+matching over live shard corpus excerpts. It is not semantic search yet, and
+mounted pack corpus is not included yet.
 
 ## Context Autopsy Coverage Warnings
 

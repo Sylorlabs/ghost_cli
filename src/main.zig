@@ -5,6 +5,7 @@ const debug_cmd = @import("commands/debug.zig");
 const doctor = @import("commands/doctor.zig");
 const status = @import("commands/status.zig");
 const packs = @import("commands/packs.zig");
+const corpus = @import("commands/corpus.zig");
 const verify = @import("commands/verify.zig");
 const learn = @import("commands/learn.zig");
 const autopsy = @import("commands/autopsy.zig");
@@ -21,6 +22,7 @@ const CommandKind = enum {
     fix,
     verify,
     packs,
+    corpus,
     learn,
     tui,
     status,
@@ -66,6 +68,7 @@ const command_registry = [_]CommandDef{
     .{ .name = "status", .kind = .status, .group = .inspection, .help = "Show engine availability/status", .usage = "ghost status [--debug]" },
     .{ .name = "doctor", .kind = .doctor, .group = .inspection, .help = "Run read-only environment diagnostics", .usage = "ghost doctor [--json|--report] [--debug] [--full] [--run-build-check]" },
     .{ .name = "packs", .kind = .packs, .group = .knowledge, .help = "Manage knowledge packs", .usage = "ghost packs <list|inspect|mount|unmount|validate-autopsy-guidance> [options]" },
+    .{ .name = "corpus", .kind = .corpus, .group = .knowledge, .help = "Ask from live shard corpus evidence", .usage = "ghost corpus ask [options] <question>" },
     .{ .name = "learn", .kind = .learn, .group = .knowledge, .help = "Feedback/distillation surface", .usage = "ghost learn <candidates|show|export> [options]" },
     .{ .name = "debug", .kind = .debug, .group = .advanced, .help = "Advanced raw engine diagnostics", .usage = "ghost debug raw <engine-binary> [args...]" },
     .{ .name = "tui", .kind = .tui, .group = .interface, .help = "Interactive Ghost operator console", .usage = "ghost tui [options]" },
@@ -171,6 +174,12 @@ pub fn main() !void {
             .max_guidance_bytes = parsed.options.max_guidance_bytes,
             .max_array_items = parsed.options.max_array_items,
             .max_string_bytes = parsed.options.max_string_bytes,
+            .json = parsed.options.json_out,
+            .debug = parsed.options.debug_mode,
+        }),
+        .corpus => try corpus.executeFromArgs(allocator, root, parsed.leftover_args.items, .{
+            .question = parsed.options.message,
+            .project_shard = parsed.options.project_shard,
             .json = parsed.options.json_out,
             .debug = parsed.options.debug_mode,
         }),
@@ -422,6 +431,7 @@ fn printHelp(writer: anytype) !void {
 fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
     if (kind == .context) return context_cmd.printHelp(writer);
     if (kind == .packs) return packs.printHelp(writer);
+    if (kind == .corpus) return corpus.printHelp(writer);
 
     const command = commandByKind(kind).?;
     try writer.print("{s}\n\nUsage: {s}\n\n{s}\n", .{ command.name, command.usage, command.help });
@@ -493,7 +503,7 @@ fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
             \\  This scan runs only when this command is explicitly invoked.
             \\
         , .{}),
-        .context, .packs => unreachable,
+        .context, .packs, .corpus => unreachable,
         .learn => try writer.print(
             \\
             \\Subcommands:

@@ -59,6 +59,12 @@ ghost chat --message="explain this project" --reasoning=balanced
 # One-shot questions
 ghost ask "what does this config do?"
 
+# Corpus-grounded ask through GIP
+ghost corpus ask "What does the corpus say about verifier execution?"
+ghost corpus ask --project-shard=my-project --max-results=3 --max-snippet-bytes=512 --require-citations "What does the corpus say about retention?"
+ghost corpus ask --json "What does the corpus say about verifier execution?"
+ghost corpus ask --debug "What does the corpus say about verifier execution?"
+
 # Request a fix
 ghost fix "make the failing runtime test pass" --reasoning=deep
 
@@ -107,6 +113,7 @@ ghost doctor --report
 - **Distillation Candidates**: Reviewed and aggregated knowledge ready for promotion.
 - **Exported Packs**: User-approved knowledge units that act as non-authorizing hints for future reasoning.
 - **Autopsy Guidance Validation**: Explicit `ghost packs validate-autopsy-guidance` checks pack guidance shape/content via the engine. It first checks `ghost_knowledge_pack capabilities --json`, requires an advertised validation command and supported schema versions, and routes validation limit overrides only when advertised. Human mode renders clean success, warning, and error summaries without raw Zig traces; `--json` preserves raw engine stdout exactly. It is review-only: no pack mutation, no auto-fix, no auto-promotion, and no proof upgrade.
+- **Corpus Ask**: Explicit `ghost corpus ask` calls `ghost_gip` operation `corpus.ask` against live shard corpus excerpts. Human output is **DRAFT** and **NON-AUTHORIZING**, renders bounded evidence and unknowns, labels learning candidates as candidate-only/not-persisted, and preserves raw stdout under `--json`. Retrieval is bounded lexical matching, not semantic search, and mounted pack corpus is not included yet.
 - **Truth**: Proof and support gates in the engine still decide final validity of any claim.
 
 
@@ -124,7 +131,7 @@ Top-level help is grouped by operator workflow:
 
 - Core: `ask`, `chat`, `fix`, `verify`
 - Inspection: `autopsy`, `context`, `status`, `doctor`
-- Knowledge: `packs`, `learn`
+- Knowledge: `packs`, `corpus`, `learn`
 - Advanced: `debug`
 - Interface: `tui`
 
@@ -204,6 +211,7 @@ If `ghost_cli` encounters issues, use these commands to diagnose the problem:
 - **`ghost doctor`**: Runs read-only environment and tester diagnostics, including CLI path, engine binary resolution (all binaries including `ghost_project_autopsy`), Zig version, OS/arch, terminal, PATH, safe smoke checks, and knowledge-pack validation capability compatibility. A bounded `--version` smoke check confirms autopsy binary responds; a bounded `ghost_knowledge_pack capabilities --json` diagnostic reports validation compatibility; **no scan or validation is run**.
 - **`ghost autopsy`**: Runs an explicit project structure analysis scan.
 - **`ghost context autopsy`**: Runs an explicit `context.autopsy` GIP request. `--input-file <path>` adds explicit bounded file refs under `context.input_refs`; the engine reads those refs inside the CLI current workspace root and the CLI does not embed file contents. Human output is labeled **DRAFT** and **NON-AUTHORIZING** and renders input/artifact coverage when present. If coverage reports skipped, truncated, budget-hit, unread, or coverage-derived unknown material, human output prints `COVERAGE WARNING` and states that Ghost did not inspect all provided material; `--json` preserves raw engine stdout exactly.
+- **`ghost corpus ask`**: Runs an explicit `corpus.ask` GIP request. Human output is labeled **DRAFT** and **NON-AUTHORIZING**. It renders `answerDraft` only when the engine returns one, shows `evidenceUsed`, unknowns, candidate followups, candidate-only learning candidates, and trace flags. No corpus, weak evidence, or conflicting evidence produces no answer. It does not mutate corpus, packs, or negative knowledge, and does not run commands or verifiers.
 - **`ghost <command> --debug`**: Prints the exact engine binary path, arguments, exit code, JSON parse result, and whether correction/negative-knowledge/epistemic fields were detected.
 - **`ghost <command> --json`**: Preserves raw engine stdout exactly; debug diagnostics and engine stderr are written to stderr.
 - **`ghost debug raw <engine-binary> [args...]`**: Bypasses all CLI formatting to run an engine binary directly and print the raw text/JSON.

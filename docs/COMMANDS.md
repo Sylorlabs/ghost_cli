@@ -4,7 +4,7 @@ Top-level help is organized around Ghost operator workflows:
 
 - **Core**: `ask`, `chat`, `fix`, `verify`
 - **Inspection**: `autopsy`, `context`, `status`, `doctor`
-- **Knowledge**: `packs`, `learn`
+- **Knowledge**: `packs`, `corpus`, `learn`
 - **Advanced**: `debug`
 - **Interface**: `tui`
 
@@ -31,6 +31,39 @@ Usage: `ghost chat --message="explain this project" --reasoning=balanced`
 ### `ghost ask`
 Short one-shot question. Proxies to chat internals using a limited session.
 Usage: `ghost ask "what does this config do?"`
+
+### `ghost corpus ask`
+Run an explicit corpus-grounded ask through `ghost_gip` operation
+`corpus.ask`.
+
+Usage: `ghost corpus ask "What does the corpus say about verifier execution?"`
+Usage: `ghost corpus ask --json "What does the corpus say about verifier execution?"`
+Usage: `ghost corpus ask --debug "What does the corpus say about verifier execution?"`
+Usage: `ghost corpus ask --project-shard=my-project --max-results=3 --max-snippet-bytes=512 --require-citations "What does the corpus say about retention?"`
+
+This command is explicit only. It sends `kind: "corpus.ask"` to
+`ghost_gip --stdin` with `question`, optional `projectShard`, optional
+`maxResults`, optional `maxSnippetBytes`, and optional `requireCitations`.
+Existing `ghost ask` behavior is unchanged.
+
+Human-readable output is labeled **DRAFT** and **NON-AUTHORIZING**. When the
+engine returns `answerDraft`, the CLI renders it with bounded `evidenceUsed`
+fields such as corpus path, source path, class, snippet, reason, provenance,
+and score. If the engine reports `no_corpus_available`,
+`insufficient_evidence`, or `conflicting_evidence`, human mode clearly says no
+answer was produced and renders the unknowns. `candidateFollowups` are rendered
+as candidates. `learningCandidates` are labeled **CANDIDATE ONLY / NOT
+PERSISTED**.
+
+Retrieval is bounded lexical matching over live shard corpus excerpts only. It
+is not semantic search yet. Mounted pack corpus is not included yet. The command
+does not mutate corpus, mutate packs, mutate negative knowledge, run commands,
+run verifiers, persist learning candidates, or run automatically from startup,
+TUI launch, doctor, or status.
+
+`--json` preserves raw GIP stdout exactly. `--debug` writes diagnostics to
+stderr only, including the engine binary path, GIP kind, argv/stdin summary,
+exit code, and JSON parse status.
 
 ### `ghost fix`
 User asks Ghost to propose or perform a fix.
@@ -260,7 +293,7 @@ Engine binaries tracked by `ghost doctor` and `ghost status`:
 | `ghost_code_intel` | Code intelligence | Yes |
 | `ghost_patch_candidates` | Patch candidate generation | Yes |
 | `ghost_knowledge_pack` | Knowledge pack management | Yes |
-| `ghost_gip` | GIP protocol / engine status / Context Autopsy | No |
+| `ghost_gip` | GIP protocol / engine status / Context Autopsy / Corpus Ask | No |
 | `ghost_project_autopsy` | Project Autopsy pass | No |
 
 `ghost_project_autopsy` is detected and reported by `doctor`/`status`. Doctor
