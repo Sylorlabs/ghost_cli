@@ -1020,6 +1020,40 @@ test "corpus ask human weak evidence renders unknown and no answer" {
     try testing.expect(std.mem.indexOf(u8, res.stdout, "Answer Draft:") == null);
 }
 
+test "corpus ask human approximate-only renders similarity hints as non-authorizing" {
+    const mock_root = "/tmp/ghost-cli-corpus-similar";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\n" ++
+            "cat >/dev/null\n" ++
+            "printf '%s' '{\"corpusAsk\":{\"status\":\"unknown\",\"state\":\"unresolved\",\"permission\":\"unresolved\",\"evidenceUsed\":[],\"similarCandidates\":[{\"itemId\":\"item-near\",\"path\":\"corpus/live.jsonl\",\"sourcePath\":\"docs/near.md\",\"sourceLabel\":\"fixture\",\"trustClass\":\"project\",\"hammingDistance\":4,\"similarityScore\":937,\"reason\":\"simhash_near_duplicate\",\"nonAuthorizing\":true,\"rank\":1}],\"unknowns\":[{\"kind\":\"insufficient_evidence\",\"reason\":\"similarity hints are not exact evidence\"}],\"candidateFollowups\":[],\"learningCandidates\":[],\"trace\":{\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "corpus", "ask", "--engine-root=" ++ mock_root, "near duplicate question" });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "No answer was produced.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Similar corpus candidates were found, but no exact evidence supported an answer draft.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Similarity Hints / NON-AUTHORIZING") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "These are routing hints, not evidence.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Exact evidence is still required before Ghost renders an answer draft.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "corpus/live.jsonl") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "docs/near.md") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "similarityScore: 937") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "hammingDistance: 4") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "reason: simhash_near_duplicate") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "nonAuthorizing: true") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Evidence Used:") == null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Answer Draft:") == null);
+}
+
 test "corpus ask human conflict renders conflicting evidence and no answer" {
     const mock_root = "/tmp/ghost-cli-corpus-conflict";
     try std.fs.cwd().makePath(mock_root);
@@ -1047,7 +1081,7 @@ test "corpus ask human conflict renders conflicting evidence and no answer" {
 
 test "corpus ask json byte matches direct ghost gip output" {
     const mock_root = "/tmp/ghost-cli-corpus-json";
-    const raw_json = "{\"corpusAsk\":{\"status\":\"unknown\",\"state\":\"unresolved\",\"permission\":\"unresolved\",\"unknowns\":[{\"kind\":\"no_corpus_available\",\"reason\":\"none\"}],\"evidenceUsed\":[],\"candidateFollowups\":[],\"learningCandidates\":[],\"trace\":{\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false}}}";
+    const raw_json = "{\"corpusAsk\":{\"status\":\"unknown\",\"state\":\"unresolved\",\"permission\":\"unresolved\",\"unknowns\":[{\"kind\":\"insufficient_evidence\",\"reason\":\"none\"}],\"evidenceUsed\":[],\"similarCandidates\":[{\"itemId\":\"item-near\",\"path\":\"corpus/live.jsonl\",\"sourcePath\":\"docs/near.md\",\"hammingDistance\":4,\"similarityScore\":937,\"reason\":\"simhash_near_duplicate\",\"nonAuthorizing\":true}],\"candidateFollowups\":[],\"learningCandidates\":[],\"trace\":{\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false}}}";
     try std.fs.cwd().makePath(mock_root);
     defer std.fs.cwd().deleteTree(mock_root) catch {};
 

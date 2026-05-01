@@ -184,10 +184,18 @@ search.
 Human mode renders only the engine's corpus ask result. It labels the output
 DRAFT and NON-AUTHORIZING, renders `answerDraft` only when present, renders
 bounded `evidenceUsed`, and renders `unknowns`, `candidateFollowups`,
-`learningCandidates`, and trace fields without upgrading authority. If the
-engine reports `no_corpus_available`, `insufficient_evidence`, or
+`learningCandidates`, `similarCandidates`, and trace fields without upgrading
+authority. Exact evidence remains the only rendered basis for answer drafts. If
+the engine reports `no_corpus_available`, `insufficient_evidence`, or
 `conflicting_evidence`, no answer is rendered; the CLI states that no answer was
 produced and shows the unknown/conflict status.
+
+`similarCandidates` are displayed separately as **Similarity Hints /
+NON-AUTHORIZING**. They are approximate local SimHash routing hints, not
+evidence, proof, or answer support. The CLI may show corpus item/path, Hamming
+distance, similarity score, reason `simhash_near_duplicate`, and
+`nonAuthorizing: true`. Approximate-only matches do not populate Evidence Used
+and do not render an answer draft.
 
 `learningCandidates` are displayed as CANDIDATE ONLY / NOT PERSISTED. Rendering
 them does not persist learning, mutate corpus, mutate packs, mutate negative
@@ -199,11 +207,11 @@ knowledge, run commands, or run verifiers. Trace flags such as
 stderr only: engine binary path, GIP kind, argv/stdin summary, exit code, and
 parse status.
 
-The engine retrieval limitation is user-visible: corpus ask is bounded lexical
+The engine retrieval limitation is user-visible: corpus ask is bounded local
 matching over live shard corpus excerpts. It reads live shard corpus only;
 staged corpus is invisible until apply-staged succeeds. It is not semantic
-search, and mounted pack corpus is not included yet. There are no Transformers
-or model adapters in this CLI path.
+search, and mounted pack corpus is not included yet. There are no Transformers,
+embeddings, or model adapters in this CLI path.
 
 ## Context Autopsy Coverage Warnings
 

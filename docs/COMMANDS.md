@@ -83,21 +83,30 @@ This command is explicit only. It sends `kind: "corpus.ask"` to
 `maxResults`, optional `maxSnippetBytes`, and optional `requireCitations`.
 Existing `ghost ask` behavior is unchanged.
 
-Human-readable output is labeled **DRAFT** and **NON-AUTHORIZING**. When the
-engine returns `answerDraft`, the CLI renders it with bounded `evidenceUsed`
-fields such as corpus path, source path, class, snippet, reason, provenance,
-and score. If the engine reports `no_corpus_available`,
+Human-readable output is labeled **DRAFT** and **NON-AUTHORIZING**. Exact
+`evidenceUsed` controls answer drafts. When the engine returns `answerDraft`,
+the CLI renders it with bounded `evidenceUsed` fields such as corpus path,
+source path, class, snippet, reason, provenance, and score. If the engine
+reports `no_corpus_available`,
 `insufficient_evidence`, or `conflicting_evidence`, human mode clearly says no
 answer was produced and renders the unknowns. `candidateFollowups` are rendered
 as candidates. `learningCandidates` are labeled **CANDIDATE ONLY / NOT
 PERSISTED**.
 
-Retrieval is bounded lexical matching over live shard corpus excerpts only. It
-is not semantic search, and there are no Transformers or model adapters in this
-path. Mounted pack corpus is not included yet. The command does not ingest
-corpus, read staged-only corpus, mutate corpus, mutate packs, mutate negative
-knowledge, run commands, run verifiers, persist learning candidates, or run
-automatically from startup, TUI launch, doctor, or status.
+`similarCandidates` may appear as **Similarity Hints / NON-AUTHORIZING**. They
+are approximate local SimHash routing hints with fields such as corpus item/path,
+Hamming distance, similarity score, reason `simhash_near_duplicate`, and
+`nonAuthorizing: true`. They are not evidence, proof, or answer support; they do
+not populate `evidenceUsed`, and approximate-only matches do not render an
+answer draft.
+
+Retrieval is bounded local matching over live shard corpus excerpts only. Exact
+evidence remains required for answers. It is not semantic search, and there are
+no Transformers, embeddings, or model adapters in this path. Mounted pack corpus
+is not included yet. The command does not ingest corpus, read staged-only
+corpus, mutate corpus, mutate packs, mutate negative knowledge, run commands,
+run verifiers, persist learning candidates, or run automatically from startup,
+TUI launch, doctor, or status.
 
 `--json` preserves raw GIP stdout exactly. `--debug` writes diagnostics to
 stderr only, including the engine binary path, GIP kind, argv/stdin summary,

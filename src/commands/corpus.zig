@@ -46,10 +46,12 @@ pub fn printHelp(writer: anytype) !void {
         \\Safety:
         \\  Ingest stages corpus only. Ask reads live shard corpus only.
         \\  Staged corpus is not visible to ask until apply-staged succeeds.
-        \\  Retrieval is bounded lexical matching, not semantic search.
-        \\  No Transformers, model adapters, hidden learning, pack mutation,
-        \\  negative-knowledge mutation, verifier execution, or automatic startup
-        \\  corpus operation is performed by this command group.
+        \\  Retrieval is bounded local matching, not semantic search.
+        \\  Exact evidence is required for answer drafts. Similarity hints may
+        \\  appear as NON-AUTHORIZING routing hints only.
+        \\  No Transformers, embeddings, model adapters, hidden learning, pack
+        \\  mutation, negative-knowledge mutation, verifier execution, or
+        \\  automatic startup corpus operation is performed by this command group.
         \\
     , .{});
 }
@@ -119,8 +121,11 @@ fn printAskHelp(writer: anytype) !void {
         \\  It routes to ghost_gip --stdin with kind corpus.ask.
         \\  Output is DRAFT / NON-AUTHORIZING; corpus evidence is not proof.
         \\  It reads live shard corpus only; staged corpus is invisible until apply-staged.
-        \\  Retrieval is bounded lexical matching over live shard corpus excerpts.
+        \\  Retrieval is bounded local matching over live shard corpus excerpts.
+        \\  Exact evidence is required for answer drafts. Similarity hints may
+        \\  appear as NON-AUTHORIZING routing hints only, never as evidence.
         \\  It is not semantic search, and mounted pack corpus is not included.
+        \\  It does not use Transformers, embeddings, or model adapters.
         \\  It does not mutate corpus, mutate packs, mutate negative knowledge,
         \\  run commands, run verifiers, or persist learning candidates.
         \\
@@ -521,6 +526,11 @@ fn printCorpusAskResult(writer: anytype, value: std.json.Value) !void {
     if (getString(corpus, "permission")) |permission| try writer.print("Permission: {s}\n", .{permission});
 
     const unknowns = corpus.get("unknowns");
+    const evidence = corpus.get("evidenceUsed");
+    const similar_candidates = corpus.get("similarCandidates");
+    const has_answer = corpus.get("answerDraft") != null;
+    const has_evidence = if (evidence) |e| !isEmptyJsonList(e) else false;
+    const has_similar_candidates = if (similar_candidates) |s| !isEmptyJsonList(s) else false;
     if (corpus.get("answerDraft")) |answer| {
         try writer.print("\nAnswer Draft:\n", .{});
         try printJsonValue(writer, answer, 2);
@@ -534,12 +544,24 @@ fn printCorpusAskResult(writer: anytype, value: std.json.Value) !void {
         } else if (hasUnknownKind(unknowns, "insufficient_evidence")) {
             try writer.print("Corpus evidence was insufficient, so no answer draft is rendered.\n", .{});
         }
+        if (has_similar_candidates and !has_evidence and !has_answer) {
+            try writer.print("Similar corpus candidates were found, but no exact evidence supported an answer draft.\n", .{});
+        }
     }
 
-    if (corpus.get("evidenceUsed")) |evidence| {
-        if (!isEmptyJsonList(evidence)) {
+    if (evidence) |evidence_value| {
+        if (!isEmptyJsonList(evidence_value)) {
             try writer.print("\nEvidence Used:\n", .{});
-            try printEvidenceUsed(writer, evidence);
+            try printEvidenceUsed(writer, evidence_value);
+        }
+    }
+
+    if (similar_candidates) |candidates| {
+        if (!isEmptyJsonList(candidates)) {
+            try writer.print("\nSimilarity Hints / NON-AUTHORIZING\n", .{});
+            try writer.print("These are routing hints, not evidence.\n", .{});
+            try writer.print("Exact evidence is still required before Ghost renders an answer draft.\n", .{});
+            try printSimilarCandidates(writer, candidates);
         }
     }
 
@@ -578,7 +600,7 @@ fn printCorpusAskResult(writer: anytype, value: std.json.Value) !void {
     }
 
     try writer.print("\nNotice: This output is a DRAFT and NON-AUTHORIZING.\n", .{});
-    try writer.print("Corpus ask uses bounded lexical matching over live corpus excerpts only; it is not semantic search and it does not include mounted pack corpus yet.\n", .{});
+    try writer.print("Corpus ask uses bounded local matching over live corpus excerpts only; similarity hints are not evidence, it is not semantic search, and it does not include mounted pack corpus yet.\n", .{});
 }
 
 fn findCorpusAsk(value: std.json.Value) ?std.json.Value {
@@ -638,6 +660,41 @@ fn printOptionalEvidenceField(writer: anytype, obj: std.json.ObjectMap, field: [
         try printJsonValue(writer, value, 6);
         try writer.print("\n", .{});
     }
+}
+
+fn printSimilarCandidates(writer: anytype, value: std.json.Value) !void {
+    switch (value) {
+        .array => |arr| {
+            for (arr.items, 0..) |item, idx| {
+                try writer.print("  - hint #{d}\n", .{idx + 1});
+                try printSimilarCandidate(writer, item);
+            }
+        },
+        else => try printSimilarCandidate(writer, value),
+    }
+}
+
+fn printSimilarCandidate(writer: anytype, value: std.json.Value) !void {
+    const obj = switch (value) {
+        .object => |obj| obj,
+        else => {
+            try writer.print("    ", .{});
+            try printJsonValue(writer, value, 4);
+            try writer.print("\n", .{});
+            return;
+        },
+    };
+    try printOptionalEvidenceField(writer, obj, "itemId", "itemId");
+    try printOptionalEvidenceField(writer, obj, "ref", "ref");
+    try printOptionalEvidenceField(writer, obj, "path", "path");
+    try printOptionalEvidenceField(writer, obj, "sourcePath", "sourcePath");
+    try printOptionalEvidenceField(writer, obj, "sourceLabel", "sourceLabel");
+    try printOptionalEvidenceField(writer, obj, "trustClass", "trustClass");
+    try printOptionalEvidenceField(writer, obj, "similarityScore", "similarityScore");
+    try printOptionalEvidenceField(writer, obj, "hammingDistance", "hammingDistance");
+    try printOptionalEvidenceField(writer, obj, "reason", "reason");
+    try printOptionalEvidenceField(writer, obj, "nonAuthorizing", "nonAuthorizing");
+    try printOptionalEvidenceField(writer, obj, "rank", "rank");
 }
 
 fn printTraceFlag(writer: anytype, trace: std.json.Value, field: []const u8) !void {
