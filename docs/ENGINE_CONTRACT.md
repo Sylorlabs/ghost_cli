@@ -7,6 +7,7 @@
 - `ghost_patch_candidates`
 - `ghost_knowledge_pack`
 - `ghost_gip`
+- `ghost_corpus_ingest`
 
 ## JSON Output Contract
 The CLI expects structured JSON output from the engine when `--render=json` is provided.
@@ -147,6 +148,32 @@ guidance, auto-promote guidance, or treat capability availability as proof.
 Unavailable or unparsable capabilities render a compatibility warning and an
 engine upgrade/rebuild suggestion.
 
+## Corpus Lifecycle
+
+`ghost corpus ingest` routes explicitly to `ghost_corpus_ingest <path>`.
+Supported CLI flags are `--project-shard=<id>`, `--trust-class=<class>`, and
+`--source-label=<label>`. Human mode renders the result as STAGED and states
+that staged corpus is not live and is not visible to `corpus.ask` until
+apply-staged succeeds.
+
+`ghost corpus apply-staged` routes explicitly to
+`ghost_corpus_ingest --apply-staged` with optional `--project-shard=<id>`.
+Human mode states that staged corpus was applied/promoted to the live shard
+corpus.
+
+The verified engine at `707ae0c7e14f1f0eb91b2a536b89489eeea95e9c` emits JSON
+from `ghost_corpus_ingest` but does not advertise a separate `--json` flag, so
+the CLI does not forward one. In CLI `--json` mode, raw engine stdout is
+preserved exactly for ingest and apply-staged. Debug diagnostics are written to
+stderr and include engine path, operation, routed argv, exit code, and parse
+status.
+
+These lifecycle commands are explicit only. Help, startup, TUI launch, doctor,
+and status do not run corpus ingest, apply-staged, or ask. The lifecycle does
+not mutate packs, mutate negative knowledge, run verifiers, persist learning
+candidates, add Transformers/model adapters, or provide semantic black-box
+search.
+
 ## Corpus Ask
 
 `ghost corpus ask` routes explicitly to `ghost_gip --stdin` with GIP
@@ -173,8 +200,10 @@ stderr only: engine binary path, GIP kind, argv/stdin summary, exit code, and
 parse status.
 
 The engine retrieval limitation is user-visible: corpus ask is bounded lexical
-matching over live shard corpus excerpts. It is not semantic search yet, and
-mounted pack corpus is not included yet.
+matching over live shard corpus excerpts. It reads live shard corpus only;
+staged corpus is invisible until apply-staged succeeds. It is not semantic
+search, and mounted pack corpus is not included yet. There are no Transformers
+or model adapters in this CLI path.
 
 ## Context Autopsy Coverage Warnings
 

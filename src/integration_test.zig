@@ -138,9 +138,30 @@ test "subcommand help works without resolving engine" {
         testing.allocator.free(corpus_res.stderr);
     }
     try testing.expectEqual(@as(u32, 0), corpus_res.term.Exited);
-    try testing.expect(std.mem.indexOf(u8, corpus_res.stderr, "Usage: ghost corpus ask") != null);
-    try testing.expect(std.mem.indexOf(u8, corpus_res.stderr, "corpus.ask GIP request") != null);
+    try testing.expect(std.mem.indexOf(u8, corpus_res.stderr, "Usage: ghost corpus <ingest|apply-staged|ask>") != null);
+    try testing.expect(std.mem.indexOf(u8, corpus_res.stderr, "ingest <path>") != null);
+    try testing.expect(std.mem.indexOf(u8, corpus_res.stderr, "apply-staged") != null);
+    try testing.expect(std.mem.indexOf(u8, corpus_res.stderr, "ask <question>") != null);
     try testing.expect(std.mem.indexOf(u8, corpus_res.stderr, "not semantic search") != null);
+
+    const corpus_ingest_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "corpus", "ingest", "--help", "--engine-root=/tmp/ghost-help-missing" });
+    defer {
+        testing.allocator.free(corpus_ingest_res.stdout);
+        testing.allocator.free(corpus_ingest_res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), corpus_ingest_res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, corpus_ingest_res.stderr, "Usage: ghost corpus ingest") != null);
+    try testing.expect(std.mem.indexOf(u8, corpus_ingest_res.stderr, "Stages corpus data") != null);
+    try testing.expect(std.mem.indexOf(u8, corpus_ingest_res.stderr, "not live") != null);
+
+    const corpus_apply_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "corpus", "apply-staged", "--help", "--engine-root=/tmp/ghost-help-missing" });
+    defer {
+        testing.allocator.free(corpus_apply_res.stdout);
+        testing.allocator.free(corpus_apply_res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), corpus_apply_res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, corpus_apply_res.stderr, "Usage: ghost corpus apply-staged") != null);
+    try testing.expect(std.mem.indexOf(u8, corpus_apply_res.stderr, "Promotes") != null);
 
     const corpus_ask_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "corpus", "ask", "--help", "--engine-root=/tmp/ghost-help-missing" });
     defer {
@@ -808,6 +829,7 @@ test "doctor status and no-arg TUI do not run autopsy guidance validation" {
     const mock_root = "/tmp/ghost-cli-packs-no-hidden-validation";
     const marker = mock_root ++ "/validation-marker";
     const corpus_marker = mock_root ++ "/corpus-ask-marker";
+    const corpus_ingest_marker = mock_root ++ "/corpus-ingest-marker";
     try std.fs.cwd().makePath(mock_root);
     defer std.fs.cwd().deleteTree(mock_root) catch {};
 
@@ -827,6 +849,7 @@ test "doctor status and no-arg TUI do not run autopsy guidance validation" {
             "case \"$payload $*\" in *corpus.ask*) touch '" ++ corpus_marker ++ "';; esac\n" ++
             "printf '{\"status\":\"ok\"}'\n",
     );
+    try writeMockExecutable(mock_root ++ "/ghost_corpus_ingest", "#!/bin/sh\ntouch '" ++ corpus_ingest_marker ++ "'\nprintf '{}'\n");
     try writeMockExecutable(mock_root ++ "/ghost_project_autopsy", "#!/bin/sh\nprintf 'project autopsy\\n'\n");
 
     const doctor_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "doctor", "--engine-root=" ++ mock_root });
@@ -847,6 +870,7 @@ test "doctor status and no-arg TUI do not run autopsy guidance validation" {
 
     try testing.expectError(error.FileNotFound, std.fs.cwd().access(marker, .{}));
     try testing.expectError(error.FileNotFound, std.fs.cwd().access(corpus_marker, .{}));
+    try testing.expectError(error.FileNotFound, std.fs.cwd().access(corpus_ingest_marker, .{}));
 }
 
 test "corpus ask creates correct GIP payload with options" {
@@ -1089,6 +1113,174 @@ test "corpus ask debug diagnostics stay on stderr" {
     try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Stdin Payload Summary:") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Exit Code:") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] JSON Parse: SUCCESS") != null);
+}
+
+test "corpus ingest routes correct argv to ghost_corpus_ingest" {
+    const mock_root = "/tmp/ghost-cli-corpus-ingest-argv";
+    const argv_path = mock_root ++ "/argv.txt";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_corpus_ingest",
+        "#!/bin/sh\n" ++
+            "printf '%s\\n' \"$*\" > '" ++ argv_path ++ "'\n" ++
+            "printf '{\"status\":\"staged\",\"stagedManifest\":\"/tmp/staged.json\",\"stagedFilesRoot\":\"/tmp/staged-files\",\"fileCount\":1,\"itemCount\":1,\"bytesRead\":64}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "corpus",
+        "ingest",
+        "--engine-root=" ++ mock_root,
+        "fixture-corpus",
+        "--project-shard",
+        "project-a",
+        "--trust-class=project",
+        "--source-label",
+        "fixture",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    const argv = try std.fs.cwd().readFileAlloc(testing.allocator, argv_path, 1024 * 1024);
+    defer testing.allocator.free(argv);
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, argv, "fixture-corpus") != null);
+    try testing.expect(std.mem.indexOf(u8, argv, "--project-shard=project-a") != null);
+    try testing.expect(std.mem.indexOf(u8, argv, "--trust-class=project") != null);
+    try testing.expect(std.mem.indexOf(u8, argv, "--source-label=fixture") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "State: STAGED") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "NOT LIVE") != null);
+}
+
+test "corpus apply-staged routes correct argv to ghost_corpus_ingest" {
+    const mock_root = "/tmp/ghost-cli-corpus-apply-argv";
+    const argv_path = mock_root ++ "/argv.txt";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_corpus_ingest",
+        "#!/bin/sh\n" ++
+            "printf '%s\\n' \"$*\" > '" ++ argv_path ++ "'\n" ++
+            "printf '{\"status\":\"applied\",\"liveManifest\":\"/tmp/live.json\",\"liveFilesRoot\":\"/tmp/live-files\",\"shard\":{\"kind\":\"project\",\"id\":\"project-a\"}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "corpus",
+        "apply-staged",
+        "--engine-root=" ++ mock_root,
+        "--project-shard=project-a",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    const argv = try std.fs.cwd().readFileAlloc(testing.allocator, argv_path, 1024 * 1024);
+    defer testing.allocator.free(argv);
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, argv, "--apply-staged") != null);
+    try testing.expect(std.mem.indexOf(u8, argv, "--project-shard=project-a") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "State: LIVE") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "applied/promoted") != null);
+}
+
+test "corpus ingest json preserves raw engine stdout and debug stays on stderr" {
+    const mock_root = "/tmp/ghost-cli-corpus-ingest-json";
+    const raw_json = "{\"status\":\"staged\",\"stagedManifest\":\"/tmp/raw-staged.json\"}";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_corpus_ingest",
+        "#!/bin/sh\n" ++
+            "printf '%s' '" ++ raw_json ++ "'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "corpus",
+        "ingest",
+        "--engine-root=" ++ mock_root,
+        "--json",
+        "--debug",
+        "fixture-corpus",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expectEqualStrings(raw_json, res.stdout);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Corpus Operation: ingest") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "not forwarded") != null);
+}
+
+test "corpus lifecycle mock loop keeps staged corpus invisible until apply" {
+    const mock_root = "/tmp/ghost-cli-corpus-lifecycle-mock";
+    const state_path = mock_root ++ "/state";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_corpus_ingest",
+        "#!/bin/sh\n" ++
+            "case \"$*\" in *--apply-staged*) printf live > '" ++ state_path ++ "'; printf '{\"status\":\"applied\",\"liveManifest\":\"/tmp/live.json\",\"liveFilesRoot\":\"/tmp/live-files\"}' ;; *) printf staged > '" ++ state_path ++ "'; printf '{\"status\":\"staged\",\"stagedManifest\":\"/tmp/staged.json\",\"fileCount\":1,\"itemCount\":1}' ;; esac\n",
+    );
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\n" ++
+            "payload=$(cat)\n" ++
+            "state=$(cat '" ++ state_path ++ "' 2>/dev/null || true)\n" ++
+            "case \"$state\" in live) case \"$payload\" in *unrelated*) printf '{\"corpusAsk\":{\"status\":\"unknown\",\"state\":\"unresolved\",\"permission\":\"unresolved\",\"unknowns\":[{\"kind\":\"insufficient_evidence\",\"reason\":\"unrelated\"}],\"evidenceUsed\":[],\"candidateFollowups\":[],\"learningCandidates\":[],\"trace\":{\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false}}}' ;; *) printf '{\"corpusAsk\":{\"status\":\"answered\",\"state\":\"draft\",\"permission\":\"none\",\"answerDraft\":\"Verifier execution is not run by corpus ask.\",\"evidenceUsed\":[{\"itemId\":\"item-1\",\"path\":\"live.jsonl\",\"snippet\":\"verifier execution stays false\",\"reason\":\"matched verifier terms\"}],\"unknowns\":[],\"candidateFollowups\":[],\"learningCandidates\":[],\"trace\":{\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false}}}' ;; esac ;; *) printf '{\"corpusAsk\":{\"status\":\"unknown\",\"state\":\"unresolved\",\"permission\":\"unresolved\",\"unknowns\":[{\"kind\":\"no_corpus_available\",\"reason\":\"no live shard corpus is available\"}],\"evidenceUsed\":[],\"candidateFollowups\":[],\"learningCandidates\":[],\"trace\":{\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false}}}' ;; esac\n",
+    );
+
+    const before = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "corpus", "ask", "--engine-root=" ++ mock_root, "--project-shard=mock-loop", "What does the corpus say about verifier execution?" });
+    defer {
+        testing.allocator.free(before.stdout);
+        testing.allocator.free(before.stderr);
+    }
+    const ingest = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "corpus", "ingest", "--engine-root=" ++ mock_root, "fixture", "--project-shard=mock-loop", "--trust-class=project", "--source-label=mock" });
+    defer {
+        testing.allocator.free(ingest.stdout);
+        testing.allocator.free(ingest.stderr);
+    }
+    const staged_ask = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "corpus", "ask", "--engine-root=" ++ mock_root, "--project-shard=mock-loop", "What does the corpus say about verifier execution?" });
+    defer {
+        testing.allocator.free(staged_ask.stdout);
+        testing.allocator.free(staged_ask.stderr);
+    }
+    const apply = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "corpus", "apply-staged", "--engine-root=" ++ mock_root, "--project-shard=mock-loop" });
+    defer {
+        testing.allocator.free(apply.stdout);
+        testing.allocator.free(apply.stderr);
+    }
+    const after = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "corpus", "ask", "--engine-root=" ++ mock_root, "--project-shard=mock-loop", "What does the corpus say about verifier execution?" });
+    defer {
+        testing.allocator.free(after.stdout);
+        testing.allocator.free(after.stderr);
+    }
+    const unrelated = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "corpus", "ask", "--engine-root=" ++ mock_root, "--project-shard=mock-loop", "unrelated question" });
+    defer {
+        testing.allocator.free(unrelated.stdout);
+        testing.allocator.free(unrelated.stderr);
+    }
+
+    try testing.expect(std.mem.indexOf(u8, before.stdout, "No live shard corpus is available") != null);
+    try testing.expect(std.mem.indexOf(u8, ingest.stdout, "State: STAGED") != null);
+    try testing.expect(std.mem.indexOf(u8, staged_ask.stdout, "No live shard corpus is available") != null);
+    try testing.expect(std.mem.indexOf(u8, apply.stdout, "State: LIVE") != null);
+    try testing.expect(std.mem.indexOf(u8, after.stdout, "Answer Draft") != null);
+    try testing.expect(std.mem.indexOf(u8, after.stdout, "Evidence Used") != null);
+    try testing.expect(std.mem.indexOf(u8, after.stdout, "verifiersExecuted: false") != null);
+    try testing.expect(std.mem.indexOf(u8, unrelated.stdout, "insufficient_evidence") != null);
+    try testing.expect(std.mem.indexOf(u8, unrelated.stdout, "Answer Draft") == null);
 }
 
 test "json mode preserves raw engine stdout" {
@@ -1481,6 +1673,7 @@ test "doctor status and no-arg TUI do not invoke context autopsy" {
     const mock_root = "/tmp/ghost-cli-context-no-hidden";
     const marker = mock_root ++ "/context-marker";
     const corpus_marker = mock_root ++ "/corpus-ask-marker";
+    const corpus_ingest_marker = mock_root ++ "/corpus-ingest-marker";
     try std.fs.cwd().makePath(mock_root);
     defer std.fs.cwd().deleteTree(mock_root) catch {};
 
@@ -1489,6 +1682,7 @@ test "doctor status and no-arg TUI do not invoke context autopsy" {
     try writeMockExecutable(mock_root ++ "/ghost_patch_candidates", "#!/bin/sh\nprintf 'patch candidates\\n'\n");
     try writeMockExecutable(mock_root ++ "/ghost_knowledge_pack", "#!/bin/sh\nprintf 'knowledge pack\\n'\n");
     try writeMockExecutable(mock_root ++ "/ghost_project_autopsy", "#!/bin/sh\nprintf 'project autopsy\\n'\n");
+    try writeMockExecutable(mock_root ++ "/ghost_corpus_ingest", "#!/bin/sh\ntouch '" ++ corpus_ingest_marker ++ "'\nprintf '{}'\n");
     try writeMockExecutable(
         mock_root ++ "/ghost_gip",
         "#!/bin/sh\n" ++
@@ -1516,6 +1710,7 @@ test "doctor status and no-arg TUI do not invoke context autopsy" {
 
     try testing.expectError(error.FileNotFound, std.fs.cwd().access(marker, .{}));
     try testing.expectError(error.FileNotFound, std.fs.cwd().access(corpus_marker, .{}));
+    try testing.expectError(error.FileNotFound, std.fs.cwd().access(corpus_ingest_marker, .{}));
 }
 
 test "missing engine binary fails early with locator error" {

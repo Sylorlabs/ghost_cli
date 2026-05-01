@@ -32,9 +32,46 @@ Usage: `ghost chat --message="explain this project" --reasoning=balanced`
 Short one-shot question. Proxies to chat internals using a limited session.
 Usage: `ghost ask "what does this config do?"`
 
-### `ghost corpus ask`
-Run an explicit corpus-grounded ask through `ghost_gip` operation
-`corpus.ask`.
+### `ghost corpus`
+Explicit corpus lifecycle commands.
+
+#### `ghost corpus ingest`
+Stage corpus data through `ghost_corpus_ingest`.
+
+Usage: `ghost corpus ingest ./corpus-fixture --project-shard=my-project --trust-class=project --source-label=fixture`
+Usage: `ghost corpus ingest ./corpus-fixture --project-shard=my-project --trust-class=project --source-label=fixture --json`
+Usage: `ghost corpus ingest ./corpus-fixture --project-shard=my-project --trust-class=project --source-label=fixture --debug`
+
+This command is explicit only. It routes to `ghost_corpus_ingest <path>` with
+optional `--project-shard=<id>`, `--trust-class=<class>`, and
+`--source-label=<label>`. Human output says the result is **STAGED** and **NOT
+LIVE**. Staged corpus is not visible to `ghost corpus ask` until
+`ghost corpus apply-staged` succeeds.
+
+`--json` preserves raw engine stdout exactly. The verified engine at
+`707ae0c7e14f1f0eb91b2a536b89489eeea95e9c` emits JSON from
+`ghost_corpus_ingest` but does not accept a separate `--json` flag, so the CLI
+does not forward one. `--debug` writes routed argv, engine path, exit code, and
+parse status to stderr.
+
+#### `ghost corpus apply-staged`
+Promote staged corpus into the live shard corpus through
+`ghost_corpus_ingest --apply-staged`.
+
+Usage: `ghost corpus apply-staged --project-shard=my-project`
+Usage: `ghost corpus apply-staged --project-shard=my-project --json`
+Usage: `ghost corpus apply-staged --project-shard=my-project --debug`
+
+This command is explicit only. Human output says the staged corpus was applied /
+promoted to the live corpus. After apply succeeds, `ghost corpus ask` can read
+the live shard corpus. It does not run from help, startup, TUI launch, doctor,
+or status.
+
+`--json` preserves raw engine stdout exactly. `--debug` writes diagnostics to
+stderr only.
+
+#### `ghost corpus ask`
+Run an explicit corpus-grounded ask through `ghost_gip` operation `corpus.ask`.
 
 Usage: `ghost corpus ask "What does the corpus say about verifier execution?"`
 Usage: `ghost corpus ask --json "What does the corpus say about verifier execution?"`
@@ -56,10 +93,11 @@ as candidates. `learningCandidates` are labeled **CANDIDATE ONLY / NOT
 PERSISTED**.
 
 Retrieval is bounded lexical matching over live shard corpus excerpts only. It
-is not semantic search yet. Mounted pack corpus is not included yet. The command
-does not mutate corpus, mutate packs, mutate negative knowledge, run commands,
-run verifiers, persist learning candidates, or run automatically from startup,
-TUI launch, doctor, or status.
+is not semantic search, and there are no Transformers or model adapters in this
+path. Mounted pack corpus is not included yet. The command does not ingest
+corpus, read staged-only corpus, mutate corpus, mutate packs, mutate negative
+knowledge, run commands, run verifiers, persist learning candidates, or run
+automatically from startup, TUI launch, doctor, or status.
 
 `--json` preserves raw GIP stdout exactly. `--debug` writes diagnostics to
 stderr only, including the engine binary path, GIP kind, argv/stdin summary,

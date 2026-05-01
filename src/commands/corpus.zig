@@ -2,9 +2,12 @@ const std = @import("std");
 const locator = @import("../engine/locator.zig");
 const process = @import("../engine/process.zig");
 
-pub const CorpusAskOptions = struct {
+pub const CorpusOptions = struct {
     question: ?[]const u8 = null,
+    corpus_path: ?[]const u8 = null,
     project_shard: ?[]const u8 = null,
+    trust_class: ?[]const u8 = null,
+    source_label: ?[]const u8 = null,
     max_results: ?u64 = null,
     max_snippet_bytes: ?u64 = null,
     require_citations: bool = false,
@@ -12,18 +15,96 @@ pub const CorpusAskOptions = struct {
     debug: bool = false,
 };
 
-const usage = "Usage: ghost corpus ask [--json] [--debug] [--project-shard <id>] [--max-results <n>] [--max-snippet-bytes <n>] [--require-citations] <question>\n";
+const usage =
+    \\Usage: ghost corpus <ingest|apply-staged|ask> [options]
+    \\
+    \\  ghost corpus ingest <path> --project-shard=<id> --trust-class=<class> --source-label=<label>
+    \\  ghost corpus apply-staged --project-shard=<id>
+    \\  ghost corpus ask [--json] [--debug] [--project-shard=<id>] <question>
+    \\
+;
 
 pub fn printHelp(writer: anytype) !void {
     try writer.print(
         \\corpus
         \\
-        \\Usage: ghost corpus ask [--json] [--debug] [--project-shard <id>] [--max-results <n>] [--max-snippet-bytes <n>] [--require-citations] <question>
+        \\Usage: ghost corpus <ingest|apply-staged|ask> [options]
         \\
-        \\Ask a draft-only question from explicitly ingested live shard corpus evidence.
+        \\Manage explicitly invoked corpus lifecycle commands and ask draft-only
+        \\questions from live shard corpus evidence.
         \\
         \\Subcommands:
-        \\  ask <question>  Run an explicit corpus.ask GIP request
+        \\  ingest <path>       Stage corpus data through ghost_corpus_ingest
+        \\  apply-staged        Promote staged corpus into the live shard corpus
+        \\  ask <question>      Run an explicit corpus.ask GIP request over live corpus
+        \\
+        \\Use:
+        \\  ghost corpus ingest --help
+        \\  ghost corpus apply-staged --help
+        \\  ghost corpus ask --help
+        \\
+        \\Safety:
+        \\  Ingest stages corpus only. Ask reads live shard corpus only.
+        \\  Staged corpus is not visible to ask until apply-staged succeeds.
+        \\  Retrieval is bounded lexical matching, not semantic search.
+        \\  No Transformers, model adapters, hidden learning, pack mutation,
+        \\  negative-knowledge mutation, verifier execution, or automatic startup
+        \\  corpus operation is performed by this command group.
+        \\
+    , .{});
+}
+
+pub fn printHelpForArgs(writer: anytype, args: []const []const u8) !void {
+    if (args.len == 0) return printHelp(writer);
+    if (std.mem.eql(u8, args[0], "ingest")) return printIngestHelp(writer);
+    if (std.mem.eql(u8, args[0], "apply-staged")) return printApplyStagedHelp(writer);
+    if (std.mem.eql(u8, args[0], "ask")) return printAskHelp(writer);
+    return printHelp(writer);
+}
+
+fn printIngestHelp(writer: anytype) !void {
+    try writer.print(
+        \\corpus ingest
+        \\
+        \\Usage: ghost corpus ingest <path> [--project-shard=<id>] [--trust-class=<class>] [--source-label=<label>] [--json] [--debug]
+        \\
+        \\Stages corpus data through ghost_corpus_ingest. Staged corpus is not live
+        \\and cannot be read by corpus.ask until `ghost corpus apply-staged` is run.
+        \\
+        \\Options:
+        \\  --project-shard <id>       Target shard id
+        \\  --trust-class <class>      exploratory|project|promoted|core
+        \\  --source-label <label>     Source label recorded by the engine
+        \\  --json                     Preserve raw engine stdout exactly
+        \\  --debug                    Diagnostics to stderr
+        \\
+    , .{});
+}
+
+fn printApplyStagedHelp(writer: anytype) !void {
+    try writer.print(
+        \\corpus apply-staged
+        \\
+        \\Usage: ghost corpus apply-staged [--project-shard=<id>] [--json] [--debug]
+        \\
+        \\Promotes the selected shard's staged corpus into the live corpus. After
+        \\apply-staged succeeds, `ghost corpus ask` can read the live shard corpus.
+        \\
+        \\Options:
+        \\  --project-shard <id>       Target shard id
+        \\  --json                     Preserve raw engine stdout exactly
+        \\  --debug                    Diagnostics to stderr
+        \\
+    , .{});
+}
+
+fn printAskHelp(writer: anytype) !void {
+    try writer.print(
+        \\corpus ask
+        \\
+        \\Usage: ghost corpus ask [--json] [--debug] [--project-shard <id>] [--max-results <n>] [--max-snippet-bytes <n>] [--require-citations] <question>
+        \\
+        \\Ask a draft-only question from explicitly applied live shard corpus evidence.
         \\
         \\Options:
         \\  --project-shard <id>       Target shard id
@@ -37,8 +118,9 @@ pub fn printHelp(writer: anytype) !void {
         \\  This request runs only when this command is explicitly invoked.
         \\  It routes to ghost_gip --stdin with kind corpus.ask.
         \\  Output is DRAFT / NON-AUTHORIZING; corpus evidence is not proof.
+        \\  It reads live shard corpus only; staged corpus is invisible until apply-staged.
         \\  Retrieval is bounded lexical matching over live shard corpus excerpts.
-        \\  It is not semantic search yet, and mounted pack corpus is not included.
+        \\  It is not semantic search, and mounted pack corpus is not included.
         \\  It does not mutate corpus, mutate packs, mutate negative knowledge,
         \\  run commands, run verifiers, or persist learning candidates.
         \\
@@ -49,12 +131,72 @@ pub fn executeFromArgs(
     allocator: std.mem.Allocator,
     engine_root: ?[]const u8,
     args: []const []const u8,
-    base: CorpusAskOptions,
+    base: CorpusOptions,
 ) !void {
     const sub = if (args.len > 0) args[0] else {
         try std.io.getStdErr().writer().print("{s}", .{usage});
         std.process.exit(1);
     };
+    if (std.mem.eql(u8, sub, "ingest")) {
+        var options = base;
+        var i: usize = 1;
+        while (i < args.len) : (i += 1) {
+            const arg = args[i];
+            if (std.mem.eql(u8, arg, "--project-shard")) {
+                i += 1;
+                if (i >= args.len) try failMissingValue("--project-shard");
+                options.project_shard = args[i];
+            } else if (std.mem.startsWith(u8, arg, "--project-shard=")) {
+                options.project_shard = arg["--project-shard=".len..];
+            } else if (std.mem.eql(u8, arg, "--trust-class")) {
+                i += 1;
+                if (i >= args.len) try failMissingValue("--trust-class");
+                options.trust_class = args[i];
+            } else if (std.mem.startsWith(u8, arg, "--trust-class=")) {
+                options.trust_class = arg["--trust-class=".len..];
+            } else if (std.mem.eql(u8, arg, "--source-label")) {
+                i += 1;
+                if (i >= args.len) try failMissingValue("--source-label");
+                options.source_label = args[i];
+            } else if (std.mem.startsWith(u8, arg, "--source-label=")) {
+                options.source_label = arg["--source-label=".len..];
+            } else if (std.mem.startsWith(u8, arg, "--")) {
+                try std.io.getStdErr().writer().print("Unknown corpus ingest option: {s}\n", .{arg});
+                std.process.exit(1);
+            } else if (options.corpus_path == null) {
+                options.corpus_path = arg;
+            } else {
+                try std.io.getStdErr().writer().print("Unexpected extra corpus ingest argument: {s}\n", .{arg});
+                std.process.exit(1);
+            }
+        }
+        try executeIngest(allocator, engine_root, options);
+        return;
+    }
+
+    if (std.mem.eql(u8, sub, "apply-staged")) {
+        var options = base;
+        var i: usize = 1;
+        while (i < args.len) : (i += 1) {
+            const arg = args[i];
+            if (std.mem.eql(u8, arg, "--project-shard")) {
+                i += 1;
+                if (i >= args.len) try failMissingValue("--project-shard");
+                options.project_shard = args[i];
+            } else if (std.mem.startsWith(u8, arg, "--project-shard=")) {
+                options.project_shard = arg["--project-shard=".len..];
+            } else if (std.mem.startsWith(u8, arg, "--")) {
+                try std.io.getStdErr().writer().print("Unknown corpus apply-staged option: {s}\n", .{arg});
+                std.process.exit(1);
+            } else {
+                try std.io.getStdErr().writer().print("Unexpected corpus apply-staged argument: {s}\n", .{arg});
+                std.process.exit(1);
+            }
+        }
+        try executeApplyStaged(allocator, engine_root, options);
+        return;
+    }
+
     if (!std.mem.eql(u8, sub, "ask")) {
         try std.io.getStdErr().writer().print("Unknown corpus command: {s}\n{s}", .{ sub, usage });
         std.process.exit(1);
@@ -98,7 +240,115 @@ pub fn executeFromArgs(
     try executeAsk(allocator, engine_root, options);
 }
 
-pub fn executeAsk(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: CorpusAskOptions) !void {
+pub fn executeIngest(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: CorpusOptions) !void {
+    const corpus_path = options.corpus_path orelse {
+        try printIngestHelp(std.io.getStdErr().writer());
+        std.process.exit(1);
+    };
+    if (std.mem.trim(u8, corpus_path, " \r\n\t").len == 0) {
+        try std.io.getStdErr().writer().print("corpus ingest path must be non-empty\n", .{});
+        std.process.exit(1);
+    }
+    try runCorpusIngest(allocator, engine_root, .ingest, corpus_path, options);
+}
+
+pub fn executeApplyStaged(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: CorpusOptions) !void {
+    try runCorpusIngest(allocator, engine_root, .apply_staged, null, options);
+}
+
+const IngestMode = enum { ingest, apply_staged };
+
+fn runCorpusIngest(
+    allocator: std.mem.Allocator,
+    engine_root: ?[]const u8,
+    mode: IngestMode,
+    corpus_path: ?[]const u8,
+    options: CorpusOptions,
+) !void {
+    const bin_path = locator.findEngineBinary(allocator, engine_root, .ghost_corpus_ingest) catch |err| {
+        try locator.printLocatorError(std.io.getStdErr().writer(), .ghost_corpus_ingest, engine_root, err);
+        std.process.exit(1);
+    };
+    defer allocator.free(bin_path);
+
+    var argv_list = std.ArrayList([]const u8).init(allocator);
+    defer argv_list.deinit();
+    try argv_list.append(bin_path);
+    switch (mode) {
+        .ingest => try argv_list.append(corpus_path.?),
+        .apply_staged => try argv_list.append("--apply-staged"),
+    }
+    if (options.project_shard) |value| try argv_list.append(try std.fmt.allocPrint(allocator, "--project-shard={s}", .{value}));
+    if (mode == .ingest) {
+        if (options.trust_class) |value| try argv_list.append(try std.fmt.allocPrint(allocator, "--trust-class={s}", .{value}));
+        if (options.source_label) |value| try argv_list.append(try std.fmt.allocPrint(allocator, "--source-label={s}", .{value}));
+    }
+    defer {
+        for (argv_list.items[2..]) |arg| {
+            if (std.mem.startsWith(u8, arg, "--project-shard=") or
+                std.mem.startsWith(u8, arg, "--trust-class=") or
+                std.mem.startsWith(u8, arg, "--source-label="))
+            {
+                allocator.free(arg);
+            }
+        }
+    }
+
+    if (options.debug) {
+        try std.io.getStdErr().writer().print("[DEBUG] Engine Binary: {s}\n", .{bin_path});
+        try std.io.getStdErr().writer().print("[DEBUG] Corpus Operation: {s}\n", .{if (mode == .ingest) "ingest" else "apply-staged"});
+        try printDebugArgv(std.io.getStdErr().writer(), argv_list.items);
+        if (options.json) try std.io.getStdErr().writer().print("[DEBUG] JSON Flag: not forwarded; ghost_corpus_ingest emits JSON without --json at engine 707ae0c\n", .{});
+    }
+
+    const result = process.runEngineCommand(allocator, argv_list.items) catch |err| {
+        try std.io.getStdErr().writer().print("\x1b[31m[!] Error:\x1b[0m Failed to execute corpus {s}: {}\n", .{ if (mode == .ingest) "ingest" else "apply-staged", err });
+        try std.io.getStdErr().writer().print("\x1b[33mHint:\x1b[0m Run `ghost status` to verify your environment.\n", .{});
+        std.process.exit(1);
+    };
+    defer {
+        allocator.free(result.stdout);
+        allocator.free(result.stderr);
+    }
+
+    if (options.debug) try std.io.getStdErr().writer().print("[DEBUG] Exit Code: {d}\n", .{result.exit_code});
+
+    if (options.json) {
+        if (options.debug) try std.io.getStdErr().writer().print("[DEBUG] JSON Parse: SKIPPED (raw passthrough)\n", .{});
+        try std.io.getStdOut().writer().writeAll(result.stdout);
+        if (result.stderr.len > 0) try std.io.getStdErr().writer().writeAll(result.stderr);
+        if (result.exit_code != 0) std.process.exit(result.exit_code);
+        return;
+    }
+
+    if (result.exit_code != 0) {
+        try std.io.getStdErr().writer().print("\x1b[31m[!] Engine Error (Exit Code {d}):\x1b[0m\n", .{result.exit_code});
+        if (result.stderr.len > 0) {
+            try std.io.getStdErr().writer().writeAll(result.stderr);
+            if (result.stderr[result.stderr.len - 1] != '\n') try std.io.getStdErr().writer().writeByte('\n');
+        } else if (result.stdout.len > 0) {
+            try std.io.getStdErr().writer().writeAll(result.stdout);
+            if (result.stdout[result.stdout.len - 1] != '\n') try std.io.getStdErr().writer().writeByte('\n');
+        }
+        std.process.exit(result.exit_code);
+    }
+
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, result.stdout, .{}) catch |err| {
+        if (options.debug) try std.io.getStdErr().writer().print("[DEBUG] JSON Parse: FAILED ({s})\n", .{@errorName(err)});
+        try std.io.getStdOut().writer().writeAll(result.stdout);
+        return;
+    };
+    defer parsed.deinit();
+    if (options.debug) try std.io.getStdErr().writer().print("[DEBUG] JSON Parse: SUCCESS\n", .{});
+
+    if (mode == .ingest) {
+        try printCorpusIngestResult(std.io.getStdOut().writer(), parsed.value);
+    } else {
+        try printCorpusApplyResult(std.io.getStdOut().writer(), parsed.value);
+    }
+}
+
+pub fn executeAsk(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: CorpusOptions) !void {
     const question = options.question orelse {
         try std.io.getStdErr().writer().print("{s}", .{usage});
         std.process.exit(1);
@@ -182,7 +432,7 @@ pub fn executeAsk(allocator: std.mem.Allocator, engine_root: ?[]const u8, option
     try printCorpusAskResult(std.io.getStdOut().writer(), parsed.value);
 }
 
-fn writeCorpusAskRequest(writer: anytype, question: []const u8, options: CorpusAskOptions) !void {
+fn writeCorpusAskRequest(writer: anytype, question: []const u8, options: CorpusOptions) !void {
     try writer.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"corpus.ask\",\"question\":");
     try std.json.stringify(question, .{}, writer);
     if (options.project_shard) |project_shard| {
@@ -193,6 +443,59 @@ fn writeCorpusAskRequest(writer: anytype, question: []const u8, options: CorpusA
     if (options.max_snippet_bytes) |max_snippet_bytes| try writer.print(",\"maxSnippetBytes\":{d}", .{max_snippet_bytes});
     if (options.require_citations) try writer.writeAll(",\"requireCitations\":true");
     try writer.writeAll("}");
+}
+
+fn printCorpusIngestResult(writer: anytype, value: std.json.Value) !void {
+    try writer.print("Corpus Ingest Result\n", .{});
+    try writer.print("State: STAGED\n", .{});
+    try writer.print("Visibility: NOT LIVE until `ghost corpus apply-staged` succeeds.\n\n", .{});
+    try printTopLevelString(writer, value, "status", "Status");
+    try printTopLevelString(writer, value, "manifest", "Staged Manifest");
+    try printTopLevelString(writer, value, "stagedManifest", "Staged Manifest");
+    try printTopLevelString(writer, value, "stagedFilesRoot", "Staged Files Root");
+    try printTopLevelString(writer, value, "sourceLabel", "Source Label");
+    try printTopLevelString(writer, value, "trustClass", "Trust Class");
+    try printTopLevelInt(writer, value, "fileCount", "Files Staged");
+    try printTopLevelInt(writer, value, "itemCount", "Items Staged");
+    try printTopLevelInt(writer, value, "bytesRead", "Bytes Read");
+    try writer.print("\nNotice: staged corpus is not visible to `ghost corpus ask` until apply-staged.\n", .{});
+}
+
+fn printCorpusApplyResult(writer: anytype, value: std.json.Value) !void {
+    try writer.print("Corpus Apply-Staged Result\n", .{});
+    try writer.print("State: LIVE\n", .{});
+    try writer.print("Visibility: staged corpus was applied/promoted to the live shard corpus.\n\n", .{});
+    try printTopLevelString(writer, value, "status", "Status");
+    try printTopLevelString(writer, value, "liveManifest", "Live Manifest");
+    try printTopLevelString(writer, value, "liveFilesRoot", "Live Files Root");
+    if (topObject(value)) |obj| {
+        if (obj.get("shard")) |shard| {
+            try writer.print("Shard:\n", .{});
+            try printJsonValue(writer, shard, 2);
+        }
+    }
+    try writer.print("\nNotice: `ghost corpus ask` reads live shard corpus only and remains DRAFT / NON-AUTHORIZING.\n", .{});
+}
+
+fn topObject(value: std.json.Value) ?std.json.ObjectMap {
+    return switch (value) {
+        .object => |obj| obj,
+        else => null,
+    };
+}
+
+fn printTopLevelString(writer: anytype, value: std.json.Value, field: []const u8, label: []const u8) !void {
+    const obj = topObject(value) orelse return;
+    if (getString(obj, field)) |s| try writer.print("{s}: {s}\n", .{ label, s });
+}
+
+fn printTopLevelInt(writer: anytype, value: std.json.Value, field: []const u8, label: []const u8) !void {
+    const obj = topObject(value) orelse return;
+    const v = obj.get(field) orelse return;
+    switch (v) {
+        .integer => |i| try writer.print("{s}: {d}\n", .{ label, i }),
+        else => {},
+    }
 }
 
 fn printCorpusAskResult(writer: anytype, value: std.json.Value) !void {
