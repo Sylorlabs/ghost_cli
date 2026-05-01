@@ -80,6 +80,11 @@ ghost context autopsy "Summarize this context" --input-file logs/failure.log --i
 ghost context autopsy --json "I need marketing advice for a launch"
 ghost context autopsy --debug "I need marketing advice for a launch"
 
+# Explicit deterministic rule evaluation through GIP
+ghost rules evaluate --file request.json
+ghost rules evaluate --json --file request.json
+ghost rules evaluate --debug --file request.json
+
 # Interactive TUI Console
 ghost tui
 ghost tui --reasoning=deep --compact --color=auto
@@ -117,6 +122,7 @@ ghost doctor --report
 - **Autopsy Guidance Validation**: Explicit `ghost packs validate-autopsy-guidance` checks pack guidance shape/content via the engine. It first checks `ghost_knowledge_pack capabilities --json`, requires an advertised validation command and supported schema versions, and routes validation limit overrides only when advertised. Human mode renders clean success, warning, and error summaries without raw Zig traces; `--json` preserves raw engine stdout exactly. It is review-only: no pack mutation, no auto-fix, no auto-promotion, and no proof upgrade.
 - **Corpus Lifecycle**: Explicit `ghost corpus ingest` stages corpus through `ghost_corpus_ingest`; explicit `ghost corpus apply-staged` promotes staged corpus into the live shard corpus. Staged corpus is not visible to `ghost corpus ask` before apply. `--json` preserves raw engine stdout; the verified engine emits JSON for ingest/apply without accepting a separate engine `--json` flag.
 - **Corpus Ask**: Explicit `ghost corpus ask` calls `ghost_gip` operation `corpus.ask` against live shard corpus excerpts. Human output is **DRAFT** and **NON-AUTHORIZING**, renders bounded evidence and unknowns, labels learning candidates as candidate-only/not-persisted, renders `similarCandidates` separately as non-authorizing routing hints, and preserves raw stdout under `--json`. Exact evidence is required for answer drafts; approximate similarity hints are not proof or Evidence Used. Retrieval is bounded local matching, not semantic search; there are no Transformers/embeddings/model adapters, and mounted pack corpus is not included yet.
+- **Rule Evaluation**: Explicit `ghost rules evaluate --file <request.json>` calls `ghost_gip` operation `rule.evaluate` with the request file bytes. Human output is **DRAFT / NON-AUTHORIZING** and renders fired rules, candidates, obligations, unknowns, explanation traces, and safety flags. Rule outputs are candidates only, not proof; verifiers/checks are not executed; packs, corpus, and negative knowledge are not mutated. Evaluation is deterministic bounded structural matching only: no recursive inference, no Prolog, no Transformers, no embeddings, no model adapters, and no semantic search.
 - **Truth**: Proof and support gates in the engine still decide final validity of any claim.
 
 
@@ -135,7 +141,7 @@ Top-level help is grouped by operator workflow:
 - Core: `ask`, `chat`, `fix`, `verify`
 - Inspection: `autopsy`, `context`, `status`, `doctor`
 - Knowledge: `packs`, `corpus`, `learn`
-- Advanced: `debug`
+- Advanced: `rules`, `debug`
 - Interface: `tui`
 
 Every top-level command supports `ghost <command> --help`.

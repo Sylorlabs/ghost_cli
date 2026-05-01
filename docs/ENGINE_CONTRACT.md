@@ -213,6 +213,44 @@ staged corpus is invisible until apply-staged succeeds. It is not semantic
 search, and mounted pack corpus is not included yet. There are no Transformers,
 embeddings, or model adapters in this CLI path.
 
+## Rule Evaluation
+
+`ghost rules evaluate --file <request.json>` routes explicitly to
+`ghost_gip --stdin` with GIP `kind: "rule.evaluate"`. The request file must
+already be GIP-compatible JSON and must include the top-level kind. The CLI
+validates that kind, then sends the file bytes unchanged; it does not build a
+separate rule mini-language.
+
+Human mode labels the result **DRAFT / NON-AUTHORIZING** and renders fired
+rules, emitted candidates, emitted obligations, unknowns, explanation trace,
+and safety flags. It always displays:
+
+```text
+RULE OUTPUTS ARE CANDIDATES ONLY
+NOT PROOF
+VERIFIERS NOT EXECUTED
+PACKS / CORPUS / NEGATIVE KNOWLEDGE NOT MUTATED
+```
+
+Rule evaluation is deterministic bounded structural matching over request-local
+facts and rules. It has no recursive inference / no Prolog behavior. It does
+not use Transformers, embeddings, model adapters, semantic search, or network
+calls.
+
+Rule outputs are candidate-only and non-authorizing. Check candidates are not
+executed by the CLI. Evidence expectations remain pending obligations and are
+not proof. The CLI does not mutate packs, corpus, or negative knowledge, and it
+does not discharge proof/support gates.
+
+`--json` preserves raw engine stdout exactly. `--debug` writes diagnostics to
+stderr only: engine path, GIP kind, input file path, stdin byte count, exit
+code, and parse status.
+
+This operation is explicit only. Help, startup, TUI launch/idle, no-arg
+non-TTY fallback, `ghost doctor`, `ghost status`, `ghost corpus ask`,
+`ghost context autopsy`, and `ghost packs validate-autopsy-guidance` do not run
+`rule.evaluate`.
+
 ## Context Autopsy Coverage Warnings
 
 Human `ghost context autopsy` output is always labeled DRAFT and

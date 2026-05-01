@@ -78,6 +78,7 @@ test "help text lists all top-level commands" {
     try testing.expect(std.mem.indexOf(u8, res.stderr, "doctor") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "autopsy") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "context") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "rules") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "debug") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "tui") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "Core:") != null);
@@ -871,6 +872,226 @@ test "doctor status and no-arg TUI do not run autopsy guidance validation" {
     try testing.expectError(error.FileNotFound, std.fs.cwd().access(marker, .{}));
     try testing.expectError(error.FileNotFound, std.fs.cwd().access(corpus_marker, .{}));
     try testing.expectError(error.FileNotFound, std.fs.cwd().access(corpus_ingest_marker, .{}));
+}
+
+test "rules help works without resolving engine" {
+    const rules_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "rules", "--help", "--engine-root=/tmp/ghost-help-missing" });
+    defer {
+        testing.allocator.free(rules_res.stdout);
+        testing.allocator.free(rules_res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), rules_res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, rules_res.stderr, "Usage: ghost rules evaluate --file <request.json>") != null);
+    try testing.expect(std.mem.indexOf(u8, rules_res.stderr, "RULE OUTPUTS ARE CANDIDATES ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, rules_res.stderr, "Transformers, embeddings") != null);
+
+    const evaluate_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "rules", "evaluate", "--help", "--engine-root=/tmp/ghost-help-missing" });
+    defer {
+        testing.allocator.free(evaluate_res.stdout);
+        testing.allocator.free(evaluate_res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), evaluate_res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, evaluate_res.stderr, "kind \"rule.evaluate\"") != null);
+    try testing.expect(std.mem.indexOf(u8, evaluate_res.stderr, "No recursive inference / no Prolog") != null);
+}
+
+test "rules evaluate routes file payload to ghost_gip" {
+    const mock_root = "/tmp/ghost-cli-rules-payload";
+    const payload_path = mock_root ++ "/payload.json";
+    const request_path = mock_root ++ "/request.json";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    {
+        const request = try std.fs.cwd().createFile(request_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"rule.evaluate\",\"facts\":[{\"subject\":\"change\",\"predicate\":\"touches\",\"object\":\"runtime\"}],\"rules\":[{\"id\":\"rule.runtime\",\"name\":\"Runtime checks\",\"when\":{\"all\":[{\"subject\":\"change\",\"predicate\":\"touches\",\"object\":\"runtime\"}]},\"emit\":[{\"kind\":\"check_candidate\",\"id\":\"check.runtime\",\"summary\":\"review runtime checks\"}]}]}");
+    }
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\n" ++
+            "cat > '" ++ payload_path ++ "'\n" ++
+            "printf '%s' '{\"gipVersion\":\"gip.v0.1\",\"kind\":\"rule.evaluate\",\"status\":\"ok\",\"result\":{\"ruleEvaluation\":{\"nonAuthorizing\":true,\"candidateOnly\":true,\"proofDischarged\":false,\"supportGranted\":false,\"factsConsidered\":1,\"rulesConsidered\":1,\"outputsEmitted\":1,\"budgetExhausted\":false,\"firedRules\":[{\"id\":\"rule.runtime\",\"name\":\"Runtime checks\"}],\"emittedCandidates\":[{\"kind\":\"check_candidate\",\"id\":\"check.runtime\",\"summary\":\"review runtime checks\",\"executesByDefault\":false}],\"emittedObligations\":[],\"emittedUnknowns\":[],\"explanationTrace\":[{\"ruleId\":\"rule.runtime\",\"fired\":true}],\"safetyFlags\":{\"commandsExecuted\":false,\"verifiersExecuted\":false,\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"proofDischarged\":false,\"supportGranted\":false}}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "rules", "evaluate", "--engine-root=" ++ mock_root, "--file", request_path });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Rule Evaluation Result") != null);
+
+    const payload = try std.fs.cwd().readFileAlloc(testing.allocator, payload_path, 1024 * 1024);
+    defer testing.allocator.free(payload);
+    try testing.expect(std.mem.indexOf(u8, payload, "\"kind\":\"rule.evaluate\"") != null);
+    try testing.expect(std.mem.indexOf(u8, payload, "\"rule.runtime\"") != null);
+}
+
+test "rules evaluate human output labels candidates obligations traces as non-authorizing" {
+    const mock_root = "/tmp/ghost-cli-rules-human";
+    const request_path = mock_root ++ "/request.json";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    {
+        const request = try std.fs.cwd().createFile(request_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"rule.evaluate\",\"facts\":[],\"rules\":[]}");
+    }
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s' '{\"gipVersion\":\"gip.v0.1\",\"kind\":\"rule.evaluate\",\"status\":\"ok\",\"result\":{\"ruleEvaluation\":{\"nonAuthorizing\":true,\"candidateOnly\":true,\"proofDischarged\":false,\"supportGranted\":false,\"factsConsidered\":1,\"rulesConsidered\":1,\"outputsEmitted\":3,\"budgetExhausted\":false,\"firedRules\":[{\"id\":\"rule.runtime\",\"name\":\"Runtime checks\"}],\"emittedCandidates\":[{\"kind\":\"risk_candidate\",\"id\":\"risk.runtime\",\"summary\":\"runtime risk\"}],\"emittedObligations\":[{\"kind\":\"evidence_expectation\",\"id\":\"obligation.runtime\",\"summary\":\"collect evidence\",\"status\":\"pending\",\"executed\":false,\"treatedAsProof\":false}],\"emittedUnknowns\":[{\"kind\":\"unknown\",\"id\":\"unknown.runtime\",\"summary\":\"runtime unknown\"}],\"explanationTrace\":[{\"ruleId\":\"rule.runtime\",\"fired\":true,\"reason\":\"matched\"}],\"safetyFlags\":{\"commandsExecuted\":false,\"verifiersExecuted\":false,\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"proofDischarged\":false,\"supportGranted\":false}}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "rules", "evaluate", "--engine-root=" ++ mock_root, "--file=" ++ request_path });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "State: DRAFT / NON-AUTHORIZING") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "RULE OUTPUTS ARE CANDIDATES ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "NOT PROOF") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "VERIFIERS NOT EXECUTED") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "PACKS / CORPUS / NEGATIVE KNOWLEDGE NOT MUTATED") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Fired Rules:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Emitted Candidates:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Emitted Obligations:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Unknowns:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Explanation Trace:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Safety Flags:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "treatedAsProof") != null);
+}
+
+test "rules evaluate recursive invalid result renders clean error" {
+    const mock_root = "/tmp/ghost-cli-rules-invalid";
+    const request_path = mock_root ++ "/request.json";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    {
+        const request = try std.fs.cwd().createFile(request_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"rule.evaluate\",\"facts\":[{\"subject\":\"a\",\"predicate\":\"b\",\"object\":\"c\"}],\"rules\":[{\"id\":\"recursive\",\"name\":\"recursive\",\"when\":{\"all\":[{\"subject\":\"a\",\"predicate\":\"b\",\"object\":\"c\"}]},\"emit\":[{\"kind\":\"fact\",\"id\":\"derived\",\"summary\":\"derive another fact\"}]}]}");
+    }
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s' '{\"gipVersion\":\"gip.v0.1\",\"kind\":\"rule.evaluate\",\"status\":\"rejected\",\"error\":{\"code\":\"invalid_request\",\"message\":\"invalid rule.evaluate request\",\"details\":\"InvalidRule\"}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "rules", "evaluate", "--engine-root=" ++ mock_root, "--file", request_path });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Engine Rejected Request:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "invalid_request") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "thread") == null);
+}
+
+test "rules evaluate json byte matches direct ghost_gip stdout" {
+    const mock_root = "/tmp/ghost-cli-rules-json";
+    const request_path = mock_root ++ "/request.json";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    {
+        const request = try std.fs.cwd().createFile(request_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"rule.evaluate\",\"facts\":[],\"rules\":[]}");
+    }
+    const raw = "{\"gipVersion\":\"gip.v0.1\",\"kind\":\"rule.evaluate\",\"status\":\"ok\",\"result\":{\"ruleEvaluation\":{\"nonAuthorizing\":true,\"candidateOnly\":true,\"proofDischarged\":false,\"supportGranted\":false,\"firedRules\":[],\"emittedCandidates\":[],\"emittedObligations\":[],\"emittedUnknowns\":[],\"explanationTrace\":[],\"safetyFlags\":{\"commandsExecuted\":false,\"verifiersExecuted\":false,\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false}}}}";
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s' '" ++ raw ++ "'\n",
+    );
+
+    const cli_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "rules", "evaluate", "--json", "--engine-root=" ++ mock_root, "--file", request_path });
+    defer {
+        testing.allocator.free(cli_res.stdout);
+        testing.allocator.free(cli_res.stderr);
+    }
+    const request_bytes = try std.fs.cwd().readFileAlloc(testing.allocator, request_path, 1024 * 1024);
+    defer testing.allocator.free(request_bytes);
+    const direct_res = try runCmdWithInput(testing.allocator, &[_][]const u8{ mock_root ++ "/ghost_gip", "--stdin" }, request_bytes);
+    defer {
+        testing.allocator.free(direct_res.stdout);
+        testing.allocator.free(direct_res.stderr);
+    }
+    try testing.expectEqualStrings(direct_res.stdout, cli_res.stdout);
+    try testing.expectEqual(@as(usize, 0), cli_res.stderr.len);
+}
+
+test "rules evaluate debug diagnostics stay on stderr" {
+    const mock_root = "/tmp/ghost-cli-rules-debug";
+    const request_path = mock_root ++ "/request.json";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    {
+        const request = try std.fs.cwd().createFile(request_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"rule.evaluate\",\"facts\":[],\"rules\":[]}");
+    }
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s' '{\"gipVersion\":\"gip.v0.1\",\"kind\":\"rule.evaluate\",\"status\":\"ok\",\"result\":{\"ruleEvaluation\":{\"nonAuthorizing\":true,\"candidateOnly\":true,\"proofDischarged\":false,\"supportGranted\":false,\"firedRules\":[],\"emittedCandidates\":[],\"emittedObligations\":[],\"emittedUnknowns\":[],\"explanationTrace\":[],\"safetyFlags\":{\"commandsExecuted\":false,\"verifiersExecuted\":false,\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false}}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "rules", "evaluate", "--debug", "--engine-root=" ++ mock_root, "--file", request_path });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Rule Evaluation Result") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "[DEBUG]") == null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Engine Binary:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] GIP Kind: rule.evaluate") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Input File:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Stdin Byte Count:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Exit Code: 0") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Parse Status: ok") != null);
+}
+
+test "doctor status and no-arg TUI do not run rule evaluate" {
+    const mock_root = "/tmp/ghost-cli-rules-no-hidden";
+    const marker = mock_root ++ "/rule-marker";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(mock_root ++ "/ghost_task_operator", "#!/bin/sh\nprintf 'task help\\n'\n");
+    try writeMockExecutable(mock_root ++ "/ghost_code_intel", "#!/bin/sh\nprintf 'code intel\\n'\n");
+    try writeMockExecutable(mock_root ++ "/ghost_patch_candidates", "#!/bin/sh\nprintf 'patch candidates\\n'\n");
+    try writeMockExecutable(mock_root ++ "/ghost_project_autopsy", "#!/bin/sh\nprintf 'project autopsy\\n'\n");
+    try writeMockExecutable(mock_root ++ "/ghost_corpus_ingest", "#!/bin/sh\nprintf '{}'\n");
+    try writeMockExecutable(mock_root ++ "/ghost_knowledge_pack", "#!/bin/sh\nprintf 'knowledge pack\\n'\n");
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\n" ++
+            "payload=$(cat 2>/dev/null || true)\n" ++
+            "case \"$payload\" in *rule.evaluate*) touch '" ++ marker ++ "';; esac\n" ++
+            "printf '{\"status\":\"ok\"}'\n",
+    );
+
+    const doctor_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "doctor", "--engine-root=" ++ mock_root });
+    defer {
+        testing.allocator.free(doctor_res.stdout);
+        testing.allocator.free(doctor_res.stderr);
+    }
+    const status_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "status", "--engine-root=" ++ mock_root });
+    defer {
+        testing.allocator.free(status_res.stdout);
+        testing.allocator.free(status_res.stderr);
+    }
+    const no_arg_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "--engine-root=" ++ mock_root });
+    defer {
+        testing.allocator.free(no_arg_res.stdout);
+        testing.allocator.free(no_arg_res.stderr);
+    }
+
+    try testing.expectError(error.FileNotFound, std.fs.cwd().access(marker, .{}));
 }
 
 test "corpus ask creates correct GIP payload with options" {

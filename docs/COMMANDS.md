@@ -5,7 +5,7 @@ Top-level help is organized around Ghost operator workflows:
 - **Core**: `ask`, `chat`, `fix`, `verify`
 - **Inspection**: `autopsy`, `context`, `status`, `doctor`
 - **Knowledge**: `packs`, `corpus`, `learn`
-- **Advanced**: `debug`
+- **Advanced**: `rules`, `debug`
 - **Interface**: `tui`
 
 Every top-level command supports `ghost <command> --help` without resolving or
@@ -111,6 +111,41 @@ TUI launch, doctor, or status.
 `--json` preserves raw GIP stdout exactly. `--debug` writes diagnostics to
 stderr only, including the engine binary path, GIP kind, argv/stdin summary,
 exit code, and JSON parse status.
+
+### `ghost rules`
+Advanced/debug rule evaluation commands.
+
+#### `ghost rules evaluate`
+Run an explicit deterministic rule evaluation through `ghost_gip` operation
+`rule.evaluate`.
+
+Usage: `ghost rules evaluate --file request.json`
+Usage: `ghost rules evaluate --json --file request.json`
+Usage: `ghost rules evaluate --debug --file request.json`
+
+The file must be a GIP-compatible JSON request with top-level
+`kind: "rule.evaluate"`. The CLI reads the file, validates that kind, and sends
+the bytes unchanged to `ghost_gip --stdin`. It does not invent a rule
+mini-language.
+
+Human-readable output is labeled **DRAFT / NON-AUTHORIZING** and includes:
+fired rules, emitted candidates, emitted obligations, unknowns, explanation
+trace, and safety flags. It prints these required safety labels:
+`RULE OUTPUTS ARE CANDIDATES ONLY`, `NOT PROOF`, `VERIFIERS NOT EXECUTED`, and
+`PACKS / CORPUS / NEGATIVE KNOWLEDGE NOT MUTATED`.
+
+Rule evaluation is deterministic bounded rule matching over request-local facts
+and rules. It is not recursive inference, not Prolog, not semantic search, and
+does not use Transformers, embeddings, or model adapters. It does not execute
+emitted checks or verifier candidates, mutate corpus, mutate packs, mutate
+negative knowledge, or grant proof/support.
+
+This command is explicit only. It does not run from help, startup, TUI launch,
+doctor, status, `corpus ask`, `context autopsy`, or pack validation.
+
+`--json` preserves raw GIP stdout exactly. `--debug` writes diagnostics to
+stderr only, including engine path, GIP kind, input file path, stdin byte count,
+exit code, and parse status.
 
 ### `ghost fix`
 User asks Ghost to propose or perform a fix.
