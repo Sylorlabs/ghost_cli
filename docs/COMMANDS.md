@@ -120,9 +120,21 @@ promotion. They are never rendered under Evidence Used. Exact repeated
 mode says the draft was suppressed by accepted correction influence rather than
 presenting it as no corpus or generic insufficient evidence.
 
+Accepted reviewed negative knowledge may influence `corpus.ask` as
+**REVIEWED NEGATIVE KNOWLEDGE INFLUENCE / NON-AUTHORIZING**. Human mode renders
+`acceptedNegativeKnowledgeWarnings`, `negativeKnowledgeInfluences`,
+`negativeKnowledgeTelemetry`, and NK-originated `futureBehaviorCandidates` when
+present. These fields are warnings and candidate-only future behavior, not
+proof, evidence, support, or global promotion. They are never rendered under
+Evidence Used. Exact repeated known-bad answer patterns may suppress
+`answerDraft`; when that happens, human mode says the draft was suppressed by
+reviewed negative knowledge influence rather than presenting it as no corpus or
+generic insufficient evidence.
+
 `futureBehaviorCandidates` are rendered as **FUTURE BEHAVIOR CANDIDATES / NOT
-APPLIED**. They are candidates only, are not persisted as negative-knowledge,
-corpus, or pack updates by this operation, and do not execute verifiers.
+APPLIED**. They are candidates only, are not persisted as corpus, pack, rule,
+correction, or negative-knowledge updates by this operation, and do not execute
+verifiers or checks.
 
 Retrieval is bounded local matching over live shard corpus excerpts only. Exact
 evidence remains required for answers. It is not semantic search, and there are
@@ -172,6 +184,16 @@ global promotion. Exact repeated bad rule outputs may be suppressed; when that
 happens, human mode says a rule output was suppressed by accepted correction
 influence and does not render the suppressed output as active.
 
+When same-shard accepted reviewed negative knowledge influences `rule.evaluate`,
+human mode renders **REVIEWED NEGATIVE KNOWLEDGE INFLUENCE /
+NON-AUTHORIZING**. It displays `acceptedNegativeKnowledgeWarnings`,
+`negativeKnowledgeInfluences`, `negativeKnowledgeTelemetry`, and NK-originated
+`futureBehaviorCandidates` separately from fired rules and emitted outputs.
+Reviewed NK influence is not proof, not evidence, not support, and not global
+promotion. Exact repeated known-bad rule outputs may be suppressed; when that
+happens, human mode says a rule output was suppressed by reviewed negative
+knowledge influence and does not render the suppressed output as active.
+
 `futureBehaviorCandidates` are rendered as **FUTURE BEHAVIOR CANDIDATES / NOT
 APPLIED**. They are candidates only, are not persisted as rule, corpus, pack, or
 negative-knowledge updates by this operation, and do not execute verifiers or
@@ -179,14 +201,15 @@ checks.
 
 Rule evaluation is deterministic bounded rule matching over request-local facts
 and rules. If `projectShard` / `project_shard` is supplied, accepted reviewed
-corrections are read from that same shard only. Matching is conservative and
-structural: exact text, substring, or deterministic fingerprint matching against
-rule/output/obligation/unknown/trace fields. It is not recursive inference, not
-Prolog, not semantic search, and does not use Transformers, embeddings, model
-adapters, ranking models, cloud calls, or network calls. It does not execute
-emitted checks or verifier candidates, mutate rules, mutate corpus, mutate
-packs, mutate negative knowledge, mutate correction records, globally promote
-corrections, or grant proof/support.
+corrections and accepted reviewed negative knowledge are read from that same
+shard only. Matching is conservative and structural: exact text, substring, or
+deterministic fingerprint matching against rule/output/obligation/unknown/trace
+fields. It is not recursive inference, not Prolog, not semantic search, and
+does not use Transformers, embeddings, model adapters, ranking models, cloud
+calls, or network calls. It does not execute emitted checks or verifier
+candidates, mutate rules, mutate corpus, mutate packs, mutate negative
+knowledge, mutate correction records, globally promote corrections or reviewed
+NK, or grant proof/support.
 
 This command is explicit only. It does not run from help, startup, TUI launch,
 doctor, status, `corpus ask`, `context autopsy`, or pack validation.
@@ -387,11 +410,16 @@ mutation flags, and authority flags. It prints these required safety labels:
 `REVIEWED NEGATIVE KNOWLEDGE RECORD`, `APPEND-ONLY`, `NOT PROOF`,
 `NOT EVIDENCE`, `NON-AUTHORIZING`, `NO GLOBAL PROMOTION`,
 `NO CORPUS OR PACK MUTATION`, `NO VERIFIERS EXECUTED`, and
-`ACCEPTED NK DOES NOT BROADLY INFLUENCE FUTURE BEHAVIOR YET`.
+`ACCEPTED NK MAY INFLUENCE SAME-SHARD CORPUS/RULE OUTPUTS ONLY AS
+NON-AUTHORIZING WARNINGS, SUPPRESSION, OR CANDIDATES`.
 
 Reviewed NK records are append-only and project-shard local. Accepted reviewed
 NK is durable and inspectable, but it is still not proof, not evidence, not
-global promotion, and Phase 11A does not add broad future behavior influence.
+global promotion. It may influence same-shard `corpus.ask` and `rule.evaluate`
+only as non-authorizing warnings, suppression, stronger-evidence/verifier
+candidates, or future behavior candidates. Influence uses conservative
+structural matching only; no semantic search, embeddings, Transformers, model
+adapters, ranking model, cloud calls, or network calls are used.
 `negativeKnowledgeMutation:true` means only that this explicit review appended
 a reviewed NK record.
 

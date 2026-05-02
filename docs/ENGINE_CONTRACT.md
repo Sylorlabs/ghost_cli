@@ -215,9 +215,21 @@ shown under Evidence Used. If an exact repeated `wrong_answer` pattern suppresse
 accepted correction influence instead of treating it as no-corpus or generic
 insufficient evidence.
 
+`acceptedNegativeKnowledgeWarnings`, `negativeKnowledgeInfluences`,
+`negativeKnowledgeTelemetry`, and NK-originated `futureBehaviorCandidates` are
+displayed separately as **REVIEWED NEGATIVE KNOWLEDGE INFLUENCE /
+NON-AUTHORIZING** when present. Accepted reviewed negative knowledge may
+influence `corpus.ask`, but the CLI renders it as warnings and candidate-only
+future behavior, not proof, evidence, support, or global promotion. It is not
+shown under Evidence Used. If an exact repeated known-bad answer pattern
+suppresses `answerDraft`, human mode states that the answer draft was suppressed
+by reviewed negative knowledge influence instead of treating it as no-corpus or
+generic insufficient evidence.
+
 `futureBehaviorCandidates` are displayed as **FUTURE BEHAVIOR CANDIDATES / NOT
-APPLIED**. They are candidates only, are not persisted as negative-knowledge,
-corpus, or pack updates by this operation, and no verifier is executed.
+APPLIED**. They are candidates only, are not persisted as corpus, pack, rule,
+correction, or negative-knowledge updates by this operation, and no
+verifier/check is executed.
 
 `learningCandidates` are displayed as CANDIDATE ONLY / NOT PERSISTED. Rendering
 them does not persist learning, mutate corpus, mutate packs, mutate negative
@@ -370,11 +382,11 @@ Human mode renders only the engine's reviewed negative-knowledge result. It
 labels the output `REVIEWED NEGATIVE KNOWLEDGE RECORD`, `APPEND-ONLY`,
 `NOT PROOF`, `NOT EVIDENCE`, `NON-AUTHORIZING`, `NO GLOBAL PROMOTION`,
 `NO CORPUS OR PACK MUTATION`, `NO VERIFIERS EXECUTED`, and
-`ACCEPTED NK DOES NOT BROADLY INFLUENCE FUTURE BEHAVIOR YET`. It renders the
-reviewed record, decision, reviewer note, rejected reason when present, source
-candidate id, source correction review id when present, candidate snapshot,
-append-only metadata, mutation flags, and authority flags without upgrading
-authority.
+`ACCEPTED NK MAY INFLUENCE SAME-SHARD CORPUS/RULE OUTPUTS ONLY AS
+NON-AUTHORIZING WARNINGS, SUPPRESSION, OR CANDIDATES`. It renders the reviewed
+record, decision, reviewer note, rejected reason when present, source candidate
+id, source correction review id when present, candidate snapshot, append-only
+metadata, mutation flags, and authority flags without upgrading authority.
 
 Reviewed negative-knowledge records are appended under the project shard at
 `negative_knowledge/reviewed_negative_knowledge.jsonl`, but the CLI never reads
@@ -382,7 +394,12 @@ or writes that JSONL file directly. `negativeKnowledgeMutation:true` in
 `negative_knowledge.review` means only that a reviewed NK record was explicitly
 appended. It does not mean corpus mutation, pack mutation, command execution,
 verifier execution, proof discharge, evidence use, global promotion, or broad
-future behavior influence.
+future behavior influence. Accepted reviewed NK can influence same-shard
+`corpus.ask` and `rule.evaluate` only as non-authorizing warnings, suppression,
+stronger-evidence/verifier candidates, or future behavior candidates. Influence
+uses conservative structural matching only; no semantic search, embeddings,
+Transformers, model adapters, ranking model, cloud calls, or network calls are
+used.
 
 `ghost nk reviewed list --project-shard=<id>` routes explicitly to
 `ghost_gip --stdin` with GIP `kind: "negative_knowledge.reviewed.list"`. The CLI
@@ -474,6 +491,22 @@ bad rule output suppression, human mode states that a rule output was suppressed
 by accepted correction influence and does not render the suppressed output as
 active. The corresponding warnings/influences remain visible in the
 non-authorizing influence block.
+
+If `acceptedNegativeKnowledgeWarnings`, `negativeKnowledgeInfluences`,
+`futureBehaviorCandidates`, or non-empty `negativeKnowledgeTelemetry` report
+same-shard accepted reviewed negative knowledge influence, human mode displays
+**REVIEWED NEGATIVE KNOWLEDGE INFLUENCE / NON-AUTHORIZING**. The block states
+that reviewed negative knowledge influenced this rule evaluation, is not proof
+or evidence, does not mutate corpus, packs, corrections, or negative knowledge,
+and leaves future behavior candidate-only unless separately reviewed/applied.
+These fields are never rendered under Evidence Used, Proof, Support, Verified,
+or Accepted Knowledge.
+
+If `outputsSuppressed` or suppression NK influence records indicate exact
+repeated known-bad rule output suppression, human mode states that a rule output
+was suppressed by reviewed negative knowledge influence and does not render the
+suppressed output as active. The corresponding warnings/influences remain
+visible in the non-authorizing influence block.
 
 `futureBehaviorCandidates` are rendered as **FUTURE BEHAVIOR CANDIDATES / NOT
 APPLIED**. They are candidates only, are not persisted as rule, corpus, pack, or

@@ -51,9 +51,10 @@ pub fn printHelp(writer: anytype) !void {
         \\  appear as NON-AUTHORIZING routing hints only.
         \\  Capacity telemetry is explicit: skipped, dropped, truncated, or
         \\  capped data means partial coverage and cannot support an answer.
-        \\  Accepted reviewed corrections may influence ask results as
-        \\  warnings or candidate-only future behavior, but they are not proof
-        \\  or evidence and do not mutate corpus, packs, or negative knowledge.
+        \\  Accepted reviewed corrections and reviewed negative knowledge may
+        \\  influence ask results as warnings, suppression, or candidate-only
+        \\  future behavior, but they are not proof or evidence and do not
+        \\  mutate corpus, packs, corrections, or negative knowledge.
         \\  No Transformers, embeddings, model adapters, hidden learning, pack
         \\  mutation, negative-knowledge mutation, verifier execution, or
         \\  automatic startup corpus operation is performed by this command group.
@@ -131,10 +132,11 @@ fn printAskHelp(writer: anytype) !void {
         \\  appear as NON-AUTHORIZING routing hints only, never as evidence.
         \\  Capacity warnings mean partial coverage: skipped, dropped,
         \\  truncated, or capped data cannot support an answer.
-        \\  Accepted reviewed corrections may appear as NON-AUTHORIZING
-        \\  influence, warnings, telemetry, or future behavior candidates.
-        \\  They are not proof, not evidence, and may suppress exact repeated
-        \\  bad answer patterns without globally promoting anything.
+        \\  Accepted reviewed corrections and reviewed negative knowledge may
+        \\  appear as NON-AUTHORIZING influence, warnings, telemetry, or future
+        \\  behavior candidates. They are not proof, not evidence, and may
+        \\  suppress exact repeated bad answer patterns without globally
+        \\  promoting anything.
         \\  It is not semantic search, and mounted pack corpus is not included.
         \\  It does not use Transformers, embeddings, or model adapters.
         \\  It does not mutate corpus, mutate packs, mutate negative knowledge,
@@ -542,6 +544,9 @@ fn printCorpusAskResult(writer: anytype, value: std.json.Value) !void {
     const similar_candidates = corpus.get("similarCandidates");
     const accepted_correction_warnings = corpus.get("acceptedCorrectionWarnings");
     const correction_influences = corpus.get("correctionInfluences");
+    const accepted_nk_warnings = corpus.get("acceptedNegativeKnowledgeWarnings");
+    const nk_influences = corpus.get("negativeKnowledgeInfluences");
+    const nk_telemetry = corpus.get("negativeKnowledgeTelemetry");
     const future_behavior_candidates = corpus.get("futureBehaviorCandidates");
     const influence_telemetry = corpus.get("influenceTelemetry");
     const has_answer = corpus.get("answerDraft") != null;
@@ -553,11 +558,23 @@ fn printCorpusAskResult(writer: anytype, value: std.json.Value) !void {
         future_behavior_candidates,
         influence_telemetry,
     );
+    const has_nk_influence = hasReviewedNegativeKnowledgeInfluence(
+        accepted_nk_warnings,
+        nk_influences,
+        future_behavior_candidates,
+        nk_telemetry,
+    );
     const answer_suppressed_by_correction = !has_answer and hasCorrectionSuppression(
         accepted_correction_warnings,
         correction_influences,
         future_behavior_candidates,
         influence_telemetry,
+    );
+    const answer_suppressed_by_nk = !has_answer and hasReviewedNegativeKnowledgeSuppression(
+        accepted_nk_warnings,
+        nk_influences,
+        future_behavior_candidates,
+        nk_telemetry,
     );
     if ((if (capacity_telemetry) |telemetry| hasCapacityPressure(telemetry) else false) or hasUnknownKind(unknowns, "capacity_limited")) {
         try printCorpusCapacityWarning(writer, capacity_telemetry);
@@ -571,13 +588,25 @@ fn printCorpusAskResult(writer: anytype, value: std.json.Value) !void {
             influence_telemetry,
         );
     }
+    if (has_nk_influence) {
+        try printReviewedNegativeKnowledgeInfluence(
+            writer,
+            "corpus answer",
+            accepted_nk_warnings,
+            nk_influences,
+            future_behavior_candidates,
+            nk_telemetry,
+        );
+    }
     if (corpus.get("answerDraft")) |answer| {
         try writer.print("\nAnswer Draft:\n", .{});
         try printJsonValue(writer, answer, 2);
         try writer.print("\n", .{});
     } else {
         try writer.print("\nNo answer was produced.\n", .{});
-        if (answer_suppressed_by_correction) {
+        if (answer_suppressed_by_nk) {
+            try writer.print("The answer draft was suppressed by reviewed negative knowledge influence from an exact repeated known-bad answer pattern.\n", .{});
+        } else if (answer_suppressed_by_correction) {
             try writer.print("The answer draft was suppressed by accepted correction influence from an exact repeated wrong_answer pattern.\n", .{});
         } else if (hasUnknownKind(unknowns, "no_corpus_available")) {
             try writer.print("No live shard corpus is available for this ask request.\n", .{});
@@ -681,8 +710,20 @@ fn hasAcceptedCorrectionInfluence(
 ) bool {
     return (if (warnings) |v| !isEmptyJsonList(v) else false) or
         (if (influences) |v| !isEmptyJsonList(v) else false) or
-        (if (future_candidates) |v| !isEmptyJsonList(v) else false) or
+        (if (future_candidates) |v| hasCorrectionFutureCandidate(v) else false) or
         (if (telemetry) |v| hasInfluenceTelemetrySignal(v) else false);
+}
+
+fn hasReviewedNegativeKnowledgeInfluence(
+    warnings: ?std.json.Value,
+    influences: ?std.json.Value,
+    future_candidates: ?std.json.Value,
+    telemetry: ?std.json.Value,
+) bool {
+    return (if (warnings) |v| !isEmptyJsonList(v) else false) or
+        (if (influences) |v| !isEmptyJsonList(v) else false) or
+        (if (future_candidates) |v| hasReviewedNegativeKnowledgeFutureCandidate(v) else false) or
+        (if (telemetry) |v| hasNegativeKnowledgeTelemetrySignal(v) else false);
 }
 
 fn hasCorrectionSuppression(
@@ -695,6 +736,18 @@ fn hasCorrectionSuppression(
         (if (influences) |v| jsonContainsAny(v, &.{ "wrong_answer", "suppress", "suppressed", "repeated" }) else false) or
         (if (future_candidates) |v| jsonContainsAny(v, &.{ "wrong_answer", "suppress", "suppressed", "repeated" }) else false) or
         (if (telemetry) |v| jsonContainsAny(v, &.{ "wrong_answer", "suppress", "suppressed", "repeated" }) else false);
+}
+
+fn hasReviewedNegativeKnowledgeSuppression(
+    warnings: ?std.json.Value,
+    influences: ?std.json.Value,
+    future_candidates: ?std.json.Value,
+    telemetry: ?std.json.Value,
+) bool {
+    return (if (warnings) |v| jsonContainsAny(v, &.{ "known-bad", "suppress", "suppressed", "repeated" }) else false) or
+        (if (influences) |v| jsonContainsAny(v, &.{ "known-bad", "suppress", "suppressed", "repeated", "suppress_exact_repeat" }) else false) or
+        (if (future_candidates) |v| jsonContainsAny(v, &.{ "known-bad", "suppress", "suppressed", "repeated" }) else false) or
+        (if (telemetry) |v| hasBoolOrPressureField(v, "answerSuppressed") else false);
 }
 
 fn printAcceptedCorrectionInfluence(
@@ -738,9 +791,51 @@ fn printAcceptedCorrectionInfluence(
 fn printFutureBehaviorCandidates(writer: anytype, value: std.json.Value) !void {
     try writer.print("\nFUTURE BEHAVIOR CANDIDATES / NOT APPLIED\n", .{});
     try writer.print("- Candidates only.\n", .{});
-    try writer.print("- Not persisted as negative-knowledge, corpus, or pack updates by this operation.\n", .{});
-    try writer.print("- No verifier executed.\n", .{});
+    try writer.print("- Not persisted as corpus, pack, rule, correction, or negative-knowledge updates by this operation.\n", .{});
+    try writer.print("- No verifier/check executed.\n", .{});
     try printJsonValue(writer, value, 2);
+}
+
+fn printReviewedNegativeKnowledgeInfluence(
+    writer: anytype,
+    target: []const u8,
+    warnings: ?std.json.Value,
+    influences: ?std.json.Value,
+    future_candidates: ?std.json.Value,
+    telemetry: ?std.json.Value,
+) !void {
+    try writer.print("\nREVIEWED NEGATIVE KNOWLEDGE INFLUENCE / NON-AUTHORIZING\n", .{});
+    try writer.print("- Reviewed negative knowledge influenced this {s}.\n", .{target});
+    try writer.print("- This is not proof.\n", .{});
+    try writer.print("- This is not evidence.\n", .{});
+    try writer.print("- No corpus, pack, correction, or negative-knowledge mutation occurred.\n", .{});
+    try writer.print("- Future behavior remains candidate-only unless separately reviewed/applied.\n", .{});
+    if (hasReviewedNegativeKnowledgeSuppression(warnings, influences, future_candidates, telemetry)) {
+        try writer.print("- The output was suppressed by reviewed negative knowledge influence and is not rendered as active.\n", .{});
+    }
+    if (warnings) |value| {
+        if (!isEmptyJsonList(value)) {
+            try writer.print("acceptedNegativeKnowledgeWarnings:\n", .{});
+            try printJsonValue(writer, value, 2);
+        }
+    }
+    if (influences) |value| {
+        if (!isEmptyJsonList(value)) {
+            try writer.print("negativeKnowledgeInfluences:\n", .{});
+            try printJsonValue(writer, value, 2);
+        }
+    }
+    if (telemetry) |value| {
+        if (hasNegativeKnowledgeTelemetrySignal(value)) {
+            try writer.print("negativeKnowledgeTelemetry:\n", .{});
+            try printJsonValue(writer, value, 2);
+        }
+    }
+    if (future_candidates) |value| {
+        if (!isEmptyJsonList(value)) {
+            try printFutureBehaviorCandidates(writer, value);
+        }
+    }
 }
 
 fn hasInfluenceTelemetrySignal(value: std.json.Value) bool {
@@ -756,6 +851,42 @@ fn hasInfluenceTelemetrySignal(value: std.json.Value) bool {
         hasPressureField(obj, "matchedInfluences") or
         hasPressureField(obj, "answerSuppressed") or
         hasPressureField(obj, "boundedReadTruncated");
+}
+
+fn hasNegativeKnowledgeTelemetrySignal(value: std.json.Value) bool {
+    const obj = switch (value) {
+        .object => |obj| obj,
+        else => return !isEmptyJsonList(value),
+    };
+    return hasPressureField(obj, "recordsRead") or
+        hasPressureField(obj, "acceptedRecords") or
+        hasPressureField(obj, "rejectedRecords") or
+        hasPressureField(obj, "malformedLines") or
+        hasPressureField(obj, "warnings") or
+        hasPressureField(obj, "influencesLoaded") or
+        hasPressureField(obj, "influencesApplied") or
+        hasPressureField(obj, "answerSuppressed") or
+        hasPressureField(obj, "outputsSuppressed") or
+        hasPressureField(obj, "truncated") or
+        hasPressureField(obj, "mutationPerformed") or
+        hasPressureField(obj, "commandsExecuted") or
+        hasPressureField(obj, "verifiersExecuted");
+}
+
+fn hasCorrectionFutureCandidate(value: std.json.Value) bool {
+    return jsonContainsAny(value, &.{ "sourceReviewedCorrectionId", "source_reviewed_correction_id" });
+}
+
+fn hasReviewedNegativeKnowledgeFutureCandidate(value: std.json.Value) bool {
+    return jsonContainsAny(value, &.{ "sourceReviewedNegativeKnowledgeId", "source_reviewed_negative_knowledge_id", "reviewed_negative_knowledge" });
+}
+
+fn hasBoolOrPressureField(value: std.json.Value, field: []const u8) bool {
+    const obj = switch (value) {
+        .object => |obj| obj,
+        else => return jsonContainsAny(value, &.{field}),
+    };
+    return hasPressureField(obj, field);
 }
 
 fn printCapacityField(writer: anytype, obj: std.json.ObjectMap, field: []const u8) !void {
@@ -966,9 +1097,9 @@ fn jsonContainsAny(value: std.json.Value, needles: []const []const u8) bool {
         .object => |obj| {
             var it = obj.iterator();
             while (it.next()) |entry| {
-                if (std.ascii.indexOfIgnoreCase(entry.key_ptr.*, "suppress") != null) return true;
-                if (std.ascii.indexOfIgnoreCase(entry.key_ptr.*, "wrong_answer") != null) return true;
-                if (std.ascii.indexOfIgnoreCase(entry.key_ptr.*, "repeated") != null) return true;
+                for (needles) |needle| {
+                    if (std.ascii.indexOfIgnoreCase(entry.key_ptr.*, needle) != null) return true;
+                }
                 if (jsonContainsAny(entry.value_ptr.*, needles)) return true;
             }
             return false;

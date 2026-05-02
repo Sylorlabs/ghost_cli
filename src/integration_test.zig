@@ -250,7 +250,7 @@ test "subcommand help works without resolving engine" {
     }
     try testing.expectEqual(@as(u32, 0), nk_review_res.term.Exited);
     try testing.expect(std.mem.indexOf(u8, nk_review_res.stderr, "Usage: ghost nk review --file <request.json>") != null);
-    try testing.expect(std.mem.indexOf(u8, nk_review_res.stderr, "ACCEPTED NK DOES NOT BROADLY INFLUENCE FUTURE BEHAVIOR YET") != null);
+    try testing.expect(std.mem.indexOf(u8, nk_review_res.stderr, "ACCEPTED NK MAY INFLUENCE SAME-SHARD CORPUS/RULE OUTPUTS ONLY AS") != null);
 
     const nk_reviewed_list_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "nk", "reviewed", "list", "--help", "--engine-root=/tmp/ghost-help-missing" });
     defer {
@@ -1167,6 +1167,76 @@ test "rules evaluate human suppressed output explains accepted correction influe
     try testing.expect(std.mem.indexOf(u8, res.stdout, "outputsSuppressed") != null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "Emitted Candidates:") == null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "Emitted Obligations:") == null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "risk.bad") != null);
+}
+
+test "rules evaluate human reviewed negative knowledge influence renders non-authorizing block" {
+    const mock_root = "/tmp/ghost-cli-rules-nk-influence";
+    const request_path = mock_root ++ "/request.json";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    {
+        const request = try std.fs.cwd().createFile(request_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"rule.evaluate\",\"projectShard\":\"project-a\",\"facts\":[],\"rules\":[]}");
+    }
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s' '{\"gipVersion\":\"gip.v0.1\",\"kind\":\"rule.evaluate\",\"status\":\"ok\",\"result\":{\"ruleEvaluation\":{\"nonAuthorizing\":true,\"candidateOnly\":true,\"proofDischarged\":false,\"supportGranted\":false,\"factsConsidered\":1,\"rulesConsidered\":1,\"outputsEmitted\":1,\"budgetExhausted\":false,\"firedRules\":[{\"id\":\"rule.runtime\",\"name\":\"Runtime checks\"}],\"emittedCandidates\":[{\"kind\":\"risk_candidate\",\"id\":\"risk.runtime\",\"summary\":\"runtime risk\"}],\"emittedObligations\":[],\"emittedUnknowns\":[],\"acceptedNegativeKnowledgeWarnings\":[{\"lineNumber\":3,\"reason\":\"malformed reviewed negative knowledge line skipped\"}],\"negativeKnowledgeInfluences\":[{\"sourceReviewedNegativeKnowledgeId\":\"nk-reviewed-1\",\"influenceKind\":\"warning\",\"appliesTo\":\"rule.evaluate\",\"matchedOutputId\":\"risk.runtime\",\"matchedPattern\":\"runtime risk\",\"reason\":\"accepted reviewed negative knowledge matched rule output\",\"nonAuthorizing\":true,\"treatedAsProof\":false,\"usedAsEvidence\":false,\"globalPromotion\":false,\"mutationFlags\":{\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"correctionRecordMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false}}],\"futureBehaviorCandidates\":[{\"kind\":\"rule_update_candidate\",\"status\":\"candidate\",\"reason\":\"candidate only\",\"sourceReviewedNegativeKnowledgeId\":\"nk-reviewed-1\",\"candidateOnly\":true,\"nonAuthorizing\":true,\"treatedAsProof\":false,\"usedAsEvidence\":false,\"globalPromotion\":false,\"mutationFlags\":{\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"correctionRecordMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false}}],\"negativeKnowledgeTelemetry\":{\"recordsRead\":2,\"acceptedRecords\":1,\"rejectedRecords\":1,\"malformedLines\":1,\"warnings\":1,\"influencesLoaded\":1,\"influencesApplied\":1,\"outputsSuppressed\":0,\"truncated\":false,\"sameShardOnly\":true,\"mutationPerformed\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false},\"explanationTrace\":[{\"ruleId\":\"rule.runtime\",\"fired\":true}],\"safetyFlags\":{\"commandsExecuted\":false,\"verifiersExecuted\":false,\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"proofDischarged\":false,\"supportGranted\":false}}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "rules", "evaluate", "--engine-root=" ++ mock_root, "--file", request_path });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    const influence_idx = std.mem.indexOf(u8, res.stdout, "REVIEWED NEGATIVE KNOWLEDGE INFLUENCE / NON-AUTHORIZING") orelse return error.TestExpectedEqual;
+    const candidates_idx = std.mem.indexOf(u8, res.stdout, "Emitted Candidates:") orelse return error.TestExpectedEqual;
+    try testing.expect(influence_idx < candidates_idx);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Reviewed negative knowledge influenced this rule evaluation.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "This is not proof.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "This is not evidence.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "No corpus, pack, correction, or negative-knowledge mutation occurred.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "acceptedNegativeKnowledgeWarnings:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "negativeKnowledgeInfluences:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "negativeKnowledgeTelemetry:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "FUTURE BEHAVIOR CANDIDATES / NOT APPLIED") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "No verifier/check executed.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Evidence Used") == null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Support:") == null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Verified") == null);
+}
+
+test "rules evaluate human suppressed output explains reviewed negative knowledge influence" {
+    const mock_root = "/tmp/ghost-cli-rules-nk-suppressed";
+    const request_path = mock_root ++ "/request.json";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    {
+        const request = try std.fs.cwd().createFile(request_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"rule.evaluate\",\"projectShard\":\"project-a\",\"facts\":[],\"rules\":[]}");
+    }
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s' '{\"gipVersion\":\"gip.v0.1\",\"kind\":\"rule.evaluate\",\"status\":\"ok\",\"result\":{\"ruleEvaluation\":{\"nonAuthorizing\":true,\"candidateOnly\":true,\"proofDischarged\":false,\"supportGranted\":false,\"factsConsidered\":1,\"rulesConsidered\":1,\"outputsEmitted\":0,\"budgetExhausted\":false,\"firedRules\":[{\"id\":\"rule.bad\",\"name\":\"Bad rule\"}],\"emittedCandidates\":[],\"emittedObligations\":[],\"emittedUnknowns\":[],\"acceptedNegativeKnowledgeWarnings\":[],\"negativeKnowledgeInfluences\":[{\"sourceReviewedNegativeKnowledgeId\":\"nk-reviewed-2\",\"influenceKind\":\"suppress_exact_repeat\",\"appliesTo\":\"rule.evaluate\",\"matchedRuleId\":\"rule.bad\",\"matchedOutputId\":\"risk.bad\",\"matchedPattern\":\"risk.bad\",\"reason\":\"exact repeated known-bad rule output suppressed\",\"nonAuthorizing\":true,\"treatedAsProof\":false,\"usedAsEvidence\":false,\"globalPromotion\":false,\"mutationFlags\":{\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"correctionRecordMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false}}],\"futureBehaviorCandidates\":[{\"kind\":\"verifier_check_candidate\",\"status\":\"candidate\",\"reason\":\"suppressed exact repeated known-bad rule output requires explicit verifier/check candidate before reintroduction\",\"sourceReviewedNegativeKnowledgeId\":\"nk-reviewed-2\",\"candidateOnly\":true,\"nonAuthorizing\":true,\"treatedAsProof\":false,\"usedAsEvidence\":false,\"globalPromotion\":false,\"mutationFlags\":{\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"correctionRecordMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false}}],\"negativeKnowledgeTelemetry\":{\"recordsRead\":1,\"acceptedRecords\":1,\"rejectedRecords\":0,\"malformedLines\":0,\"warnings\":0,\"influencesLoaded\":1,\"influencesApplied\":1,\"outputsSuppressed\":1,\"truncated\":false,\"sameShardOnly\":true,\"mutationPerformed\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false},\"explanationTrace\":[{\"ruleId\":\"rule.bad\",\"fired\":true}],\"safetyFlags\":{\"commandsExecuted\":false,\"verifiersExecuted\":false,\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"proofDischarged\":false,\"supportGranted\":false}}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "rules", "evaluate", "--engine-root=" ++ mock_root, "--file", request_path });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "A rule output was suppressed by reviewed negative knowledge influence and is not rendered as active.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "suppress_exact_repeat") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "outputsSuppressed") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Emitted Candidates:") == null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "risk.bad") != null);
 }
 
@@ -2668,8 +2738,8 @@ test "corpus ask human accepted correction influence renders non-authorizing blo
     try testing.expect(std.mem.indexOf(u8, res.stdout, "correctionInfluences:") != null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "influenceTelemetry:") != null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "Candidates only.") != null);
-    try testing.expect(std.mem.indexOf(u8, res.stdout, "Not persisted as negative-knowledge, corpus, or pack updates by this operation.") != null);
-    try testing.expect(std.mem.indexOf(u8, res.stdout, "No verifier executed.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Not persisted as corpus, pack, rule, correction, or negative-knowledge updates by this operation.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "No verifier/check executed.") != null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "Evidence Used:\n  - evidence #1") != null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "corpusMutation: false") != null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "negativeKnowledgeMutation: false") != null);
@@ -2705,6 +2775,85 @@ test "corpus ask human suppressed answer explains accepted correction influence"
     try testing.expect(std.mem.indexOf(u8, res.stdout, "The answer draft was suppressed by accepted correction influence from an exact repeated wrong_answer pattern.") != null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "answer_draft_suppressed") != null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "suppressedAnswerDrafts: 1") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "No live shard corpus is available") == null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Corpus evidence was insufficient") == null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Evidence Used:") == null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Answer Draft:") == null);
+}
+
+test "corpus ask human reviewed negative knowledge influence renders non-authorizing block" {
+    const mock_root = "/tmp/ghost-cli-corpus-nk-influence";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\n" ++
+            "cat >/dev/null\n" ++
+            "printf '%s' '{\"corpusAsk\":{\"status\":\"answered\",\"state\":\"draft\",\"permission\":\"none\",\"answerDraft\":\"Exact retained evidence still supports this draft.\",\"evidenceUsed\":[{\"itemId\":\"item-1\",\"path\":\"corpus/live.jsonl\",\"snippet\":\"exact retained evidence\",\"reason\":\"exact match\"}],\"acceptedNegativeKnowledgeWarnings\":[{\"lineNumber\":4,\"reason\":\"malformed reviewed negative knowledge line skipped\"}],\"negativeKnowledgeInfluences\":[{\"sourceReviewedNegativeKnowledgeId\":\"nk-reviewed-1\",\"influenceKind\":\"warning\",\"appliesTo\":\"corpus.ask\",\"matchedPattern\":\"exact retained evidence\",\"reason\":\"accepted reviewed negative knowledge matched corpus answer\",\"nonAuthorizing\":true,\"treatedAsProof\":false,\"usedAsEvidence\":false,\"globalPromotion\":false,\"mutationFlags\":{\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"correctionRecordMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false}}],\"futureBehaviorCandidates\":[{\"kind\":\"corpus_update_candidate\",\"status\":\"candidate\",\"reason\":\"candidate only\",\"sourceReviewedNegativeKnowledgeId\":\"nk-reviewed-1\",\"candidateOnly\":true,\"nonAuthorizing\":true,\"treatedAsProof\":false,\"usedAsEvidence\":false,\"globalPromotion\":false,\"mutationFlags\":{\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"correctionRecordMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false}}],\"negativeKnowledgeTelemetry\":{\"recordsRead\":2,\"acceptedRecords\":1,\"rejectedRecords\":1,\"malformedLines\":1,\"warnings\":1,\"influencesLoaded\":1,\"influencesApplied\":1,\"answerSuppressed\":false,\"truncated\":false,\"sameShardOnly\":true,\"mutationPerformed\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false},\"unknowns\":[],\"candidateFollowups\":[],\"learningCandidates\":[],\"trace\":{\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "corpus",
+        "ask",
+        "--engine-root=" ++ mock_root,
+        "What does reviewed NK influence do?",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    const influence_idx = std.mem.indexOf(u8, res.stdout, "REVIEWED NEGATIVE KNOWLEDGE INFLUENCE / NON-AUTHORIZING") orelse return error.TestExpectedEqual;
+    const evidence_idx = std.mem.indexOf(u8, res.stdout, "Evidence Used:") orelse return error.TestExpectedEqual;
+    const future_idx = std.mem.indexOf(u8, res.stdout, "FUTURE BEHAVIOR CANDIDATES / NOT APPLIED") orelse return error.TestExpectedEqual;
+    try testing.expect(influence_idx < evidence_idx);
+    try testing.expect(future_idx < evidence_idx);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Reviewed negative knowledge influenced this corpus answer.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "This is not proof.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "This is not evidence.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "No corpus, pack, correction, or negative-knowledge mutation occurred.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "acceptedNegativeKnowledgeWarnings:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "negativeKnowledgeInfluences:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "negativeKnowledgeTelemetry:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Candidates only.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "No verifier/check executed.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Evidence Used:\n  - evidence #1") != null);
+}
+
+test "corpus ask human suppressed answer explains reviewed negative knowledge influence" {
+    const mock_root = "/tmp/ghost-cli-corpus-nk-suppressed";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\n" ++
+            "cat >/dev/null\n" ++
+            "printf '%s' '{\"corpusAsk\":{\"status\":\"unknown\",\"state\":\"unresolved\",\"permission\":\"unresolved\",\"evidenceUsed\":[],\"acceptedNegativeKnowledgeWarnings\":[],\"negativeKnowledgeInfluences\":[{\"sourceReviewedNegativeKnowledgeId\":\"nk-reviewed-2\",\"influenceKind\":\"suppress_exact_repeat\",\"appliesTo\":\"corpus.ask\",\"matchedPattern\":\"bad answer\",\"reason\":\"exact repeated known-bad answer pattern suppressed\",\"nonAuthorizing\":true,\"treatedAsProof\":false,\"usedAsEvidence\":false,\"globalPromotion\":false,\"mutationFlags\":{\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"correctionRecordMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false}}],\"futureBehaviorCandidates\":[{\"kind\":\"verifier_check_candidate\",\"status\":\"candidate\",\"reason\":\"suppressed exact repeated known-bad answer pattern requires explicit verifier/check candidate\",\"sourceReviewedNegativeKnowledgeId\":\"nk-reviewed-2\",\"candidateOnly\":true,\"nonAuthorizing\":true,\"treatedAsProof\":false,\"usedAsEvidence\":false,\"globalPromotion\":false,\"mutationFlags\":{\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"correctionRecordMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false}}],\"negativeKnowledgeTelemetry\":{\"recordsRead\":1,\"acceptedRecords\":1,\"rejectedRecords\":0,\"malformedLines\":0,\"warnings\":0,\"influencesLoaded\":1,\"influencesApplied\":1,\"answerSuppressed\":true,\"truncated\":false,\"sameShardOnly\":true,\"mutationPerformed\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false},\"unknowns\":[{\"kind\":\"reviewed_negative_knowledge_suppressed_answer\",\"reason\":\"known-bad repeated pattern\"}],\"candidateFollowups\":[],\"learningCandidates\":[],\"trace\":{\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "corpus",
+        "ask",
+        "--engine-root=" ++ mock_root,
+        "repeat the known-bad answer?",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "REVIEWED NEGATIVE KNOWLEDGE INFLUENCE / NON-AUTHORIZING") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "No answer was produced.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "The answer draft was suppressed by reviewed negative knowledge influence from an exact repeated known-bad answer pattern.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "The output was suppressed by reviewed negative knowledge influence and is not rendered as active.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "suppress_exact_repeat") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "answerSuppressed: true") != null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "No live shard corpus is available") == null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "Corpus evidence was insufficient") == null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "Evidence Used:") == null);

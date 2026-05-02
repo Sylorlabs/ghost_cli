@@ -28,10 +28,10 @@ pub fn printHelp(writer: anytype) !void {
         \\  Rule evaluation is deterministic, bounded, and read-only.
         \\  It is structural matching only: no recursive inference, no Prolog,
         \\  no Transformers, embeddings, model adapters, semantic search, or network calls.
-        \\  Accepted reviewed corrections may influence rule.evaluate as
-        \\  warnings, exact repeated-output suppression, or candidate-only
-        \\  future behavior when a project shard is supplied.
-        \\  Accepted corrections are not proof, evidence, support, or global promotion.
+        \\  Accepted reviewed corrections and reviewed negative knowledge may
+        \\  influence rule.evaluate as warnings, exact repeated-output
+        \\  suppression, or candidate-only future behavior when a project shard
+        \\  is supplied. They are not proof, evidence, support, or global promotion.
         \\  RULE OUTPUTS ARE CANDIDATES ONLY.
         \\  Capacity telemetry is explicit: capped or rejected rule outputs mean
         \\  incomplete candidate evaluation, not proof or support.
@@ -68,8 +68,9 @@ fn printEvaluateHelp(writer: anytype) !void {
         \\  Explicit invocation only.
         \\  Deterministic bounded rule evaluation over request-local facts/rules.
         \\  No recursive inference / no Prolog.
-        \\  Accepted reviewed corrections may influence output only as
-        \\  non-authorizing warnings, suppression, or future candidates.
+        \\  Accepted reviewed corrections and reviewed negative knowledge may
+        \\  influence output only as non-authorizing warnings, suppression, or
+        \\  future candidates.
         \\  RULE OUTPUTS ARE CANDIDATES ONLY.
         \\  Capacity warnings mean incomplete candidate evaluation.
         \\  NOT PROOF.
@@ -263,6 +264,9 @@ fn printRuleEvaluationResult(writer: anytype, value: std.json.Value) !void {
 
     const accepted_correction_warnings = rule.get("acceptedCorrectionWarnings");
     const correction_influences = rule.get("correctionInfluences");
+    const accepted_nk_warnings = rule.get("acceptedNegativeKnowledgeWarnings");
+    const nk_influences = rule.get("negativeKnowledgeInfluences");
+    const nk_telemetry = rule.get("negativeKnowledgeTelemetry");
     const future_behavior_candidates = rule.get("futureBehaviorCandidates");
     const influence_telemetry = rule.get("influenceTelemetry");
     if (hasAcceptedCorrectionInfluence(
@@ -277,6 +281,20 @@ fn printRuleEvaluationResult(writer: anytype, value: std.json.Value) !void {
             correction_influences,
             future_behavior_candidates,
             influence_telemetry,
+        );
+    }
+    if (hasReviewedNegativeKnowledgeInfluence(
+        accepted_nk_warnings,
+        nk_influences,
+        future_behavior_candidates,
+        nk_telemetry,
+    )) {
+        try printReviewedNegativeKnowledgeInfluence(
+            writer,
+            accepted_nk_warnings,
+            nk_influences,
+            future_behavior_candidates,
+            nk_telemetry,
         );
     }
 
@@ -322,8 +340,20 @@ fn hasAcceptedCorrectionInfluence(
 ) bool {
     return (if (warnings) |v| !isEmptyJsonList(v) else false) or
         (if (influences) |v| !isEmptyJsonList(v) else false) or
-        (if (future_candidates) |v| !isEmptyJsonList(v) else false) or
+        (if (future_candidates) |v| hasCorrectionFutureCandidate(v) else false) or
         (if (telemetry) |v| hasInfluenceTelemetrySignal(v) else false);
+}
+
+fn hasReviewedNegativeKnowledgeInfluence(
+    warnings: ?std.json.Value,
+    influences: ?std.json.Value,
+    future_candidates: ?std.json.Value,
+    telemetry: ?std.json.Value,
+) bool {
+    return (if (warnings) |v| !isEmptyJsonList(v) else false) or
+        (if (influences) |v| !isEmptyJsonList(v) else false) or
+        (if (future_candidates) |v| hasReviewedNegativeKnowledgeFutureCandidate(v) else false) or
+        (if (telemetry) |v| hasNegativeKnowledgeTelemetrySignal(v) else false);
 }
 
 fn printAcceptedCorrectionInfluence(
@@ -375,6 +405,47 @@ fn printFutureBehaviorCandidates(writer: anytype, value: std.json.Value) !void {
     try printJsonValue(writer, value, 2);
 }
 
+fn printReviewedNegativeKnowledgeInfluence(
+    writer: anytype,
+    warnings: ?std.json.Value,
+    influences: ?std.json.Value,
+    future_candidates: ?std.json.Value,
+    telemetry: ?std.json.Value,
+) !void {
+    try writer.print("\nREVIEWED NEGATIVE KNOWLEDGE INFLUENCE / NON-AUTHORIZING\n", .{});
+    try writer.print("- Reviewed negative knowledge influenced this rule evaluation.\n", .{});
+    try writer.print("- This is not proof.\n", .{});
+    try writer.print("- This is not evidence.\n", .{});
+    try writer.print("- No corpus, pack, correction, or negative-knowledge mutation occurred.\n", .{});
+    try writer.print("- Future behavior remains candidate-only unless separately reviewed/applied.\n", .{});
+    if (hasSuppressedRuleOutput(telemetry, warnings, influences)) {
+        try writer.print("- A rule output was suppressed by reviewed negative knowledge influence and is not rendered as active.\n", .{});
+    }
+    if (warnings) |value| {
+        if (!isEmptyJsonList(value)) {
+            try writer.print("acceptedNegativeKnowledgeWarnings:\n", .{});
+            try printJsonValue(writer, value, 2);
+        }
+    }
+    if (influences) |value| {
+        if (!isEmptyJsonList(value)) {
+            try writer.print("negativeKnowledgeInfluences:\n", .{});
+            try printJsonValue(writer, value, 2);
+        }
+    }
+    if (telemetry) |value| {
+        if (hasNegativeKnowledgeTelemetrySignal(value)) {
+            try writer.print("negativeKnowledgeTelemetry:\n", .{});
+            try printJsonValue(writer, value, 2);
+        }
+    }
+    if (future_candidates) |value| {
+        if (!isEmptyJsonList(value)) {
+            try printFutureBehaviorCandidates(writer, value);
+        }
+    }
+}
+
 fn hasSuppressedRuleOutput(telemetry: ?std.json.Value, warnings: ?std.json.Value, influences: ?std.json.Value) bool {
     if (telemetry) |value| {
         switch (value) {
@@ -407,6 +478,34 @@ fn hasInfluenceTelemetrySignal(value: std.json.Value) bool {
         hasPressureField(obj, "mutationPerformed") or
         hasPressureField(obj, "commandsExecuted") or
         hasPressureField(obj, "verifiersExecuted");
+}
+
+fn hasNegativeKnowledgeTelemetrySignal(value: std.json.Value) bool {
+    const obj = switch (value) {
+        .object => |obj| obj,
+        else => return !isEmptyJsonList(value),
+    };
+    return hasPressureField(obj, "recordsRead") or
+        hasPressureField(obj, "acceptedRecords") or
+        hasPressureField(obj, "rejectedRecords") or
+        hasPressureField(obj, "malformedLines") or
+        hasPressureField(obj, "warnings") or
+        hasPressureField(obj, "influencesLoaded") or
+        hasPressureField(obj, "influencesApplied") or
+        hasPressureField(obj, "outputsSuppressed") or
+        hasPressureField(obj, "answerSuppressed") or
+        hasPressureField(obj, "truncated") or
+        hasPressureField(obj, "mutationPerformed") or
+        hasPressureField(obj, "commandsExecuted") or
+        hasPressureField(obj, "verifiersExecuted");
+}
+
+fn hasCorrectionFutureCandidate(value: std.json.Value) bool {
+    return jsonContainsAny(value, &.{ "sourceReviewedCorrectionId", "source_reviewed_correction_id" });
+}
+
+fn hasReviewedNegativeKnowledgeFutureCandidate(value: std.json.Value) bool {
+    return jsonContainsAny(value, &.{ "sourceReviewedNegativeKnowledgeId", "source_reviewed_negative_knowledge_id", "reviewed_negative_knowledge" });
 }
 
 fn findRuleEvaluation(value: std.json.Value) ?std.json.Value {

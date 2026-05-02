@@ -39,7 +39,10 @@ pub fn printHelp(writer: anytype) !void {
         \\  Reviewed negative knowledge is append-only and shard-local.
         \\  Reviewed negative knowledge is NOT PROOF and NOT EVIDENCE.
         \\  Accepted reviewed NK has no global promotion.
-        \\  Phase 11A does not add broad accepted-NK future behavior influence.
+        \\  Accepted reviewed NK may influence corpus.ask and rule.evaluate as
+        \\  same-shard warnings, suppression, or candidate-only future behavior.
+        \\  Influence is not proof, not evidence, and mutates no corpus, packs,
+        \\  corrections, or negative knowledge.
         \\  Reviewed list/get are read-only.
         \\  NO CORPUS OR PACK MUTATION.
         \\  NO VERIFIERS EXECUTED.
@@ -85,7 +88,8 @@ fn printReviewHelp(writer: anytype) !void {
         \\  NO GLOBAL PROMOTION.
         \\  NO CORPUS OR PACK MUTATION.
         \\  NO VERIFIERS EXECUTED.
-        \\  ACCEPTED NK DOES NOT BROADLY INFLUENCE FUTURE BEHAVIOR YET.
+        \\  ACCEPTED NK MAY INFLUENCE SAME-SHARD CORPUS/RULE OUTPUTS ONLY AS
+        \\  NON-AUTHORIZING WARNINGS, SUPPRESSION, OR CANDIDATES.
         \\
     , .{});
 }
@@ -133,7 +137,8 @@ fn printReviewedListHelp(writer: anytype) !void {
         \\Safety:
         \\  READ-ONLY. NOT PROOF. NOT EVIDENCE. NON-AUTHORIZING.
         \\  NO KNOWLEDGE MUTATED. NO VERIFIERS EXECUTED.
-        \\  Phase 11A does not add broad future behavior influence.
+        \\  Accepted reviewed NK influence is same-shard only and remains
+        \\  warning/candidate-only; it is not proof or evidence.
         \\
     , .{});
 }
@@ -472,7 +477,7 @@ fn printNegativeKnowledgeReviewResult(writer: anytype, value: std.json.Value) !v
     try printSection(writer, review, "futureInfluenceCandidate", "Future Influence Candidate / NOT APPLIED");
     try printSection(writer, review, "future_influence_candidate", "Future Influence Candidate / NOT APPLIED");
 
-    try writer.print("\nNotice: reviewed negative knowledge records explicit accept/reject decisions only. Accepted reviewed NK remains non-authorizing, not proof, not evidence, shard-local, and not broad future behavior influence in Phase 11A.\n", .{});
+    try writer.print("\nNotice: reviewed negative knowledge records explicit accept/reject decisions only. Accepted reviewed NK remains non-authorizing, not proof, not evidence, shard-local, and can influence corpus.ask or rule.evaluate only as warnings, suppression, or candidate-only future behavior.\n", .{});
 }
 
 fn printReviewedNegativeKnowledgeListResult(writer: anytype, value: std.json.Value) !void {
