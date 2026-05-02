@@ -51,6 +51,9 @@ pub fn printHelp(writer: anytype) !void {
         \\  appear as NON-AUTHORIZING routing hints only.
         \\  Capacity telemetry is explicit: skipped, dropped, truncated, or
         \\  capped data means partial coverage and cannot support an answer.
+        \\  Accepted reviewed corrections may influence ask results as
+        \\  warnings or candidate-only future behavior, but they are not proof
+        \\  or evidence and do not mutate corpus, packs, or negative knowledge.
         \\  No Transformers, embeddings, model adapters, hidden learning, pack
         \\  mutation, negative-knowledge mutation, verifier execution, or
         \\  automatic startup corpus operation is performed by this command group.
@@ -128,6 +131,10 @@ fn printAskHelp(writer: anytype) !void {
         \\  appear as NON-AUTHORIZING routing hints only, never as evidence.
         \\  Capacity warnings mean partial coverage: skipped, dropped,
         \\  truncated, or capped data cannot support an answer.
+        \\  Accepted reviewed corrections may appear as NON-AUTHORIZING
+        \\  influence, warnings, telemetry, or future behavior candidates.
+        \\  They are not proof, not evidence, and may suppress exact repeated
+        \\  bad answer patterns without globally promoting anything.
         \\  It is not semantic search, and mounted pack corpus is not included.
         \\  It does not use Transformers, embeddings, or model adapters.
         \\  It does not mutate corpus, mutate packs, mutate negative knowledge,
@@ -533,11 +540,36 @@ fn printCorpusAskResult(writer: anytype, value: std.json.Value) !void {
     const capacity_telemetry = corpus.get("capacityTelemetry");
     const evidence = corpus.get("evidenceUsed");
     const similar_candidates = corpus.get("similarCandidates");
+    const accepted_correction_warnings = corpus.get("acceptedCorrectionWarnings");
+    const correction_influences = corpus.get("correctionInfluences");
+    const future_behavior_candidates = corpus.get("futureBehaviorCandidates");
+    const influence_telemetry = corpus.get("influenceTelemetry");
     const has_answer = corpus.get("answerDraft") != null;
     const has_evidence = if (evidence) |e| !isEmptyJsonList(e) else false;
     const has_similar_candidates = if (similar_candidates) |s| !isEmptyJsonList(s) else false;
+    const has_correction_influence = hasAcceptedCorrectionInfluence(
+        accepted_correction_warnings,
+        correction_influences,
+        future_behavior_candidates,
+        influence_telemetry,
+    );
+    const answer_suppressed_by_correction = !has_answer and hasCorrectionSuppression(
+        accepted_correction_warnings,
+        correction_influences,
+        future_behavior_candidates,
+        influence_telemetry,
+    );
     if ((if (capacity_telemetry) |telemetry| hasCapacityPressure(telemetry) else false) or hasUnknownKind(unknowns, "capacity_limited")) {
         try printCorpusCapacityWarning(writer, capacity_telemetry);
+    }
+    if (has_correction_influence) {
+        try printAcceptedCorrectionInfluence(
+            writer,
+            accepted_correction_warnings,
+            correction_influences,
+            future_behavior_candidates,
+            influence_telemetry,
+        );
     }
     if (corpus.get("answerDraft")) |answer| {
         try writer.print("\nAnswer Draft:\n", .{});
@@ -545,7 +577,9 @@ fn printCorpusAskResult(writer: anytype, value: std.json.Value) !void {
         try writer.print("\n", .{});
     } else {
         try writer.print("\nNo answer was produced.\n", .{});
-        if (hasUnknownKind(unknowns, "no_corpus_available")) {
+        if (answer_suppressed_by_correction) {
+            try writer.print("The answer draft was suppressed by accepted correction influence from an exact repeated wrong_answer pattern.\n", .{});
+        } else if (hasUnknownKind(unknowns, "no_corpus_available")) {
             try writer.print("No live shard corpus is available for this ask request.\n", .{});
         } else if (hasUnknownKind(unknowns, "conflicting_evidence")) {
             try writer.print("Conflicting corpus evidence was reported, so no answer draft is rendered.\n", .{});
@@ -637,6 +671,91 @@ fn printCorpusCapacityWarning(writer: anytype, telemetry: ?std.json.Value) !void
     try printCapacityField(writer, obj, "capacityWarnings");
     try printCapacityField(writer, obj, "expansionRecommended");
     try printCapacityField(writer, obj, "spilloverRecommended");
+}
+
+fn hasAcceptedCorrectionInfluence(
+    warnings: ?std.json.Value,
+    influences: ?std.json.Value,
+    future_candidates: ?std.json.Value,
+    telemetry: ?std.json.Value,
+) bool {
+    return (if (warnings) |v| !isEmptyJsonList(v) else false) or
+        (if (influences) |v| !isEmptyJsonList(v) else false) or
+        (if (future_candidates) |v| !isEmptyJsonList(v) else false) or
+        (if (telemetry) |v| hasInfluenceTelemetrySignal(v) else false);
+}
+
+fn hasCorrectionSuppression(
+    warnings: ?std.json.Value,
+    influences: ?std.json.Value,
+    future_candidates: ?std.json.Value,
+    telemetry: ?std.json.Value,
+) bool {
+    return (if (warnings) |v| jsonContainsAny(v, &.{ "wrong_answer", "suppress", "suppressed", "repeated" }) else false) or
+        (if (influences) |v| jsonContainsAny(v, &.{ "wrong_answer", "suppress", "suppressed", "repeated" }) else false) or
+        (if (future_candidates) |v| jsonContainsAny(v, &.{ "wrong_answer", "suppress", "suppressed", "repeated" }) else false) or
+        (if (telemetry) |v| jsonContainsAny(v, &.{ "wrong_answer", "suppress", "suppressed", "repeated" }) else false);
+}
+
+fn printAcceptedCorrectionInfluence(
+    writer: anytype,
+    warnings: ?std.json.Value,
+    influences: ?std.json.Value,
+    future_candidates: ?std.json.Value,
+    telemetry: ?std.json.Value,
+) !void {
+    try writer.print("\nACCEPTED CORRECTION INFLUENCE / NON-AUTHORIZING\n", .{});
+    try writer.print("- Accepted corrections influenced this result.\n", .{});
+    try writer.print("- This is not proof.\n", .{});
+    try writer.print("- This is not evidence.\n", .{});
+    try writer.print("- No corpus, pack, or negative-knowledge mutation occurred.\n", .{});
+    try writer.print("- Future behavior remains candidate-only unless separately reviewed/applied.\n", .{});
+    if (warnings) |value| {
+        if (!isEmptyJsonList(value)) {
+            try writer.print("acceptedCorrectionWarnings:\n", .{});
+            try printJsonValue(writer, value, 2);
+        }
+    }
+    if (influences) |value| {
+        if (!isEmptyJsonList(value)) {
+            try writer.print("correctionInfluences:\n", .{});
+            try printJsonValue(writer, value, 2);
+        }
+    }
+    if (telemetry) |value| {
+        if (!isEmptyJsonList(value)) {
+            try writer.print("influenceTelemetry:\n", .{});
+            try printJsonValue(writer, value, 2);
+        }
+    }
+    if (future_candidates) |value| {
+        if (!isEmptyJsonList(value)) {
+            try printFutureBehaviorCandidates(writer, value);
+        }
+    }
+}
+
+fn printFutureBehaviorCandidates(writer: anytype, value: std.json.Value) !void {
+    try writer.print("\nFUTURE BEHAVIOR CANDIDATES / NOT APPLIED\n", .{});
+    try writer.print("- Candidates only.\n", .{});
+    try writer.print("- Not persisted as negative-knowledge, corpus, or pack updates by this operation.\n", .{});
+    try writer.print("- No verifier executed.\n", .{});
+    try printJsonValue(writer, value, 2);
+}
+
+fn hasInfluenceTelemetrySignal(value: std.json.Value) bool {
+    const obj = switch (value) {
+        .object => |obj| obj,
+        else => return !isEmptyJsonList(value),
+    };
+    return hasPressureField(obj, "reviewedRecordsRead") or
+        hasPressureField(obj, "acceptedRecordsRead") or
+        hasPressureField(obj, "rejectedRecordsRead") or
+        hasPressureField(obj, "malformedLines") or
+        hasPressureField(obj, "warnings") or
+        hasPressureField(obj, "matchedInfluences") or
+        hasPressureField(obj, "answerSuppressed") or
+        hasPressureField(obj, "boundedReadTruncated");
 }
 
 fn printCapacityField(writer: anytype, obj: std.json.ObjectMap, field: []const u8) !void {
@@ -828,6 +947,34 @@ fn isEmptyJsonList(value: std.json.Value) bool {
         .null => true,
         else => false,
     };
+}
+
+fn jsonContainsAny(value: std.json.Value, needles: []const []const u8) bool {
+    switch (value) {
+        .string => |s| {
+            for (needles) |needle| {
+                if (std.ascii.indexOfIgnoreCase(s, needle) != null) return true;
+            }
+            return false;
+        },
+        .array => |arr| {
+            for (arr.items) |item| {
+                if (jsonContainsAny(item, needles)) return true;
+            }
+            return false;
+        },
+        .object => |obj| {
+            var it = obj.iterator();
+            while (it.next()) |entry| {
+                if (std.ascii.indexOfIgnoreCase(entry.key_ptr.*, "suppress") != null) return true;
+                if (std.ascii.indexOfIgnoreCase(entry.key_ptr.*, "wrong_answer") != null) return true;
+                if (std.ascii.indexOfIgnoreCase(entry.key_ptr.*, "repeated") != null) return true;
+                if (jsonContainsAny(entry.value_ptr.*, needles)) return true;
+            }
+            return false;
+        },
+        else => return false,
+    }
 }
 
 fn getString(obj: std.json.ObjectMap, field: []const u8) ?[]const u8 {

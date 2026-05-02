@@ -205,6 +205,20 @@ distance, similarity score, reason `simhash_near_duplicate`, and
 `nonAuthorizing: true`. Approximate-only matches do not populate Evidence Used
 and do not render an answer draft.
 
+`acceptedCorrectionWarnings`, `correctionInfluences`, `influenceTelemetry`, and
+`futureBehaviorCandidates` are displayed separately as **ACCEPTED CORRECTION
+INFLUENCE / NON-AUTHORIZING** when present. Accepted reviewed corrections may
+influence `corpus.ask`, but the CLI renders them as warnings and candidate-only
+future behavior, not proof, evidence, support, or global promotion. They are not
+shown under Evidence Used. If an exact repeated `wrong_answer` pattern suppresses
+`answerDraft`, human mode states that the answer draft was suppressed by
+accepted correction influence instead of treating it as no-corpus or generic
+insufficient evidence.
+
+`futureBehaviorCandidates` are displayed as **FUTURE BEHAVIOR CANDIDATES / NOT
+APPLIED**. They are candidates only, are not persisted as negative-knowledge,
+corpus, or pack updates by this operation, and no verifier is executed.
+
 `learningCandidates` are displayed as CANDIDATE ONLY / NOT PERSISTED. Rendering
 them does not persist learning, mutate corpus, mutate packs, mutate negative
 knowledge, run commands, or run verifiers. Trace flags such as

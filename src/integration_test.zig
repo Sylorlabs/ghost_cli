@@ -1760,6 +1760,7 @@ test "corpus ask human matching evidence renders draft answer and evidence" {
     try testing.expect(std.mem.indexOf(u8, res.stdout, "Answer Draft:") != null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "Verifier execution is not run") != null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "Evidence Used:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "ACCEPTED CORRECTION INFLUENCE / NON-AUTHORIZING") == null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "corpus/live.jsonl") != null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "docs/GIP.md") != null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "matched verifier terms") != null);
@@ -1770,6 +1771,88 @@ test "corpus ask human matching evidence renders draft answer and evidence" {
     try testing.expect(std.mem.indexOf(u8, res.stdout, "negativeKnowledgeMutation: false") != null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "commandsExecuted: false") != null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "verifiersExecuted: false") != null);
+}
+
+test "corpus ask human accepted correction influence renders non-authorizing block" {
+    const mock_root = "/tmp/ghost-cli-corpus-correction-influence";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\n" ++
+            "cat >/dev/null\n" ++
+            "printf '%s' '{\"corpusAsk\":{\"status\":\"answered\",\"state\":\"draft\",\"permission\":\"none\",\"answerDraft\":\"Exact retained evidence still supports this draft.\",\"evidenceUsed\":[{\"itemId\":\"item-1\",\"path\":\"corpus/live.jsonl\",\"snippet\":\"exact retained evidence\",\"reason\":\"exact match\"}],\"acceptedCorrectionWarnings\":[{\"kind\":\"accepted_correction_influence\",\"message\":\"accepted correction influenced this result\"}],\"correctionInfluences\":[{\"correctionType\":\"missing_evidence\",\"sourceCorrectionId\":\"reviewed-1\",\"nonAuthorizing\":true,\"treatedAsProof\":false,\"evidence\":false}],\"futureBehaviorCandidates\":[{\"candidateKind\":\"follow_up_evidence_candidate\",\"status\":\"candidate\",\"persisted\":false,\"verifierExecuted\":false}],\"influenceTelemetry\":{\"acceptedCorrectionsConsidered\":1,\"acceptedCorrectionsApplied\":1,\"rejectedCorrectionsIgnored\":2},\"unknowns\":[],\"candidateFollowups\":[],\"learningCandidates\":[],\"trace\":{\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "corpus",
+        "ask",
+        "--engine-root=" ++ mock_root,
+        "What does accepted correction influence do?",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    const influence_idx = std.mem.indexOf(u8, res.stdout, "ACCEPTED CORRECTION INFLUENCE / NON-AUTHORIZING") orelse return error.TestExpectedEqual;
+    const evidence_idx = std.mem.indexOf(u8, res.stdout, "Evidence Used:") orelse return error.TestExpectedEqual;
+    const future_idx = std.mem.indexOf(u8, res.stdout, "FUTURE BEHAVIOR CANDIDATES / NOT APPLIED") orelse return error.TestExpectedEqual;
+    try testing.expect(influence_idx < evidence_idx);
+    try testing.expect(future_idx < evidence_idx);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Accepted corrections influenced this result.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "This is not proof.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "This is not evidence.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "No corpus, pack, or negative-knowledge mutation occurred.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Future behavior remains candidate-only unless separately reviewed/applied.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "acceptedCorrectionWarnings:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "correctionInfluences:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "influenceTelemetry:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Candidates only.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Not persisted as negative-knowledge, corpus, or pack updates by this operation.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "No verifier executed.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Evidence Used:\n  - evidence #1") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "corpusMutation: false") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "negativeKnowledgeMutation: false") != null);
+}
+
+test "corpus ask human suppressed answer explains accepted correction influence" {
+    const mock_root = "/tmp/ghost-cli-corpus-correction-suppressed";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\n" ++
+            "cat >/dev/null\n" ++
+            "printf '%s' '{\"corpusAsk\":{\"status\":\"unknown\",\"state\":\"unresolved\",\"permission\":\"unresolved\",\"evidenceUsed\":[],\"acceptedCorrectionWarnings\":[{\"kind\":\"answer_draft_suppressed\",\"reason\":\"exact repeated wrong_answer pattern suppressed\"}],\"correctionInfluences\":[{\"correctionType\":\"wrong_answer\",\"effect\":\"suppress_answer_draft\",\"nonAuthorizing\":true}],\"futureBehaviorCandidates\":[],\"influenceTelemetry\":{\"acceptedCorrectionsConsidered\":1,\"suppressedAnswerDrafts\":1},\"unknowns\":[{\"kind\":\"accepted_correction_suppressed_answer\",\"reason\":\"wrong_answer repeated pattern\"}],\"candidateFollowups\":[],\"learningCandidates\":[],\"trace\":{\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "corpus",
+        "ask",
+        "--engine-root=" ++ mock_root,
+        "repeat the wrong answer?",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "ACCEPTED CORRECTION INFLUENCE / NON-AUTHORIZING") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "No answer was produced.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "The answer draft was suppressed by accepted correction influence from an exact repeated wrong_answer pattern.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "answer_draft_suppressed") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "suppressedAnswerDrafts: 1") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "No live shard corpus is available") == null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Corpus evidence was insufficient") == null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Evidence Used:") == null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Answer Draft:") == null);
 }
 
 test "corpus ask human capacity telemetry renders coverage warning with answer and evidence" {

@@ -109,6 +109,20 @@ Hamming distance, similarity score, reason `simhash_near_duplicate`, and
 not populate `evidenceUsed`, and approximate-only matches do not render an
 answer draft.
 
+Accepted reviewed corrections may influence `corpus.ask` as
+**ACCEPTED CORRECTION INFLUENCE / NON-AUTHORIZING**. Human mode renders
+`acceptedCorrectionWarnings`, `correctionInfluences`, `influenceTelemetry`, and
+`futureBehaviorCandidates` when present. These fields are warnings and
+candidate-only future behavior, not proof, evidence, support, or global
+promotion. They are never rendered under Evidence Used. Exact repeated
+`wrong_answer` patterns may suppress `answerDraft`; when that happens, human
+mode says the draft was suppressed by accepted correction influence rather than
+presenting it as no corpus or generic insufficient evidence.
+
+`futureBehaviorCandidates` are rendered as **FUTURE BEHAVIOR CANDIDATES / NOT
+APPLIED**. They are candidates only, are not persisted as negative-knowledge,
+corpus, or pack updates by this operation, and do not execute verifiers.
+
 Retrieval is bounded local matching over live shard corpus excerpts only. Exact
 evidence remains required for answers. It is not semantic search, and there are
 no Transformers, embeddings, or model adapters in this path. Mounted pack corpus
