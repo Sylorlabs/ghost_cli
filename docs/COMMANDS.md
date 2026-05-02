@@ -21,7 +21,7 @@ ghost
 
 This is a renderer/front-door path. No doctor/status diagnostic, context/project
 autopsy scan, correction proposal, verifier execution, pack mutation, or
-negative-knowledge mutation is started by launch or idle rendering. Explicit
+negative-knowledge mutation, or correction review is started by launch or idle rendering. Explicit
 slash commands and submitted prompts may invoke engine binaries according to
 their command contract.
 
@@ -162,7 +162,7 @@ stderr only, including engine path, GIP kind, input file path, stdin byte count,
 exit code, and parse status.
 
 ### `ghost correction`
-Explicit correction proposal commands.
+Explicit correction proposal and review commands.
 
 #### `ghost correction propose`
 Run an explicit correction proposal through `ghost_gip` operation
@@ -195,6 +195,41 @@ command yet.
 This command is explicit only. It does not run from help, startup, TUI launch,
 doctor, status, `corpus ask`, `rules evaluate`, `context autopsy`, or pack
 validation.
+
+`--json` preserves raw GIP stdout exactly. `--debug` writes diagnostics to
+stderr only, including engine path, GIP kind, input file path, stdin byte count,
+exit code, and parse status.
+
+#### `ghost correction review`
+Run an explicit correction review through `ghost_gip` operation
+`correction.review`.
+
+Usage: `ghost correction review --file request.json`
+Usage: `ghost correction review --json --file request.json`
+Usage: `ghost correction review --debug --file request.json`
+
+The file must be a full GIP-compatible JSON request with top-level
+`kind: "correction.review"`. The CLI reads the file, validates that kind, and
+sends the bytes unchanged to `ghost_gip --stdin`. It does not invent accept /
+reject flags yet and does not auto-fill fields from previous proposal output.
+
+Human-readable output renders the reviewed correction record, decision,
+reviewer note, rejected reason when present, accepted learning outputs when
+present, future behavior candidate when present, append-only storage metadata,
+mutation flags, and authority flags. It prints these required safety labels:
+`REVIEWED CORRECTION RECORD`, `APPEND-ONLY`, `NOT PROOF`,
+`NON-AUTHORIZING`, `NO GLOBAL PROMOTION`, `NO KNOWLEDGE MUTATED`,
+`NO VERIFIERS EXECUTED`, and `FUTURE BEHAVIOR IS CANDIDATE-ONLY`.
+
+Correction review records explicit accept/reject decisions. Accepted reviewed
+corrections are still not proof, do not mutate corpus, packs, or negative
+knowledge, do not execute verifier/check candidates, and do not imply global
+promotion. Future behavior is candidate-only. `correction.reviewed.list` and
+`correction.reviewed.get` are not available yet.
+
+This command is explicit only. It does not run from help, startup, TUI launch,
+doctor, status, `correction propose`, `corpus ask`, `rules evaluate`,
+`context autopsy`, or pack validation.
 
 `--json` preserves raw GIP stdout exactly. `--debug` writes diagnostics to
 stderr only, including engine path, GIP kind, input file path, stdin byte count,

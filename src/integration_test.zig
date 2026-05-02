@@ -180,7 +180,9 @@ test "subcommand help works without resolving engine" {
         testing.allocator.free(correction_res.stderr);
     }
     try testing.expectEqual(@as(u32, 0), correction_res.term.Exited);
-    try testing.expect(std.mem.indexOf(u8, correction_res.stderr, "Usage: ghost correction propose --file <request.json>") != null);
+    try testing.expect(std.mem.indexOf(u8, correction_res.stderr, "Usage: ghost correction <propose|review> --file <request.json>") != null);
+    try testing.expect(std.mem.indexOf(u8, correction_res.stderr, "review --file <request.json>") != null);
+    try testing.expect(std.mem.indexOf(u8, correction_res.stderr, "Accepted reviewed corrections are still not proof") != null);
     try testing.expect(std.mem.indexOf(u8, correction_res.stderr, "No correction.accept exists yet") != null);
 
     const correction_propose_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "correction", "propose", "--help", "--engine-root=/tmp/ghost-help-missing" });
@@ -191,6 +193,17 @@ test "subcommand help works without resolving engine" {
     try testing.expectEqual(@as(u32, 0), correction_propose_res.term.Exited);
     try testing.expect(std.mem.indexOf(u8, correction_propose_res.stderr, "CORRECTION CANDIDATE ONLY") != null);
     try testing.expect(std.mem.indexOf(u8, correction_propose_res.stderr, "NO KNOWLEDGE MUTATED") != null);
+
+    const correction_review_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "correction", "review", "--help", "--engine-root=/tmp/ghost-help-missing" });
+    defer {
+        testing.allocator.free(correction_review_res.stdout);
+        testing.allocator.free(correction_review_res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), correction_review_res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, correction_review_res.stderr, "Usage: ghost correction review --file <request.json>") != null);
+    try testing.expect(std.mem.indexOf(u8, correction_review_res.stderr, "REVIEWED CORRECTION RECORD") != null);
+    try testing.expect(std.mem.indexOf(u8, correction_review_res.stderr, "FUTURE BEHAVIOR IS CANDIDATE-ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, correction_review_res.stderr, "correction.reviewed.list/get are not available yet") != null);
 }
 
 test "TUI read-only help works with command parser" {
@@ -1365,7 +1378,204 @@ test "correction propose debug diagnostics stay on stderr" {
     try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Parse Status: ok") != null);
 }
 
-test "doctor status and no-arg TUI do not run correction propose" {
+test "correction review routes file payload to ghost_gip" {
+    const mock_root = "/tmp/ghost-cli-correction-review-route";
+    const payload_path = mock_root ++ "/payload.json";
+    const request_path = "/tmp/ghost-cli-correction-review-route-request.json";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+    defer std.fs.cwd().deleteFile(request_path) catch {};
+
+    {
+        const request = try std.fs.cwd().createFile(request_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"correction.review\",\"projectShard\":\"project-a\",\"correctionCandidateId\":\"candidate-1\",\"decision\":\"accepted\",\"reviewerNote\":\"reviewed\"}");
+    }
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat > '" ++ payload_path ++ "'\nprintf '%s' '{\"gipVersion\":\"gip.v0.1\",\"kind\":\"correction.review\",\"status\":\"ok\",\"result\":{\"correctionReview\":{\"status\":\"reviewed\",\"reviewedCorrectionRecord\":{\"id\":\"reviewed-1\",\"projectShard\":\"project-a\",\"sourceCorrectionCandidateId\":\"candidate-1\",\"reviewDecision\":\"accepted\",\"reviewerNote\":\"reviewed\",\"nonAuthorizing\":true,\"treatedAsProof\":false,\"globalPromotion\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false,\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"appendOnly\":{\"storage\":\"jsonl\",\"inPlaceRewrite\":false,\"deletion\":false,\"compaction\":false,\"stableOrdering\":\"file_append_order\"}},\"requiredReview\":false,\"storage\":{\"path\":\"/tmp/reviewed_corrections.jsonl\",\"appendOnly\":true,\"stableOrdering\":\"file_append_order\"},\"mutationFlags\":{\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false},\"authority\":{\"nonAuthorizing\":true,\"treatedAsProof\":false,\"globalPromotion\":false}}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "correction", "review", "--engine-root=" ++ mock_root, "--file", request_path });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+    const payload = try std.fs.cwd().readFileAlloc(testing.allocator, payload_path, 1024 * 1024);
+    defer testing.allocator.free(payload);
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, payload, "\"kind\":\"correction.review\"") != null);
+    try testing.expect(std.mem.indexOf(u8, payload, "\"decision\":\"accepted\"") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Correction Review Result") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "REVIEWED CORRECTION RECORD") != null);
+}
+
+test "correction review human accepted output renders required labels" {
+    const mock_root = "/tmp/ghost-cli-correction-review-accepted";
+    const request_path = "/tmp/ghost-cli-correction-review-accepted-request.json";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+    defer std.fs.cwd().deleteFile(request_path) catch {};
+
+    {
+        const request = try std.fs.cwd().createFile(request_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"correction.review\",\"projectShard\":\"project-a\",\"correctionCandidateId\":\"candidate-1\",\"decision\":\"accepted\",\"reviewerNote\":\"accepted after review\",\"acceptedLearningOutputs\":[{\"candidateKind\":\"future_behavior_candidate\"}]}");
+    }
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s' '{\"result\":{\"correctionReview\":{\"status\":\"reviewed\",\"reviewedCorrectionRecord\":{\"id\":\"reviewed-1\",\"projectShard\":\"project-a\",\"sourceCorrectionCandidateId\":\"candidate-1\",\"correctionCandidate\":{\"id\":\"candidate-1\"},\"reviewDecision\":\"accepted\",\"reviewerNote\":\"accepted after review\",\"acceptedLearningOutputs\":[{\"candidateKind\":\"future_behavior_candidate\",\"summary\":\"candidate only\"}],\"futureBehaviorCandidate\":{\"status\":\"candidate\",\"candidateOnly\":true,\"nonAuthorizing\":true,\"treatedAsProof\":false,\"globalPromotion\":false},\"nonAuthorizing\":true,\"treatedAsProof\":false,\"globalPromotion\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false,\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"appendOnly\":{\"storage\":\"jsonl\",\"appendOffsetBytes\":0,\"inPlaceRewrite\":false,\"deletion\":false,\"compaction\":false,\"stableOrdering\":\"file_append_order\"}},\"requiredReview\":false,\"futureBehaviorCandidate\":{\"status\":\"candidate\",\"nonAuthorizing\":true,\"treatedAsProof\":false,\"globalPromotion\":false},\"storage\":{\"path\":\"/tmp/reviewed_corrections.jsonl\",\"appendOnly\":true,\"stableOrdering\":\"file_append_order\",\"inPlaceRewrite\":false,\"deletion\":false,\"compaction\":false},\"mutationFlags\":{\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false},\"authority\":{\"nonAuthorizing\":true,\"treatedAsProof\":false,\"requiredReview\":false,\"globalPromotion\":false,\"supportGranted\":false,\"proofDischarged\":false}}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "correction", "review", "--engine-root=" ++ mock_root, "--file", request_path });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "REVIEWED CORRECTION RECORD") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "APPEND-ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "NOT PROOF") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "NON-AUTHORIZING") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "NO GLOBAL PROMOTION") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "NO KNOWLEDGE MUTATED") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "NO VERIFIERS EXECUTED") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "FUTURE BEHAVIOR IS CANDIDATE-ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Decision: accepted") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Reviewer Note: accepted after review") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Accepted Learning Outputs:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Future Behavior Candidate:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Append-Only Metadata:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Mutation Flags:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Authority Flags:") != null);
+}
+
+test "correction review human rejected output renders rejected reason" {
+    const mock_root = "/tmp/ghost-cli-correction-review-rejected";
+    const request_path = "/tmp/ghost-cli-correction-review-rejected-request.json";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+    defer std.fs.cwd().deleteFile(request_path) catch {};
+
+    {
+        const request = try std.fs.cwd().createFile(request_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"correction.review\",\"projectShard\":\"project-a\",\"correctionCandidateId\":\"candidate-2\",\"decision\":\"rejected\",\"reviewerNote\":\"bad candidate\",\"rejectedReason\":\"insufficient evidence\"}");
+    }
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s' '{\"result\":{\"correctionReview\":{\"status\":\"reviewed\",\"reviewedCorrectionRecord\":{\"id\":\"reviewed-2\",\"projectShard\":\"project-a\",\"sourceCorrectionCandidateId\":\"candidate-2\",\"reviewDecision\":\"rejected\",\"reviewerNote\":\"bad candidate\",\"rejectedReason\":\"insufficient evidence\",\"nonAuthorizing\":true,\"treatedAsProof\":false,\"globalPromotion\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false,\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"appendOnly\":{\"storage\":\"jsonl\",\"inPlaceRewrite\":false,\"deletion\":false,\"compaction\":false,\"stableOrdering\":\"file_append_order\"}},\"requiredReview\":false,\"storage\":{\"path\":\"/tmp/reviewed_corrections.jsonl\",\"appendOnly\":true,\"stableOrdering\":\"file_append_order\"},\"mutationFlags\":{\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false},\"authority\":{\"nonAuthorizing\":true,\"treatedAsProof\":false,\"globalPromotion\":false}}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "correction", "review", "--engine-root=" ++ mock_root, "--file", request_path });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Decision: rejected") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Reviewer Note: bad candidate") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Rejected Reason: insufficient evidence") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Future Behavior Candidate:") == null);
+}
+
+test "correction review json byte matches direct ghost_gip stdout" {
+    const mock_root = "/tmp/ghost-cli-correction-review-json";
+    const request_path = "/tmp/ghost-cli-correction-review-json-request.json";
+    const raw_json = "{\"result\":{\"correctionReview\":{\"status\":\"reviewed\",\"reviewedCorrectionRecord\":{\"id\":\"reviewed-1\",\"reviewDecision\":\"accepted\",\"nonAuthorizing\":true,\"treatedAsProof\":false},\"requiredReview\":false,\"mutationFlags\":{\"corpusMutation\":false},\"authority\":{\"treatedAsProof\":false}}}}";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+    defer std.fs.cwd().deleteFile(request_path) catch {};
+
+    {
+        const request = try std.fs.cwd().createFile(request_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"correction.review\",\"projectShard\":\"project-a\",\"correctionCandidateId\":\"candidate-1\",\"decision\":\"accepted\",\"reviewerNote\":\"reviewed\"}");
+    }
+    try writeMockExecutable(mock_root ++ "/ghost_gip", "#!/bin/sh\ncat >/dev/null\nprintf '%s' '" ++ raw_json ++ "'\n");
+
+    const request_bytes = try std.fs.cwd().readFileAlloc(testing.allocator, request_path, 1024 * 1024);
+    defer testing.allocator.free(request_bytes);
+    const direct_res = try runCmdWithInput(testing.allocator, &[_][]const u8{ mock_root ++ "/ghost_gip", "--stdin" }, request_bytes);
+    defer {
+        testing.allocator.free(direct_res.stdout);
+        testing.allocator.free(direct_res.stderr);
+    }
+    const cli_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "correction", "review", "--json", "--engine-root=" ++ mock_root, "--file", request_path });
+    defer {
+        testing.allocator.free(cli_res.stdout);
+        testing.allocator.free(cli_res.stderr);
+    }
+    try testing.expectEqualStrings(direct_res.stdout, cli_res.stdout);
+    try testing.expectEqualStrings("", cli_res.stderr);
+}
+
+test "correction review debug diagnostics stay on stderr" {
+    const mock_root = "/tmp/ghost-cli-correction-review-debug";
+    const request_path = "/tmp/ghost-cli-correction-review-debug-request.json";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+    defer std.fs.cwd().deleteFile(request_path) catch {};
+
+    {
+        const request = try std.fs.cwd().createFile(request_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"correction.review\",\"projectShard\":\"project-a\",\"correctionCandidateId\":\"candidate-1\",\"decision\":\"accepted\",\"reviewerNote\":\"reviewed\"}");
+    }
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s' '{\"result\":{\"correctionReview\":{\"status\":\"reviewed\",\"reviewedCorrectionRecord\":{\"id\":\"reviewed-1\",\"reviewDecision\":\"accepted\",\"nonAuthorizing\":true,\"treatedAsProof\":false},\"requiredReview\":false,\"mutationFlags\":{\"corpusMutation\":false},\"authority\":{\"treatedAsProof\":false}}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "correction", "review", "--debug", "--engine-root=" ++ mock_root, "--file", request_path });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "[DEBUG]") == null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Correction Review Result") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Engine Binary:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] GIP Kind: correction.review") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Input File:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Stdin Byte Count:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Exit Code: 0") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Parse Status: ok") != null);
+}
+
+test "correction review rejects wrong request kind before engine" {
+    const mock_root = "/tmp/ghost-cli-correction-review-wrong-kind";
+    const request_path = "/tmp/ghost-cli-correction-review-wrong-kind-request.json";
+    const marker = mock_root ++ "/engine-marker";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+    defer std.fs.cwd().deleteFile(request_path) catch {};
+
+    {
+        const request = try std.fs.cwd().createFile(request_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"correction.propose\"}");
+    }
+    try writeMockExecutable(mock_root ++ "/ghost_gip", "#!/bin/sh\ntouch '" ++ marker ++ "'\nprintf '{}'\n");
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "correction", "review", "--engine-root=" ++ mock_root, "--file", request_path });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+    try testing.expect(res.term.Exited != 0);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "top-level kind \"correction.review\"") != null);
+    try testing.expectError(error.FileNotFound, std.fs.cwd().access(marker, .{}));
+}
+
+test "doctor status and no-arg TUI do not run correction propose or review" {
     const mock_root = "/tmp/ghost-cli-correction-no-hidden";
     const marker = "/tmp/ghost-cli-correction-no-hidden-marker";
     std.fs.cwd().deleteTree(mock_root) catch {};
@@ -1377,7 +1587,7 @@ test "doctor status and no-arg TUI do not run correction propose" {
     try writeMockExecutable(mock_root ++ "/ghost_task_operator", "#!/bin/sh\nprintf 'task help\\n'\n");
     try writeMockExecutable(
         mock_root ++ "/ghost_gip",
-        "#!/bin/sh\npayload=$(cat)\ncase \"$payload\" in *correction.propose*) printf correction > '" ++ marker ++ "'; exit 77 ;; *) printf '{\"status\":\"ok\"}' ;; esac\n",
+        "#!/bin/sh\npayload=$(cat)\ncase \"$payload\" in *correction.propose*|*correction.review*) printf correction > '" ++ marker ++ "'; exit 77 ;; *) printf '{\"status\":\"ok\"}' ;; esac\n",
     );
 
     const doctor_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "doctor", "--engine-root=" ++ mock_root });

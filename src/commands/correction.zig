@@ -9,24 +9,33 @@ pub const CorrectionOptions = struct {
 };
 
 const max_request_bytes = 1024 * 1024;
-const usage = "Usage: ghost correction propose --file <request.json> [--json] [--debug]\n";
+const usage =
+    \\Usage: ghost correction <propose|review> --file <request.json> [--json] [--debug]
+    \\
+;
 
 pub fn printHelp(writer: anytype) !void {
     try writer.print(
         \\correction
         \\
-        \\Usage: ghost correction propose --file <request.json> [--json] [--debug]
+        \\Usage: ghost correction <propose|review> --file <request.json> [--json] [--debug]
         \\
-        \\Explicit correction proposal commands.
+        \\Explicit correction proposal and review commands.
         \\
         \\Subcommands:
         \\  propose --file <request.json>  Run a correction.propose GIP request
+        \\  review --file <request.json>   Run a correction.review GIP request
         \\
         \\Safety:
         \\  This request runs only when this command is explicitly invoked.
-        \\  Request files must be GIP-compatible JSON with kind "correction.propose".
+        \\  Request files must be GIP-compatible JSON with kind "correction.propose" or "correction.review".
         \\  User corrections are signals, not proof.
         \\  Correction proposals are candidate-only and review-required.
+        \\  Correction reviews record explicit accept/reject decisions only.
+        \\  Accepted reviewed corrections are still not proof.
+        \\  Accepted reviews do not mutate corpus, packs, or negative knowledge.
+        \\  No global promotion is performed by default.
+        \\  correction.reviewed.list/get are not available yet.
         \\  No hidden learning is performed.
         \\  No correction.accept exists yet.
         \\  NO KNOWLEDGE MUTATED.
@@ -42,6 +51,7 @@ pub fn printHelp(writer: anytype) !void {
 pub fn printHelpForArgs(writer: anytype, args: []const []const u8) !void {
     if (args.len == 0) return printHelp(writer);
     if (std.mem.eql(u8, args[0], "propose")) return printProposeHelp(writer);
+    if (std.mem.eql(u8, args[0], "review")) return printReviewHelp(writer);
     return printHelp(writer);
 }
 
@@ -79,6 +89,40 @@ fn printProposeHelp(writer: anytype) !void {
     , .{});
 }
 
+fn printReviewHelp(writer: anytype) !void {
+    try writer.print(
+        \\correction review
+        \\
+        \\Usage: ghost correction review --file <request.json> [--json] [--debug]
+        \\
+        \\Reads a full GIP-compatible correction review request from a file and
+        \\sends the bytes unchanged to ghost_gip --stdin. The request must include
+        \\kind "correction.review".
+        \\
+        \\Options:
+        \\  --file <request.json>     Correction review GIP request file
+        \\  --json                    Preserve raw GIP stdout exactly
+        \\  --debug                   Diagnostics to stderr
+        \\
+        \\Safety:
+        \\  Explicit invocation only.
+        \\  Records accepted/rejected review decisions only.
+        \\  REVIEWED CORRECTION RECORD.
+        \\  APPEND-ONLY.
+        \\  NOT PROOF.
+        \\  NON-AUTHORIZING.
+        \\  NO GLOBAL PROMOTION.
+        \\  NO KNOWLEDGE MUTATED.
+        \\  NO VERIFIERS EXECUTED.
+        \\  FUTURE BEHAVIOR IS CANDIDATE-ONLY.
+        \\  Accepted reviews do not mutate corpus, packs, or negative knowledge.
+        \\  Does not execute verifier/check candidates.
+        \\  Does not run from correction.propose or any startup/diagnostic path.
+        \\  correction.reviewed.list/get are not available yet.
+        \\
+    , .{});
+}
+
 pub fn executeFromArgs(
     allocator: std.mem.Allocator,
     engine_root: ?[]const u8,
@@ -89,7 +133,7 @@ pub fn executeFromArgs(
         try std.io.getStdErr().writer().print("{s}", .{usage});
         std.process.exit(1);
     };
-    if (!std.mem.eql(u8, sub, "propose")) {
+    if (!std.mem.eql(u8, sub, "propose") and !std.mem.eql(u8, sub, "review")) {
         try std.io.getStdErr().writer().print("Unknown correction command: {s}\n{s}", .{ sub, usage });
         std.process.exit(1);
     }
@@ -107,15 +151,19 @@ pub fn executeFromArgs(
             if (value.len == 0) try failMissingValue("--file");
             options.file_path = value;
         } else if (std.mem.startsWith(u8, arg, "--")) {
-            try std.io.getStdErr().writer().print("Unknown correction propose option: {s}\n", .{arg});
+            try std.io.getStdErr().writer().print("Unknown correction {s} option: {s}\n", .{ sub, arg });
             std.process.exit(1);
         } else {
-            try std.io.getStdErr().writer().print("Unexpected correction propose argument: {s}\n", .{arg});
+            try std.io.getStdErr().writer().print("Unexpected correction {s} argument: {s}\n", .{ sub, arg });
             std.process.exit(1);
         }
     }
 
-    try executePropose(allocator, engine_root, options);
+    if (std.mem.eql(u8, sub, "propose")) {
+        try executePropose(allocator, engine_root, options);
+    } else {
+        try executeReview(allocator, engine_root, options);
+    }
 }
 
 pub fn executePropose(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: CorrectionOptions) !void {
@@ -206,14 +254,120 @@ pub fn executePropose(allocator: std.mem.Allocator, engine_root: ?[]const u8, op
     try printCorrectionProposalResult(std.io.getStdOut().writer(), out_parsed.value);
 }
 
+pub fn executeReview(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: CorrectionOptions) !void {
+    try executeCorrectionGip(allocator, engine_root, options, "review", "correction.review");
+}
+
+fn executeCorrectionGip(
+    allocator: std.mem.Allocator,
+    engine_root: ?[]const u8,
+    options: CorrectionOptions,
+    subcommand: []const u8,
+    expected_kind: []const u8,
+) !void {
+    const file_path = options.file_path orelse {
+        try std.io.getStdErr().writer().print("{s}", .{usage});
+        std.process.exit(1);
+    };
+    if (std.mem.trim(u8, file_path, " \r\n\t").len == 0) {
+        try std.io.getStdErr().writer().print("correction {s} --file must be non-empty\n", .{subcommand});
+        std.process.exit(1);
+    }
+
+    const request = std.fs.cwd().readFileAlloc(allocator, file_path, max_request_bytes) catch |err| {
+        try std.io.getStdErr().writer().print("Error: failed to read {s} request file '{s}': {s}\n", .{ expected_kind, file_path, @errorName(err) });
+        std.process.exit(1);
+    };
+    defer allocator.free(request);
+
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, request, .{}) catch |err| {
+        if (options.debug) try std.io.getStdErr().writer().print("[DEBUG] Parse Status: FAILED ({s})\n", .{@errorName(err)});
+        try std.io.getStdErr().writer().print("Error: {s} request file is not valid JSON: {s}\n", .{ expected_kind, @errorName(err) });
+        std.process.exit(1);
+    };
+    defer parsed.deinit();
+
+    if (!hasKind(parsed.value, expected_kind)) {
+        if (options.debug) try std.io.getStdErr().writer().print("[DEBUG] Parse Status: FAILED (kind mismatch)\n", .{});
+        try std.io.getStdErr().writer().print("Error: request file must contain top-level kind \"{s}\".\n", .{expected_kind});
+        std.process.exit(1);
+    }
+
+    const bin_path = locator.findEngineBinary(allocator, engine_root, .ghost_gip) catch |err| {
+        try locator.printLocatorError(std.io.getStdErr().writer(), .ghost_gip, engine_root, err);
+        std.process.exit(1);
+    };
+    defer allocator.free(bin_path);
+
+    const argv = &[_][]const u8{ bin_path, "--stdin" };
+    if (options.debug) {
+        try std.io.getStdErr().writer().print("[DEBUG] Engine Binary: {s}\n", .{bin_path});
+        try std.io.getStdErr().writer().print("[DEBUG] GIP Kind: {s}\n", .{expected_kind});
+        try std.io.getStdErr().writer().print("[DEBUG] Input File: {s}\n", .{file_path});
+        try std.io.getStdErr().writer().print("[DEBUG] Stdin Byte Count: {d}\n", .{request.len});
+    }
+
+    const result = process.runEngineCommandWithInput(allocator, argv, request) catch |err| {
+        try std.io.getStdErr().writer().print("\x1b[31m[!] Error:\x1b[0m Failed to execute {s}: {}\n", .{ expected_kind, err });
+        try std.io.getStdErr().writer().print("\x1b[33mHint:\x1b[0m Run `ghost status` to verify your environment.\n", .{});
+        std.process.exit(1);
+    };
+    defer {
+        allocator.free(result.stdout);
+        allocator.free(result.stderr);
+    }
+
+    if (options.debug) try std.io.getStdErr().writer().print("[DEBUG] Exit Code: {d}\n", .{result.exit_code});
+
+    if (options.json) {
+        if (options.debug) try std.io.getStdErr().writer().print("[DEBUG] Parse Status: SKIPPED (raw passthrough)\n", .{});
+        try std.io.getStdOut().writer().writeAll(result.stdout);
+        if (result.stderr.len > 0) try std.io.getStdErr().writer().writeAll(result.stderr);
+        if (result.exit_code != 0) std.process.exit(result.exit_code);
+        return;
+    }
+
+    if (result.exit_code != 0) {
+        try std.io.getStdErr().writer().print("\x1b[31m[!] Engine Error (Exit Code {d}):\x1b[0m\n", .{result.exit_code});
+        if (result.stderr.len > 0) {
+            try std.io.getStdErr().writer().writeAll(result.stderr);
+            if (result.stderr[result.stderr.len - 1] != '\n') try std.io.getStdErr().writer().writeByte('\n');
+        } else if (result.stdout.len > 0) {
+            try std.io.getStdErr().writer().writeAll(result.stdout);
+            if (result.stdout[result.stdout.len - 1] != '\n') try std.io.getStdErr().writer().writeByte('\n');
+        }
+        std.process.exit(result.exit_code);
+    }
+
+    var out_parsed = std.json.parseFromSlice(std.json.Value, allocator, result.stdout, .{}) catch |err| {
+        if (options.debug) try std.io.getStdErr().writer().print("[DEBUG] Parse Status: FAILED ({s})\n", .{@errorName(err)});
+        try std.io.getStdErr().writer().print("Error: Failed to parse engine output as {s} JSON.\n", .{expected_kind});
+        try std.io.getStdErr().writer().print("Raw output:\n{s}\n", .{result.stdout});
+        return;
+    };
+    defer out_parsed.deinit();
+
+    if (options.debug) try std.io.getStdErr().writer().print("[DEBUG] Parse Status: ok\n", .{});
+
+    if (std.mem.eql(u8, expected_kind, "correction.review")) {
+        try printCorrectionReviewResult(std.io.getStdOut().writer(), out_parsed.value);
+    } else {
+        try printCorrectionProposalResult(std.io.getStdOut().writer(), out_parsed.value);
+    }
+}
+
 fn hasCorrectionProposeKind(value: std.json.Value) bool {
+    return hasKind(value, "correction.propose");
+}
+
+fn hasKind(value: std.json.Value, expected_kind: []const u8) bool {
     const obj = switch (value) {
         .object => |o| o,
         else => return false,
     };
     const kind = obj.get("kind") orelse return false;
     return switch (kind) {
-        .string => |s| std.mem.eql(u8, s, "correction.propose"),
+        .string => |s| std.mem.eql(u8, s, expected_kind),
         else => false,
     };
 }
@@ -296,6 +450,96 @@ fn printCorrectionProposalResult(writer: anytype, value: std.json.Value) !void {
     try writer.print("\nNotice: user corrections are signals, not proof. This proposal does not mutate corpus, packs, negative knowledge, or verifier state, and no hidden learning or correction.accept path is run.\n", .{});
 }
 
+fn printCorrectionReviewResult(writer: anytype, value: std.json.Value) !void {
+    try writer.print("Correction Review Result\n", .{});
+    try writer.print("REVIEWED CORRECTION RECORD\n", .{});
+    try writer.print("APPEND-ONLY\n", .{});
+    try writer.print("NOT PROOF\n", .{});
+    try writer.print("NON-AUTHORIZING\n", .{});
+    try writer.print("NO GLOBAL PROMOTION\n", .{});
+    try writer.print("NO KNOWLEDGE MUTATED\n", .{});
+    try writer.print("NO VERIFIERS EXECUTED\n", .{});
+    try writer.print("FUTURE BEHAVIOR IS CANDIDATE-ONLY\n\n", .{});
+
+    if (findError(value)) |err_value| {
+        try writer.print("Engine Rejected Request:\n", .{});
+        try printJsonValue(writer, err_value, 2);
+        try writer.print("\n", .{});
+        return;
+    }
+
+    const review_value = findCorrectionReview(value) orelse {
+        try writer.print("No correctionReview result payload was present.\n", .{});
+        return;
+    };
+    const review = switch (review_value) {
+        .object => |obj| obj,
+        else => {
+            try printJsonValue(writer, review_value, 2);
+            try writer.print("\n", .{});
+            return;
+        },
+    };
+
+    try printField(writer, review, "status", "Status");
+    try printField(writer, review, "requiredReview", "Required Review");
+    try printField(writer, review, "required_review", "Required Review");
+
+    const record_value = review.get("reviewedCorrectionRecord") orelse review.get("reviewed_correction_record");
+    if (record_value) |record| {
+        try writer.print("\nReviewed Correction Record:\n", .{});
+        if (record == .object) {
+            const obj = record.object;
+            try printField(writer, obj, "id", "ID");
+            try printField(writer, obj, "schemaVersion", "Schema Version");
+            try printField(writer, obj, "schema_version", "Schema Version");
+            try printField(writer, obj, "projectShard", "Project Shard");
+            try printField(writer, obj, "project_shard", "Project Shard");
+            try printField(writer, obj, "sourceCorrectionCandidateId", "Source Correction Candidate ID");
+            try printField(writer, obj, "source_correction_candidate_id", "Source Correction Candidate ID");
+            try printField(writer, obj, "reviewDecision", "Decision");
+            try printField(writer, obj, "review_decision", "Decision");
+            try printField(writer, obj, "decision", "Decision");
+            try printField(writer, obj, "reviewerNote", "Reviewer Note");
+            try printField(writer, obj, "reviewer_note", "Reviewer Note");
+            try printField(writer, obj, "rejectedReason", "Rejected Reason");
+            try printField(writer, obj, "rejected_reason", "Rejected Reason");
+            try printField(writer, obj, "nonAuthorizing", "Non-Authorizing");
+            try printField(writer, obj, "treatedAsProof", "Treated As Proof");
+            try printField(writer, obj, "globalPromotion", "Global Promotion");
+            try printField(writer, obj, "commandsExecuted", "Commands Executed");
+            try printField(writer, obj, "verifiersExecuted", "Verifiers Executed");
+            try printField(writer, obj, "corpusMutation", "Corpus Mutation");
+            try printField(writer, obj, "packMutation", "Pack Mutation");
+            try printField(writer, obj, "negativeKnowledgeMutation", "Negative Knowledge Mutation");
+            try printSection(writer, obj, "correctionCandidate", "Correction Candidate");
+            try printSection(writer, obj, "correction_candidate", "Correction Candidate");
+            try printSection(writer, obj, "acceptedLearningOutputs", "Accepted Learning Outputs");
+            try printSection(writer, obj, "accepted_learning_outputs", "Accepted Learning Outputs");
+            try printSection(writer, obj, "futureBehaviorCandidate", "Future Behavior Candidate");
+            try printSection(writer, obj, "future_behavior_candidate", "Future Behavior Candidate");
+            try printSection(writer, obj, "appendOnly", "Append-Only Metadata");
+            try printSection(writer, obj, "append_only", "Append-Only Metadata");
+        } else {
+            try printJsonValue(writer, record, 2);
+            try writer.print("\n", .{});
+        }
+    }
+
+    try printSection(writer, review, "storage", "Append-Only Storage");
+    try printSection(writer, review, "appendOnly", "Append-Only Metadata");
+    try printSection(writer, review, "append_only", "Append-Only Metadata");
+    try printSection(writer, review, "mutationFlags", "Mutation Flags");
+    try printSection(writer, review, "mutation_flags", "Mutation Flags");
+    try printSection(writer, review, "authorityFlags", "Authority Flags");
+    try printSection(writer, review, "authority_flags", "Authority Flags");
+    try printSection(writer, review, "authority", "Authority Flags");
+    try printSection(writer, review, "futureBehaviorCandidate", "Future Behavior Candidate");
+    try printSection(writer, review, "future_behavior_candidate", "Future Behavior Candidate");
+
+    try writer.print("\nNotice: reviewed corrections record explicit accept/reject decisions only. Accepted reviews remain non-authorizing candidate signals, not proof, and do not mutate corpus, packs, negative knowledge, or verifier state.\n", .{});
+}
+
 fn findCorrectionProposal(value: std.json.Value) ?std.json.Value {
     const obj = switch (value) {
         .object => |o| o,
@@ -310,6 +554,25 @@ fn findCorrectionProposal(value: std.json.Value) ?std.json.Value {
         };
         if (result_obj.get("correctionProposal")) |proposal| return proposal;
         if (result_obj.get("correction_proposal")) |proposal| return proposal;
+        return result;
+    }
+    return null;
+}
+
+fn findCorrectionReview(value: std.json.Value) ?std.json.Value {
+    const obj = switch (value) {
+        .object => |o| o,
+        else => return null,
+    };
+    if (obj.get("correctionReview")) |review| return review;
+    if (obj.get("correction_review")) |review| return review;
+    if (obj.get("result")) |result| {
+        const result_obj = switch (result) {
+            .object => |o| o,
+            else => return result,
+        };
+        if (result_obj.get("correctionReview")) |review| return review;
+        if (result_obj.get("correction_review")) |review| return review;
         return result;
     }
     return null;

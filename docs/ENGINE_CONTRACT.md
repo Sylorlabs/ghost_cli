@@ -81,7 +81,7 @@ When present, correction, negative-knowledge, and epistemic fields are displayed
 - `Next Action`
 
 These sections are display-only. Rendering them does not execute verifiers,
-corrections, negative-knowledge review/mutation APIs, pack mutation, or MCP
+correction review, negative-knowledge review/mutation APIs, pack mutation, or MCP
 calls. Explicit user commands may still invoke engine binaries according to
 their command contract.
 
@@ -221,7 +221,7 @@ staged corpus is invisible until apply-staged succeeds. It is not semantic
 search, and mounted pack corpus is not included yet. There are no Transformers,
 embeddings, or model adapters in this CLI path.
 
-## Correction Proposal
+## Correction Proposal And Review
 
 `ghost correction propose --file <request.json>` routes explicitly to
 `ghost_gip --stdin` with GIP `kind: "correction.propose"`. The CLI reads the
@@ -252,6 +252,39 @@ This command is explicit only. Help, startup, TUI launch, non-TTY fallback,
 `ghost doctor`, `ghost status`, `ghost corpus ask`, `ghost rules evaluate`,
 `ghost context autopsy`, and `ghost packs validate-autopsy-guidance` do not run
 `correction.propose`.
+
+`ghost correction review --file <request.json>` routes explicitly to
+`ghost_gip --stdin` with GIP `kind: "correction.review"`. The CLI reads the
+request file, validates that the top-level kind is `correction.review`, and
+sends the file bytes unchanged. The request remains engine-owned: it may contain
+`projectShard` / `project_shard`, `correctionCandidate` or
+`correctionCandidateId`, `decision: "accepted"` or `"rejected"`,
+`reviewerNote`, optional `acceptedLearningOutputs`, and `rejectedReason` for
+rejected reviews.
+
+Human mode renders only the engine's correction review result. It labels the
+output `REVIEWED CORRECTION RECORD`, `APPEND-ONLY`, `NOT PROOF`,
+`NON-AUTHORIZING`, `NO GLOBAL PROMOTION`, `NO KNOWLEDGE MUTATED`,
+`NO VERIFIERS EXECUTED`, and `FUTURE BEHAVIOR IS CANDIDATE-ONLY`. It renders
+the reviewed record, decision, reviewer note, rejected reason when present,
+accepted learning outputs when present, future behavior candidate when present,
+append-only storage metadata, mutation flags, and authority flags without
+upgrading authority.
+
+Accepted reviewed corrections remain non-authorizing and are not proof. They do
+not mutate corpus, packs, or negative knowledge; do not execute commands or
+verifiers; do not grant support; and do not imply global promotion. Future
+behavior remains candidate-only. `correction.reviewed.list` and
+`correction.reviewed.get` do not exist yet.
+
+`--json` preserves raw engine stdout exactly. `--debug` writes diagnostics to
+stderr only: engine binary path, GIP kind, input file path, stdin byte count,
+exit code, and parse status.
+
+This command is explicit only. Help, startup, TUI launch, non-TTY fallback,
+`ghost doctor`, `ghost status`, `ghost correction propose`, `ghost corpus ask`,
+`ghost rules evaluate`, `ghost context autopsy`, and
+`ghost packs validate-autopsy-guidance` do not run `correction.review`.
 
 ## Rule Evaluation
 

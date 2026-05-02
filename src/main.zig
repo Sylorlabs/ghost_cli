@@ -73,7 +73,7 @@ const command_registry = [_]CommandDef{
     .{ .name = "doctor", .kind = .doctor, .group = .inspection, .help = "Run read-only environment diagnostics", .usage = "ghost doctor [--json|--report] [--debug] [--full] [--run-build-check]" },
     .{ .name = "packs", .kind = .packs, .group = .knowledge, .help = "Manage knowledge packs", .usage = "ghost packs <list|inspect|mount|unmount|validate-autopsy-guidance> [options]" },
     .{ .name = "corpus", .kind = .corpus, .group = .knowledge, .help = "Ingest, apply, and ask from shard corpus", .usage = "ghost corpus <ingest|apply-staged|ask> [options]" },
-    .{ .name = "correction", .kind = .correction, .group = .knowledge, .help = "Propose review-required correction candidates", .usage = "ghost correction propose --file <request.json> [--json] [--debug]" },
+    .{ .name = "correction", .kind = .correction, .group = .knowledge, .help = "Propose and review correction records", .usage = "ghost correction <propose|review> --file <request.json> [--json] [--debug]" },
     .{ .name = "learn", .kind = .learn, .group = .knowledge, .help = "Feedback/distillation surface", .usage = "ghost learn <candidates|show|export> [options]" },
     .{ .name = "rules", .kind = .rules, .group = .advanced, .help = "Evaluate bounded non-authorizing rules", .usage = "ghost rules evaluate --file <request.json> [--json] [--debug]" },
     .{ .name = "debug", .kind = .debug, .group = .advanced, .help = "Advanced raw engine diagnostics", .usage = "ghost debug raw <engine-binary> [args...]" },
