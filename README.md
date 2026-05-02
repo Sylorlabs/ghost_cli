@@ -45,7 +45,8 @@ Binary resolution is explicit: candidates are reported as engine-root, engine-ro
 **Running `ghost` with no arguments launches the interactive TUI console.**
 In a non-interactive pipe or script, the TUI path exits cleanly and reports that
 no CLI-owned TUI command, doctor check, context/project autopsy scan, correction
-proposal/review/reviewed inspection, verifier, or pack mutation was started from that fallback path.
+proposal/review/reviewed inspection, reviewed negative-knowledge review/list/get,
+verifier, or pack mutation was started from that fallback path.
 
 ### Examples
 
@@ -105,6 +106,17 @@ ghost correction reviewed get --debug --project-shard=my-project --id=reviewed-1
 ghost correction influence status --project-shard=my-project
 ghost correction influence status --project-shard=my-project --operation-kind=corpus.ask --include-records --limit=5
 
+# Explicit reviewed negative knowledge through GIP
+ghost nk review --file request.json
+ghost nk review --json --file request.json
+ghost nk review --debug --file request.json
+ghost nk reviewed list --project-shard=my-project
+ghost nk reviewed list --project-shard=my-project --decision=accepted
+ghost nk reviewed list --project-shard=my-project --decision=rejected --limit=20 --offset=0
+ghost nk reviewed get --project-shard=my-project --id=nk-reviewed-1
+ghost nk reviewed list --json --project-shard=my-project
+ghost nk reviewed get --debug --project-shard=my-project --id=nk-reviewed-1
+
 # Interactive TUI Console
 ghost tui
 ghost tui --reasoning=deep --compact --color=auto
@@ -146,6 +158,7 @@ ghost doctor --report
 - **Correction Proposal**: Explicit `ghost correction propose --file <request.json>` calls `ghost_gip` operation `correction.propose` with the request file bytes. Human output renders correction candidates and learning candidates as **CORRECTION CANDIDATE ONLY**, **NOT PROOF**, **REVIEW REQUIRED**, **NO KNOWLEDGE MUTATED**, **NO VERIFIERS EXECUTED**, **NOT ACCEPTED**, and **NOT PERSISTED**. User corrections are signals, not proof; proposals do not mutate corpus, packs, or negative knowledge, do not execute verifier/check candidates, do not affect future behavior, and do not run as hidden learning. There is no `correction.accept` command yet.
 - **Correction Review**: Explicit `ghost correction review --file <request.json>` calls `ghost_gip` operation `correction.review` with the request file bytes. Human output renders reviewed correction records as **REVIEWED CORRECTION RECORD**, **APPEND-ONLY**, **NOT PROOF**, **NON-AUTHORIZING**, **NO GLOBAL PROMOTION**, **NO KNOWLEDGE MUTATED**, **NO VERIFIERS EXECUTED**, and **FUTURE BEHAVIOR IS CANDIDATE-ONLY**. Accepted reviewed corrections are still not proof, do not mutate corpus/packs/negative knowledge, do not execute verifiers/checks, and do not imply global promotion.
 - **Reviewed Correction Inspection**: Explicit `ghost correction reviewed list --project-shard=<id>`, `ghost correction reviewed get --project-shard=<id> --id=<record-id>`, and `ghost correction influence status --project-shard=<id>` call `ghost_gip` operations `correction.reviewed.list`, `correction.reviewed.get`, and `correction.influence.status`. The CLI builds read-only GIP requests from flags, never reads or writes `reviewed_corrections.jsonl` directly, and preserves raw stdout under `--json`. Human output is **READ-ONLY**, **NOT PROOF**, **NON-AUTHORIZING**, **NO KNOWLEDGE MUTATED**, and **NO VERIFIERS EXECUTED**. Influence status additionally prints **STATUS COUNTS ARE OPERATOR DIAGNOSTICS ONLY**. List output renders counts, warnings, capacity telemetry, and append-order records; get output renders the reviewed record summary, accepted/rejected details, append-only metadata, and warnings/not_found; influence status renders accepted/rejected records, malformed lines, operation kind counts, correction type counts, influence kind counts, warnings, capacity telemetry, and optionally sampled records. The engine bounds reads to 128 records and 256 KiB; `--cursor=<n>` is only the current numeric offset alias.
+- **Reviewed Negative Knowledge**: Explicit `ghost nk review --file <request.json>` calls `ghost_gip` operation `negative_knowledge.review` with the request file bytes. Human output renders reviewed NK records as **REVIEWED NEGATIVE KNOWLEDGE RECORD**, **APPEND-ONLY**, **NOT PROOF**, **NOT EVIDENCE**, **NON-AUTHORIZING**, **NO GLOBAL PROMOTION**, **NO CORPUS OR PACK MUTATION**, **NO VERIFIERS EXECUTED**, and **ACCEPTED NK DOES NOT BROADLY INFLUENCE FUTURE BEHAVIOR YET**. Explicit `ghost nk reviewed list|get` calls `negative_knowledge.reviewed.list|get`, builds read-only GIP requests from flags, never reads/writes `negative_knowledge/reviewed_negative_knowledge.jsonl` directly, and preserves raw stdout under `--json`. List/get are **READ-ONLY**, **NOT PROOF**, **NOT EVIDENCE**, **NON-AUTHORIZING**, **NO KNOWLEDGE MUTATED**, and **NO VERIFIERS EXECUTED**. Missing storage returns empty/not_found; malformed JSONL lines render as warnings. Accepted reviewed NK is durable and inspectable, but Phase 11A does not add broad future behavior influence or global promotion.
 - **Truth**: Proof and support gates in the engine still decide final validity of any claim.
 
 
@@ -163,7 +176,7 @@ Top-level help is grouped by operator workflow:
 
 - Core: `ask`, `chat`, `fix`, `verify`
 - Inspection: `autopsy`, `context`, `status`, `doctor`
-- Knowledge: `packs`, `corpus`, `correction`, `learn`
+- Knowledge: `packs`, `corpus`, `correction`, `nk`, `learn`
 - Advanced: `rules`, `debug`
 - Interface: `tui`
 
@@ -248,6 +261,8 @@ If `ghost_cli` encounters issues, use these commands to diagnose the problem:
 - **`ghost corpus ask`**: Runs an explicit `corpus.ask` GIP request against live shard corpus only. Human output is labeled **DRAFT** and **NON-AUTHORIZING**. It renders `answerDraft` only when exact `evidenceUsed` supports one, shows `evidenceUsed`, unknowns, candidate followups, candidate-only learning candidates, separately labels `similarCandidates` as **Similarity Hints / NON-AUTHORIZING**, renders accepted reviewed correction influence as **ACCEPTED CORRECTION INFLUENCE / NON-AUTHORIZING**, renders `futureBehaviorCandidates` as **FUTURE BEHAVIOR CANDIDATES / NOT APPLIED**, renders trace flags, and prints **CAPACITY / COVERAGE WARNING** when telemetry or `capacity_limited` unknowns disclose partial coverage. No corpus, weak evidence, conflicting evidence, capped/skipped/truncated coverage without exact retained evidence, approximate-only similarity, or accepted correction suppression produces no answer. Accepted corrections are not proof or evidence, may suppress exact repeated bad patterns, and do not globally promote or mutate corpus, packs, or negative knowledge. It does not ingest corpus, mutate packs or negative knowledge, persist learning candidates, run commands, or run verifiers.
 - **`ghost correction review`**: Records explicit accepted/rejected correction reviews through `correction.review`. It renders the reviewed record, decision, reviewer note, rejected reason when present, accepted learning outputs when present, future behavior candidate when present, append-only metadata, mutation flags, and authority flags. It preserves raw stdout under `--json`; debug diagnostics go to stderr.
 - **`ghost correction reviewed list|get|influence status`**: Inspects reviewed correction records through read-only `correction.reviewed.list`, `correction.reviewed.get`, and `correction.influence.status`. Records are not proof and do not mutate corpus, packs, negative knowledge, correction storage, or verifier state. Status counts are non-authorizing diagnostics only. Inspection is bounded; malformed lines render as warnings/telemetry, and missing records render as `not_found`.
+- **`ghost nk review`**: Records explicit accepted/rejected reviewed negative knowledge through `negative_knowledge.review`. The request is file-driven and engine-owned. Human output is append-only, non-authorizing, not proof, not evidence, no global promotion, no corpus or pack mutation, and no verifiers executed.
+- **`ghost nk reviewed list|get`**: Inspects reviewed negative-knowledge records through read-only `negative_knowledge.reviewed.list` and `negative_knowledge.reviewed.get`. The CLI never reads or writes `negative_knowledge/reviewed_negative_knowledge.jsonl`; malformed lines render as warnings, missing storage returns empty/not_found, and accepted reviewed NK does not broadly influence future behavior in Phase 11A.
 - **`ghost <command> --debug`**: Prints the exact engine binary path, arguments, exit code, JSON parse result, and whether correction/negative-knowledge/epistemic fields were detected.
 - **`ghost <command> --json`**: Preserves raw engine stdout exactly; debug diagnostics and engine stderr are written to stderr.
 - **`ghost debug raw <engine-binary> [args...]`**: Bypasses all CLI formatting to run an engine binary directly and print the raw text/JSON.

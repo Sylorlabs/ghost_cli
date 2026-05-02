@@ -4,7 +4,7 @@ Top-level help is organized around Ghost operator workflows:
 
 - **Core**: `ask`, `chat`, `fix`, `verify`
 - **Inspection**: `autopsy`, `context`, `status`, `doctor`
-- **Knowledge**: `packs`, `corpus`, `correction`, `learn`
+- **Knowledge**: `packs`, `corpus`, `correction`, `nk`, `learn`
 - **Advanced**: `rules`, `debug`
 - **Interface**: `tui`
 
@@ -20,8 +20,9 @@ ghost
 ```
 
 This is a renderer/front-door path. No doctor/status diagnostic, context/project
-autopsy scan, correction proposal, verifier execution, pack mutation, or
-negative-knowledge mutation, correction review, or reviewed correction inspection is started by launch or idle rendering. Explicit
+autopsy scan, correction proposal, verifier execution, pack mutation,
+negative-knowledge mutation, correction review, reviewed correction inspection,
+or reviewed negative-knowledge review/list/get is started by launch or idle rendering. Explicit
 slash commands and submitted prompts may invoke engine binaries according to
 their command contract.
 
@@ -362,6 +363,110 @@ doctor, status, `correction propose`, `correction review`, `corpus ask`,
 stderr only, including engine path, GIP kind, project shard, operation filter,
 includeRecords, limit, stdin byte count, exit code, and parse status.
 
+### `ghost nk`
+Explicit reviewed negative-knowledge commands.
+
+#### `ghost nk review`
+Run an explicit reviewed negative-knowledge decision through `ghost_gip`
+operation `negative_knowledge.review`.
+
+Usage: `ghost nk review --file request.json`
+Usage: `ghost nk review --json --file request.json`
+Usage: `ghost nk review --debug --file request.json`
+
+The file must be a full GIP-compatible JSON request with top-level
+`kind: "negative_knowledge.review"`. The CLI reads the file, validates that
+kind, and sends the bytes unchanged to `ghost_gip --stdin`. It does not invent
+accept/reject flags yet and does not read or write
+`negative_knowledge/reviewed_negative_knowledge.jsonl` directly.
+
+Human-readable output renders the reviewed negative-knowledge record, decision,
+reviewer note, rejected reason when present, source candidate id, source
+correction review id when present, candidate snapshot, append-only metadata,
+mutation flags, and authority flags. It prints these required safety labels:
+`REVIEWED NEGATIVE KNOWLEDGE RECORD`, `APPEND-ONLY`, `NOT PROOF`,
+`NOT EVIDENCE`, `NON-AUTHORIZING`, `NO GLOBAL PROMOTION`,
+`NO CORPUS OR PACK MUTATION`, `NO VERIFIERS EXECUTED`, and
+`ACCEPTED NK DOES NOT BROADLY INFLUENCE FUTURE BEHAVIOR YET`.
+
+Reviewed NK records are append-only and project-shard local. Accepted reviewed
+NK is durable and inspectable, but it is still not proof, not evidence, not
+global promotion, and Phase 11A does not add broad future behavior influence.
+`negativeKnowledgeMutation:true` means only that this explicit review appended
+a reviewed NK record.
+
+This command is explicit only. It does not run from help, startup, TUI launch,
+doctor, status, correction commands, `corpus ask`, `rules evaluate`,
+`context autopsy`, or pack validation.
+
+`--json` preserves raw GIP stdout exactly. `--debug` writes diagnostics to
+stderr only, including engine path, GIP kind, input file path, stdin byte count,
+exit code, and parse status.
+
+#### `ghost nk reviewed list`
+Inspect reviewed negative-knowledge records through `ghost_gip` operation
+`negative_knowledge.reviewed.list`.
+
+Usage: `ghost nk reviewed list --project-shard=my-project`
+Usage: `ghost nk reviewed list --project-shard=my-project --decision=accepted`
+Usage: `ghost nk reviewed list --project-shard=my-project --decision=rejected`
+Usage: `ghost nk reviewed list --project-shard=my-project --decision=all`
+Usage: `ghost nk reviewed list --project-shard=my-project --limit=20 --offset=40`
+Usage: `ghost nk reviewed list --json --project-shard=my-project`
+Usage: `ghost nk reviewed list --debug --project-shard=my-project`
+
+The CLI builds the GIP JSON request from flags and sends it to
+`ghost_gip --stdin`. It does not read or write
+`negative_knowledge/reviewed_negative_knowledge.jsonl` directly. `--cursor=<n>`
+is accepted as the current numeric alias for `--offset=<n>`.
+
+Human output is labeled **REVIEWED NEGATIVE KNOWLEDGE RECORDS / READ-ONLY** and
+always prints `READ-ONLY`, `NOT PROOF`, `NOT EVIDENCE`, `NON-AUTHORIZING`,
+`NO KNOWLEDGE MUTATED`, and `NO VERIFIERS EXECUTED`. It renders project shard,
+counts, malformed line warnings, capacity telemetry, record summaries in append
+order, decisions, ids, and mutation/authority flags.
+
+Missing storage returns an empty list. Malformed JSONL lines render as warnings
+and telemetry; they do not crash the CLI.
+
+This command is explicit only. It does not run from help, startup, TUI launch,
+doctor, status, correction commands, `corpus ask`, `rules evaluate`,
+`context autopsy`, or pack validation.
+
+`--json` preserves raw GIP stdout exactly. `--debug` writes diagnostics to
+stderr only, including engine path, GIP kind, project shard, stdin byte count,
+exit code, and parse status.
+
+#### `ghost nk reviewed get`
+Inspect one reviewed negative-knowledge record through `ghost_gip` operation
+`negative_knowledge.reviewed.get`.
+
+Usage: `ghost nk reviewed get --project-shard=my-project --id=nk-reviewed-1`
+Usage: `ghost nk reviewed get --json --project-shard=my-project --id=nk-reviewed-1`
+Usage: `ghost nk reviewed get --debug --project-shard=my-project --id=nk-reviewed-1`
+
+The CLI builds the GIP JSON request from flags and sends it to
+`ghost_gip --stdin`. It does not read or write
+`negative_knowledge/reviewed_negative_knowledge.jsonl` directly.
+
+Human output is labeled **REVIEWED NEGATIVE KNOWLEDGE RECORD / READ-ONLY** and
+always prints `READ-ONLY`, `NOT PROOF`, `NOT EVIDENCE`, `NON-AUTHORIZING`,
+`NO KNOWLEDGE MUTATED`, and `NO VERIFIERS EXECUTED`. It renders the full record
+summary, warnings for malformed lines, `not_found` cleanly when missing, and
+authority/mutation flags.
+
+Reviewed NK inspection is read-only. Records are durable and inspectable but are
+not proof, not evidence, not global promotion, and not broad future behavior
+influence in Phase 11A.
+
+This command is explicit only. It does not run from help, startup, TUI launch,
+doctor, status, correction commands, `corpus ask`, `rules evaluate`,
+`context autopsy`, or pack validation.
+
+`--json` preserves raw GIP stdout exactly. `--debug` writes diagnostics to
+stderr only, including engine path, GIP kind, project shard, record id, stdin
+byte count, exit code, and parse status.
+
 ### `ghost fix`
 User asks Ghost to propose or perform a fix.
 Usage: `ghost fix "make the failing runtime test pass" --reasoning=deep`
@@ -502,7 +607,8 @@ in the TUI status bar.
 If stdin/stdout is not an interactive TTY, `ghost`/`ghost tui` exits gracefully
 with a message. The covered smoke path verifies that no CLI-owned TUI command,
 doctor check, context/project autopsy scan, correction proposal/review/reviewed
-inspection, verifier, pack mutation, or negative-knowledge mutation is started
+inspection, reviewed negative-knowledge review/list/get, verifier, pack
+mutation, or negative-knowledge mutation is started
 from that non-TTY fallback.
 
 #### Keybindings

@@ -74,6 +74,7 @@ test "help text lists all top-level commands" {
     try testing.expect(std.mem.indexOf(u8, res.stderr, "packs") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "corpus") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "correction") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "nk") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "learn") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "status") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "doctor") != null);
@@ -231,6 +232,41 @@ test "subcommand help works without resolving engine" {
     try testing.expectEqual(@as(u32, 0), correction_reviewed_get_res.term.Exited);
     try testing.expect(std.mem.indexOf(u8, correction_reviewed_get_res.stderr, "Usage: ghost correction reviewed get --project-shard=<id> --id=<record-id>") != null);
     try testing.expect(std.mem.indexOf(u8, correction_reviewed_get_res.stderr, "Missing storage or records render cleanly as not_found") != null);
+
+    const nk_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "nk", "--help", "--engine-root=/tmp/ghost-help-missing" });
+    defer {
+        testing.allocator.free(nk_res.stdout);
+        testing.allocator.free(nk_res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), nk_res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, nk_res.stderr, "Usage: ghost nk <review|reviewed>") != null);
+    try testing.expect(std.mem.indexOf(u8, nk_res.stderr, "negative_knowledge.review") != null);
+    try testing.expect(std.mem.indexOf(u8, nk_res.stderr, "NOT PROOF and NOT EVIDENCE") != null);
+
+    const nk_review_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "nk", "review", "--help", "--engine-root=/tmp/ghost-help-missing" });
+    defer {
+        testing.allocator.free(nk_review_res.stdout);
+        testing.allocator.free(nk_review_res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), nk_review_res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, nk_review_res.stderr, "Usage: ghost nk review --file <request.json>") != null);
+    try testing.expect(std.mem.indexOf(u8, nk_review_res.stderr, "ACCEPTED NK DOES NOT BROADLY INFLUENCE FUTURE BEHAVIOR YET") != null);
+
+    const nk_reviewed_list_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "nk", "reviewed", "list", "--help", "--engine-root=/tmp/ghost-help-missing" });
+    defer {
+        testing.allocator.free(nk_reviewed_list_res.stdout);
+        testing.allocator.free(nk_reviewed_list_res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), nk_reviewed_list_res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, nk_reviewed_list_res.stderr, "Usage: ghost nk reviewed list --project-shard=<id>") != null);
+
+    const nk_reviewed_get_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "nk", "reviewed", "get", "--help", "--engine-root=/tmp/ghost-help-missing" });
+    defer {
+        testing.allocator.free(nk_reviewed_get_res.stdout);
+        testing.allocator.free(nk_reviewed_get_res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), nk_reviewed_get_res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, nk_reviewed_get_res.stderr, "Usage: ghost nk reviewed get --project-shard=<id> --id=<record-id>") != null);
 }
 
 test "TUI read-only help works with command parser" {
@@ -1970,6 +2006,403 @@ test "correction reviewed debug diagnostics stay on stderr" {
     try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Stdin Byte Count:") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Exit Code: 0") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Parse Status: ok") != null);
+}
+
+test "nk review routes file payload to ghost_gip" {
+    const mock_root = "/tmp/ghost-cli-nk-review-route";
+    const payload_path = mock_root ++ "/payload.json";
+    const request_path = "/tmp/ghost-cli-nk-review-route-request.json";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+    defer std.fs.cwd().deleteFile(request_path) catch {};
+
+    {
+        const request = try std.fs.cwd().createFile(request_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"negative_knowledge.review\",\"projectShard\":\"project-a\",\"negativeKnowledgeCandidateId\":\"nk-candidate-1\",\"decision\":\"accepted\",\"reviewerNote\":\"reviewed\"}");
+    }
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat > '" ++ payload_path ++ "'\nprintf '%s' '{\"result\":{\"negativeKnowledgeReview\":{\"status\":\"reviewed\",\"reviewedNegativeKnowledgeRecord\":{\"id\":\"nk-reviewed-1\",\"schemaVersion\":\"reviewed_negative_knowledge_record.v1\",\"projectShard\":\"project-a\",\"sourceNegativeKnowledgeCandidateId\":\"nk-candidate-1\",\"decision\":\"accepted\",\"reviewerNote\":\"reviewed\",\"candidateSnapshot\":{\"kind\":\"negative_knowledge_candidate\",\"summary\":\"avoid bad route\"},\"influenceScope\":\"project_shard\",\"nonAuthorizing\":true,\"treatedAsProof\":false,\"usedAsEvidence\":false,\"globalPromotion\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false,\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":true,\"appendOnly\":{\"stableOrdering\":\"file_append_order\"}},\"requiredReview\":false,\"readOnly\":false,\"appendOnly\":true,\"mutationFlags\":{\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":true,\"commandsExecuted\":false,\"verifiersExecuted\":false},\"authority\":{\"nonAuthorizing\":true,\"treatedAsProof\":false,\"usedAsEvidence\":false,\"globalPromotion\":false}}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "nk", "review", "--engine-root=" ++ mock_root, "--file", request_path });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+    const payload = try std.fs.cwd().readFileAlloc(testing.allocator, payload_path, 1024 * 1024);
+    defer testing.allocator.free(payload);
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, payload, "\"kind\":\"negative_knowledge.review\"") != null);
+    try testing.expect(std.mem.indexOf(u8, payload, "\"decision\":\"accepted\"") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "REVIEWED NEGATIVE KNOWLEDGE RECORD") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Decision: accepted") != null);
+}
+
+test "nk review accepted and rejected human output renders required safety labels" {
+    const mock_root = "/tmp/ghost-cli-nk-review-human";
+    const accepted_path = "/tmp/ghost-cli-nk-review-accepted-request.json";
+    const rejected_path = "/tmp/ghost-cli-nk-review-rejected-request.json";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+    defer std.fs.cwd().deleteFile(accepted_path) catch {};
+    defer std.fs.cwd().deleteFile(rejected_path) catch {};
+
+    {
+        const request = try std.fs.cwd().createFile(accepted_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"negative_knowledge.review\",\"projectShard\":\"project-a\",\"negativeKnowledgeCandidateId\":\"nk-candidate-1\",\"decision\":\"accepted\",\"reviewerNote\":\"accepted note\"}");
+    }
+    {
+        const request = try std.fs.cwd().createFile(rejected_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"negative_knowledge.review\",\"projectShard\":\"project-a\",\"negativeKnowledgeCandidateId\":\"nk-candidate-2\",\"decision\":\"rejected\",\"reviewerNote\":\"rejected note\",\"rejectedReason\":\"too broad\"}");
+    }
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\npayload=$(cat)\ncase \"$payload\" in *nk-candidate-2*) printf '%s' '{\"result\":{\"negativeKnowledgeReview\":{\"status\":\"reviewed\",\"reviewedNegativeKnowledgeRecord\":{\"id\":\"nk-reviewed-2\",\"projectShard\":\"project-a\",\"sourceNegativeKnowledgeCandidateId\":\"nk-candidate-2\",\"decision\":\"rejected\",\"reviewerNote\":\"rejected note\",\"rejectedReason\":\"too broad\",\"candidateSnapshot\":{\"summary\":\"candidate\"},\"nonAuthorizing\":true,\"treatedAsProof\":false,\"usedAsEvidence\":false,\"globalPromotion\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false,\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":true,\"appendOnly\":{\"stableOrdering\":\"file_append_order\"}},\"mutationFlags\":{\"negativeKnowledgeMutation\":true,\"corpusMutation\":false,\"packMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false},\"authority\":{\"nonAuthorizing\":true,\"treatedAsProof\":false,\"usedAsEvidence\":false,\"globalPromotion\":false}}}}' ;; *) printf '%s' '{\"result\":{\"negativeKnowledgeReview\":{\"status\":\"reviewed\",\"reviewedNegativeKnowledgeRecord\":{\"id\":\"nk-reviewed-1\",\"projectShard\":\"project-a\",\"sourceNegativeKnowledgeCandidateId\":\"nk-candidate-1\",\"sourceCorrectionReviewId\":\"reviewed-correction-1\",\"decision\":\"accepted\",\"reviewerNote\":\"accepted note\",\"candidateSnapshot\":{\"summary\":\"candidate\"},\"nonAuthorizing\":true,\"treatedAsProof\":false,\"usedAsEvidence\":false,\"globalPromotion\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false,\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":true,\"appendOnly\":{\"stableOrdering\":\"file_append_order\"}},\"futureInfluenceCandidate\":{\"status\":\"candidate\",\"nonAuthorizing\":true,\"treatedAsProof\":false,\"usedAsEvidence\":false},\"mutationFlags\":{\"negativeKnowledgeMutation\":true,\"corpusMutation\":false,\"packMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false},\"authority\":{\"nonAuthorizing\":true,\"treatedAsProof\":false,\"usedAsEvidence\":false,\"globalPromotion\":false}}}}' ;; esac\n",
+    );
+
+    const accepted = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "nk", "review", "--engine-root=" ++ mock_root, "--file", accepted_path });
+    defer {
+        testing.allocator.free(accepted.stdout);
+        testing.allocator.free(accepted.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), accepted.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, accepted.stdout, "APPEND-ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, accepted.stdout, "NOT PROOF") != null);
+    try testing.expect(std.mem.indexOf(u8, accepted.stdout, "NOT EVIDENCE") != null);
+    try testing.expect(std.mem.indexOf(u8, accepted.stdout, "NON-AUTHORIZING") != null);
+    try testing.expect(std.mem.indexOf(u8, accepted.stdout, "NO GLOBAL PROMOTION") != null);
+    try testing.expect(std.mem.indexOf(u8, accepted.stdout, "NO CORPUS OR PACK MUTATION") != null);
+    try testing.expect(std.mem.indexOf(u8, accepted.stdout, "NO VERIFIERS EXECUTED") != null);
+    try testing.expect(std.mem.indexOf(u8, accepted.stdout, "ACCEPTED NK DOES NOT BROADLY INFLUENCE FUTURE BEHAVIOR YET") != null);
+    try testing.expect(std.mem.indexOf(u8, accepted.stdout, "Source Correction Review ID: reviewed-correction-1") != null);
+    try testing.expect(std.mem.indexOf(u8, accepted.stdout, "Candidate Snapshot:") != null);
+    try testing.expect(std.mem.indexOf(u8, accepted.stdout, "Mutation Flags:") != null);
+    try testing.expect(std.mem.indexOf(u8, accepted.stdout, "Authority Flags:") != null);
+
+    const rejected = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "nk", "review", "--engine-root=" ++ mock_root, "--file", rejected_path });
+    defer {
+        testing.allocator.free(rejected.stdout);
+        testing.allocator.free(rejected.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), rejected.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, rejected.stdout, "Decision: rejected") != null);
+    try testing.expect(std.mem.indexOf(u8, rejected.stdout, "Reviewer Note: rejected note") != null);
+    try testing.expect(std.mem.indexOf(u8, rejected.stdout, "Rejected Reason: too broad") != null);
+}
+
+test "nk review missing rejected reason renders clean engine error" {
+    const mock_root = "/tmp/ghost-cli-nk-review-missing-reason";
+    const request_path = "/tmp/ghost-cli-nk-review-missing-reason-request.json";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+    defer std.fs.cwd().deleteFile(request_path) catch {};
+
+    {
+        const request = try std.fs.cwd().createFile(request_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"negative_knowledge.review\",\"projectShard\":\"project-a\",\"negativeKnowledgeCandidateId\":\"nk-candidate-2\",\"decision\":\"rejected\",\"reviewerNote\":\"missing reason\"}");
+    }
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s' '{\"gipVersion\":\"gip.v0.1\",\"kind\":\"negative_knowledge.review\",\"status\":\"rejected\",\"error\":{\"code\":\"invalid_request\",\"message\":\"rejected negative knowledge review requires rejectedReason\"}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "nk", "review", "--engine-root=" ++ mock_root, "--file", request_path });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Engine Rejected Request:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "rejectedReason") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "std/debug.zig") == null);
+}
+
+test "nk reviewed list and get route correct GIP payloads" {
+    const mock_root = "/tmp/ghost-cli-nk-reviewed-route";
+    const payload_path = mock_root ++ "/payload.json";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat > '" ++ payload_path ++ "'\nprintf '%s' '{\"result\":{\"reviewedNegativeKnowledge\":{\"status\":\"ok\",\"projectShard\":\"project-a\",\"records\":[],\"totalRead\":0,\"returnedCount\":0,\"malformedLines\":0,\"warnings\":[],\"readOnly\":true,\"mutationFlags\":{\"negativeKnowledgeMutation\":false},\"authority\":{\"nonAuthorizing\":true,\"treatedAsProof\":false,\"usedAsEvidence\":false}}}}'\n",
+    );
+
+    const list_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "nk", "reviewed", "list", "--engine-root=" ++ mock_root, "--project-shard=project-a", "--decision=accepted", "--limit=2", "--offset=1" });
+    defer {
+        testing.allocator.free(list_res.stdout);
+        testing.allocator.free(list_res.stderr);
+    }
+    const list_payload = try std.fs.cwd().readFileAlloc(testing.allocator, payload_path, 1024 * 1024);
+    defer testing.allocator.free(list_payload);
+    var parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, list_payload, .{});
+    defer parsed.deinit();
+    try testing.expectEqualStrings("negative_knowledge.reviewed.list", parsed.value.object.get("kind").?.string);
+    try testing.expectEqualStrings("project-a", parsed.value.object.get("projectShard").?.string);
+    try testing.expectEqualStrings("accepted", parsed.value.object.get("decision").?.string);
+    try testing.expectEqual(@as(i64, 2), parsed.value.object.get("limit").?.integer);
+    try testing.expectEqual(@as(i64, 1), parsed.value.object.get("offset").?.integer);
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat > '" ++ payload_path ++ "'\nprintf '%s' '{\"result\":{\"reviewedNegativeKnowledge\":{\"status\":\"found\",\"projectShard\":\"project-a\",\"id\":\"nk-reviewed-1\",\"reviewedNegativeKnowledgeRecord\":{\"id\":\"nk-reviewed-1\",\"decision\":\"accepted\"},\"warnings\":[],\"readOnly\":true,\"mutationFlags\":{\"negativeKnowledgeMutation\":false},\"authority\":{\"nonAuthorizing\":true,\"treatedAsProof\":false,\"usedAsEvidence\":false}}}}'\n",
+    );
+    const get_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "nk", "reviewed", "get", "--engine-root=" ++ mock_root, "--project-shard", "project-a", "--id=nk-reviewed-1" });
+    defer {
+        testing.allocator.free(get_res.stdout);
+        testing.allocator.free(get_res.stderr);
+    }
+    const get_payload = try std.fs.cwd().readFileAlloc(testing.allocator, payload_path, 1024 * 1024);
+    defer testing.allocator.free(get_payload);
+    var parsed_get = try std.json.parseFromSlice(std.json.Value, testing.allocator, get_payload, .{});
+    defer parsed_get.deinit();
+    try testing.expectEqualStrings("negative_knowledge.reviewed.get", parsed_get.value.object.get("kind").?.string);
+    try testing.expectEqualStrings("project-a", parsed_get.value.object.get("projectShard").?.string);
+    try testing.expectEqualStrings("nk-reviewed-1", parsed_get.value.object.get("id").?.string);
+}
+
+test "nk reviewed list renders empty accepted rejected all warnings and capacity" {
+    const mock_root = "/tmp/ghost-cli-nk-reviewed-list-human";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\npayload=$(cat)\ncase \"$payload\" in *'\"decision\":\"accepted\"'*) decision=accepted ;; *'\"decision\":\"rejected\"'*) decision=rejected ;; *) decision=all ;; esac\nprintf '%s' '{\"result\":{\"reviewedNegativeKnowledge\":{\"status\":\"ok\",\"projectShard\":\"project-a\",\"decision\":\"'\"$decision\"'\",\"records\":[{\"id\":\"nk-reviewed-1\",\"decision\":\"accepted\",\"reviewerNoteSummary\":\"accepted summary\",\"candidateSnapshot\":{\"summary\":\"accepted candidate\"},\"nonAuthorizing\":true,\"treatedAsProof\":false,\"usedAsEvidence\":false,\"globalPromotion\":false,\"negativeKnowledgeMutation\":false},{\"id\":\"nk-reviewed-2\",\"decision\":\"rejected\",\"reviewerNoteSummary\":\"rejected summary\",\"rejectedReason\":\"too broad\",\"nonAuthorizing\":true,\"treatedAsProof\":false,\"usedAsEvidence\":false,\"globalPromotion\":false,\"negativeKnowledgeMutation\":false}],\"totalRead\":2,\"returnedCount\":2,\"malformedLines\":1,\"warnings\":[{\"kind\":\"malformed_jsonl\",\"lineNumber\":3}],\"capacityTelemetry\":{\"maxRecordsRead\":128,\"maxRecordsHit\":false,\"fileBytesLimit\":262144},\"readOnly\":true,\"mutationFlags\":{\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false},\"authority\":{\"nonAuthorizing\":true,\"treatedAsProof\":false,\"usedAsEvidence\":false}}}}'\n",
+    );
+
+    const all_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "nk", "reviewed", "list", "--engine-root=" ++ mock_root, "--project-shard=project-a" });
+    defer {
+        testing.allocator.free(all_res.stdout);
+        testing.allocator.free(all_res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), all_res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, all_res.stdout, "REVIEWED NEGATIVE KNOWLEDGE RECORDS / READ-ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, all_res.stdout, "READ-ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, all_res.stdout, "NOT PROOF") != null);
+    try testing.expect(std.mem.indexOf(u8, all_res.stdout, "NOT EVIDENCE") != null);
+    try testing.expect(std.mem.indexOf(u8, all_res.stdout, "NO KNOWLEDGE MUTATED") != null);
+    try testing.expect(std.mem.indexOf(u8, all_res.stdout, "Project Shard: project-a") != null);
+    try testing.expect(std.mem.indexOf(u8, all_res.stdout, "Decision Filter: all") != null);
+    try testing.expect(std.mem.indexOf(u8, all_res.stdout, "Records (append order):") != null);
+    try testing.expect(std.mem.indexOf(u8, all_res.stdout, "Decision: accepted") != null);
+    try testing.expect(std.mem.indexOf(u8, all_res.stdout, "Decision: rejected") != null);
+    try testing.expect(std.mem.indexOf(u8, all_res.stdout, "Rejected Reason: too broad") != null);
+    try testing.expect(std.mem.indexOf(u8, all_res.stdout, "Warnings:") != null);
+    try testing.expect(std.mem.indexOf(u8, all_res.stdout, "Capacity Telemetry:") != null);
+    try testing.expect(std.mem.indexOf(u8, all_res.stdout, "Mutation Flags:") != null);
+    try testing.expect(std.mem.indexOf(u8, all_res.stdout, "Authority Flags:") != null);
+
+    const accepted_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "nk", "reviewed", "list", "--engine-root=" ++ mock_root, "--project-shard=project-a", "--decision=accepted" });
+    defer {
+        testing.allocator.free(accepted_res.stdout);
+        testing.allocator.free(accepted_res.stderr);
+    }
+    try testing.expect(std.mem.indexOf(u8, accepted_res.stdout, "Decision Filter: accepted") != null);
+
+    const rejected_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "nk", "reviewed", "list", "--engine-root=" ++ mock_root, "--project-shard=project-a", "--decision=rejected" });
+    defer {
+        testing.allocator.free(rejected_res.stdout);
+        testing.allocator.free(rejected_res.stderr);
+    }
+    try testing.expect(std.mem.indexOf(u8, rejected_res.stdout, "Decision Filter: rejected") != null);
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s' '{\"result\":{\"reviewedNegativeKnowledge\":{\"status\":\"ok\",\"projectShard\":\"empty-shard\",\"records\":[],\"totalRead\":0,\"returnedCount\":0,\"malformedLines\":0,\"warnings\":[],\"capacityTelemetry\":{\"maxRecordsRead\":128},\"readOnly\":true,\"mutationFlags\":{\"negativeKnowledgeMutation\":false},\"authority\":{\"nonAuthorizing\":true,\"treatedAsProof\":false,\"usedAsEvidence\":false}}}}'\n",
+    );
+    const empty_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "nk", "reviewed", "list", "--engine-root=" ++ mock_root, "--project-shard=empty-shard" });
+    defer {
+        testing.allocator.free(empty_res.stdout);
+        testing.allocator.free(empty_res.stderr);
+    }
+    try testing.expect(std.mem.indexOf(u8, empty_res.stdout, "Returned Count: 0") != null);
+}
+
+test "nk reviewed get renders existing missing and warnings" {
+    const mock_root = "/tmp/ghost-cli-nk-reviewed-get-human";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\npayload=$(cat)\ncase \"$payload\" in *missing*) printf '%s' '{\"result\":{\"reviewedNegativeKnowledge\":{\"status\":\"not_found\",\"projectShard\":\"project-a\",\"id\":\"missing\",\"reviewedNegativeKnowledgeRecord\":null,\"unknown\":{\"kind\":\"reviewed_negative_knowledge_not_found\"},\"totalRead\":0,\"malformedLines\":1,\"warnings\":[{\"kind\":\"malformed_jsonl\",\"lineNumber\":2}],\"readOnly\":true,\"mutationFlags\":{\"negativeKnowledgeMutation\":false},\"authority\":{\"nonAuthorizing\":true,\"treatedAsProof\":false,\"usedAsEvidence\":false}}}}' ;; *) printf '%s' '{\"result\":{\"reviewedNegativeKnowledge\":{\"status\":\"found\",\"projectShard\":\"project-a\",\"id\":\"nk-reviewed-1\",\"reviewedNegativeKnowledgeRecord\":{\"id\":\"nk-reviewed-1\",\"projectShard\":\"project-a\",\"decision\":\"accepted\",\"reviewerNote\":\"accepted after review\",\"candidateSnapshot\":{\"summary\":\"candidate\"},\"appendOnly\":{\"stableOrdering\":\"file_append_order\"},\"nonAuthorizing\":true,\"treatedAsProof\":false,\"usedAsEvidence\":false,\"globalPromotion\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false,\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false},\"warnings\":[],\"readOnly\":true,\"mutationFlags\":{\"negativeKnowledgeMutation\":false},\"authority\":{\"nonAuthorizing\":true,\"treatedAsProof\":false,\"usedAsEvidence\":false}}}}' ;; esac\n",
+    );
+
+    const found = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "nk", "reviewed", "get", "--engine-root=" ++ mock_root, "--project-shard=project-a", "--id=nk-reviewed-1" });
+    defer {
+        testing.allocator.free(found.stdout);
+        testing.allocator.free(found.stderr);
+    }
+    try testing.expect(std.mem.indexOf(u8, found.stdout, "REVIEWED NEGATIVE KNOWLEDGE RECORD / READ-ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, found.stdout, "Decision: accepted") != null);
+    try testing.expect(std.mem.indexOf(u8, found.stdout, "Reviewer Note: accepted after review") != null);
+    try testing.expect(std.mem.indexOf(u8, found.stdout, "Append-Only Metadata:") != null);
+
+    const missing = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "nk", "reviewed", "get", "--engine-root=" ++ mock_root, "--project-shard=project-a", "--id=missing" });
+    defer {
+        testing.allocator.free(missing.stdout);
+        testing.allocator.free(missing.stderr);
+    }
+    try testing.expect(std.mem.indexOf(u8, missing.stdout, "Status: not_found") != null);
+    try testing.expect(std.mem.indexOf(u8, missing.stdout, "Reviewed negative knowledge record not_found.") != null);
+    try testing.expect(std.mem.indexOf(u8, missing.stdout, "Warnings:") != null);
+}
+
+test "nk review list and get json byte match direct ghost_gip stdout" {
+    const mock_root = "/tmp/ghost-cli-nk-json";
+    const request_path = "/tmp/ghost-cli-nk-json-review-request.json";
+    const raw_json = "{\"result\":{\"negativeKnowledgeReview\":{\"status\":\"reviewed\",\"reviewedNegativeKnowledgeRecord\":{\"id\":\"nk-reviewed-1\",\"decision\":\"accepted\"}}}}";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+    defer std.fs.cwd().deleteFile(request_path) catch {};
+    {
+        const request = try std.fs.cwd().createFile(request_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"negative_knowledge.review\",\"projectShard\":\"project-a\",\"negativeKnowledgeCandidateId\":\"nk-candidate-1\",\"decision\":\"accepted\",\"reviewerNote\":\"reviewed\"}");
+    }
+    try writeMockExecutable(mock_root ++ "/ghost_gip", "#!/bin/sh\ncat >/dev/null\nprintf '%s' '" ++ raw_json ++ "'\n");
+    const request_bytes = try std.fs.cwd().readFileAlloc(testing.allocator, request_path, 1024 * 1024);
+    defer testing.allocator.free(request_bytes);
+    const direct_review = try runCmdWithInput(testing.allocator, &[_][]const u8{ mock_root ++ "/ghost_gip", "--stdin" }, request_bytes);
+    defer {
+        testing.allocator.free(direct_review.stdout);
+        testing.allocator.free(direct_review.stderr);
+    }
+    const cli_review = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "nk", "review", "--json", "--engine-root=" ++ mock_root, "--file", request_path });
+    defer {
+        testing.allocator.free(cli_review.stdout);
+        testing.allocator.free(cli_review.stderr);
+    }
+    try testing.expectEqualStrings(direct_review.stdout, cli_review.stdout);
+    try testing.expectEqualStrings("", cli_review.stderr);
+
+    const raw_list = "{\"result\":{\"reviewedNegativeKnowledge\":{\"status\":\"ok\",\"projectShard\":\"project-a\",\"records\":[],\"totalRead\":0,\"returnedCount\":0,\"readOnly\":true}}}";
+    try writeMockExecutable(mock_root ++ "/ghost_gip", "#!/bin/sh\ncat >/dev/null\nprintf '%s' '" ++ raw_list ++ "'\n");
+    const direct_list = try runCmdWithInput(testing.allocator, &[_][]const u8{ mock_root ++ "/ghost_gip", "--stdin" }, "{\"gipVersion\":\"gip.v0.1\",\"kind\":\"negative_knowledge.reviewed.list\",\"projectShard\":\"project-a\"}");
+    defer {
+        testing.allocator.free(direct_list.stdout);
+        testing.allocator.free(direct_list.stderr);
+    }
+    const cli_list = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "nk", "reviewed", "list", "--json", "--engine-root=" ++ mock_root, "--project-shard=project-a" });
+    defer {
+        testing.allocator.free(cli_list.stdout);
+        testing.allocator.free(cli_list.stderr);
+    }
+    try testing.expectEqualStrings(direct_list.stdout, cli_list.stdout);
+    try testing.expectEqualStrings("", cli_list.stderr);
+
+    const raw_get = "{\"result\":{\"reviewedNegativeKnowledge\":{\"status\":\"not_found\",\"projectShard\":\"project-a\",\"id\":\"missing\",\"readOnly\":true}}}";
+    try writeMockExecutable(mock_root ++ "/ghost_gip", "#!/bin/sh\ncat >/dev/null\nprintf '%s' '" ++ raw_get ++ "'\n");
+    const direct_get = try runCmdWithInput(testing.allocator, &[_][]const u8{ mock_root ++ "/ghost_gip", "--stdin" }, "{\"gipVersion\":\"gip.v0.1\",\"kind\":\"negative_knowledge.reviewed.get\",\"projectShard\":\"project-a\",\"id\":\"missing\"}");
+    defer {
+        testing.allocator.free(direct_get.stdout);
+        testing.allocator.free(direct_get.stderr);
+    }
+    const cli_get = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "nk", "reviewed", "get", "--json", "--engine-root=" ++ mock_root, "--project-shard=project-a", "--id=missing" });
+    defer {
+        testing.allocator.free(cli_get.stdout);
+        testing.allocator.free(cli_get.stderr);
+    }
+    try testing.expectEqualStrings(direct_get.stdout, cli_get.stdout);
+    try testing.expectEqualStrings("", cli_get.stderr);
+}
+
+test "nk debug diagnostics stay on stderr" {
+    const mock_root = "/tmp/ghost-cli-nk-debug";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s' '{\"result\":{\"reviewedNegativeKnowledge\":{\"status\":\"not_found\",\"projectShard\":\"project-a\",\"id\":\"missing\",\"reviewedNegativeKnowledgeRecord\":null,\"warnings\":[],\"readOnly\":true,\"mutationFlags\":{\"negativeKnowledgeMutation\":false},\"authority\":{\"nonAuthorizing\":true,\"treatedAsProof\":false,\"usedAsEvidence\":false}}}}'\n",
+    );
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "nk", "reviewed", "get", "--debug", "--engine-root=" ++ mock_root, "--project-shard=project-a", "--id=missing" });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "[DEBUG]") == null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "REVIEWED NEGATIVE KNOWLEDGE RECORD / READ-ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Engine Binary:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] GIP Kind: negative_knowledge.reviewed.get") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Project Shard: project-a") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] ID: missing") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Stdin Byte Count:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Exit Code: 0") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Parse Status: ok") != null);
+}
+
+test "nk review rejects wrong request kind before engine" {
+    const mock_root = "/tmp/ghost-cli-nk-wrong-kind";
+    const request_path = "/tmp/ghost-cli-nk-wrong-kind-request.json";
+    const marker = mock_root ++ "/engine-marker";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+    defer std.fs.cwd().deleteFile(request_path) catch {};
+
+    {
+        const request = try std.fs.cwd().createFile(request_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"correction.review\"}");
+    }
+    try writeMockExecutable(mock_root ++ "/ghost_gip", "#!/bin/sh\ntouch '" ++ marker ++ "'\nprintf '{}'\n");
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "nk", "review", "--engine-root=" ++ mock_root, "--file", request_path });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+    try testing.expect(res.term.Exited != 0);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "top-level kind \"negative_knowledge.review\"") != null);
+    try testing.expectError(error.FileNotFound, std.fs.cwd().access(marker, .{}));
+}
+
+test "doctor status and no-arg TUI do not run nk review or reviewed inspection" {
+    const mock_root = "/tmp/ghost-cli-nk-no-hidden";
+    const marker = mock_root ++ "/nk-marker";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(mock_root ++ "/ghost_task_operator", "#!/bin/sh\nprintf 'task help\\n'\n");
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\npayload=$(cat 2>/dev/null || true)\ncase \"$payload\" in *negative_knowledge.review*) touch '" ++ marker ++ "' ;; esac\nprintf '{\"status\":\"ok\"}'\n",
+    );
+
+    const doctor_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "doctor", "--engine-root=" ++ mock_root });
+    defer {
+        testing.allocator.free(doctor_res.stdout);
+        testing.allocator.free(doctor_res.stderr);
+    }
+    const status_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "status", "--engine-root=" ++ mock_root });
+    defer {
+        testing.allocator.free(status_res.stdout);
+        testing.allocator.free(status_res.stderr);
+    }
+    const no_arg_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "--engine-root=" ++ mock_root });
+    defer {
+        testing.allocator.free(no_arg_res.stdout);
+        testing.allocator.free(no_arg_res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), doctor_res.term.Exited);
+    try testing.expectEqual(@as(u32, 0), status_res.term.Exited);
+    try testing.expectError(error.FileNotFound, std.fs.cwd().access(marker, .{}));
 }
 
 test "correction review rejects wrong request kind before engine" {

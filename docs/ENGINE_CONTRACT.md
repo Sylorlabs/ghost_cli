@@ -355,6 +355,76 @@ non-TTY fallback, `ghost doctor`, `ghost status`, `ghost correction propose`,
 `ghost context autopsy`, and `ghost packs validate-autopsy-guidance` do not run
 `correction.reviewed.list`, `correction.reviewed.get`, or `correction.influence.status`.
 
+## Reviewed Negative Knowledge
+
+`ghost nk review --file <request.json>` routes explicitly to `ghost_gip --stdin`
+with GIP `kind: "negative_knowledge.review"`. The CLI reads the request file,
+validates that the top-level kind is `negative_knowledge.review`, and sends the
+file bytes unchanged. The request remains engine-owned: it may contain
+`projectShard` / `project_shard`, a `negativeKnowledgeCandidate` snapshot or
+`negativeKnowledgeCandidateId`, `decision: "accepted"` or `"rejected"`,
+`reviewerNote`, optional `sourceCorrectionReviewId`, and `rejectedReason` for
+rejected reviews.
+
+Human mode renders only the engine's reviewed negative-knowledge result. It
+labels the output `REVIEWED NEGATIVE KNOWLEDGE RECORD`, `APPEND-ONLY`,
+`NOT PROOF`, `NOT EVIDENCE`, `NON-AUTHORIZING`, `NO GLOBAL PROMOTION`,
+`NO CORPUS OR PACK MUTATION`, `NO VERIFIERS EXECUTED`, and
+`ACCEPTED NK DOES NOT BROADLY INFLUENCE FUTURE BEHAVIOR YET`. It renders the
+reviewed record, decision, reviewer note, rejected reason when present, source
+candidate id, source correction review id when present, candidate snapshot,
+append-only metadata, mutation flags, and authority flags without upgrading
+authority.
+
+Reviewed negative-knowledge records are appended under the project shard at
+`negative_knowledge/reviewed_negative_knowledge.jsonl`, but the CLI never reads
+or writes that JSONL file directly. `negativeKnowledgeMutation:true` in
+`negative_knowledge.review` means only that a reviewed NK record was explicitly
+appended. It does not mean corpus mutation, pack mutation, command execution,
+verifier execution, proof discharge, evidence use, global promotion, or broad
+future behavior influence.
+
+`ghost nk reviewed list --project-shard=<id>` routes explicitly to
+`ghost_gip --stdin` with GIP `kind: "negative_knowledge.reviewed.list"`. The CLI
+builds the request from flags: `projectShard`, optional `decision`
+(`accepted`, `rejected`, or `all`), optional numeric `limit`, and optional
+numeric `offset`. `--cursor=<n>` is treated only as the current numeric offset
+alias.
+
+`ghost nk reviewed get --project-shard=<id> --id=<record-id>` routes explicitly
+to `ghost_gip --stdin` with GIP `kind: "negative_knowledge.reviewed.get"`. The
+CLI builds the request from flags: `projectShard` and `id`.
+
+Human list mode labels output `REVIEWED NEGATIVE KNOWLEDGE RECORDS / READ-ONLY`
+and renders project shard, counts, malformed line warnings, capacity telemetry,
+record summaries in append order, decision, ids, and authority/mutation flags.
+Human get mode labels output `REVIEWED NEGATIVE KNOWLEDGE RECORD / READ-ONLY`
+and renders the reviewed record summary, warnings, `not_found` when missing,
+and authority/mutation flags.
+
+Both list/get human modes always display `READ-ONLY`, `NOT PROOF`,
+`NOT EVIDENCE`, `NON-AUTHORIZING`, `NO KNOWLEDGE MUTATED`, and
+`NO VERIFIERS EXECUTED`. Missing storage returns an empty list or `not_found`.
+Malformed JSONL lines are reported as warnings/telemetry and do not crash the
+CLI.
+
+Accepted reviewed NK is durable and inspectable, but it is still not proof, not
+evidence, not global promotion, and Phase 11A does not add broad reviewed-NK
+influence into future behavior.
+
+`--json` preserves raw engine stdout exactly for review/list/get. `--debug`
+writes diagnostics to stderr only: engine path, GIP kind, input file path for
+review, project shard for list/get, record id for get, stdin byte count, exit
+code, and parse status.
+
+Reviewed NK commands are explicit only. Help, startup, TUI launch/idle, no-arg
+non-TTY fallback, `ghost doctor`, `ghost status`, `ghost correction propose`,
+`ghost correction review`, `ghost correction influence status`,
+`ghost correction reviewed list/get`, `ghost corpus ask`, `ghost rules
+evaluate`, `ghost context autopsy`, and `ghost packs validate-autopsy-guidance`
+do not run `negative_knowledge.review`, `negative_knowledge.reviewed.list`, or
+`negative_knowledge.reviewed.get`.
+
 ## Rule Evaluation
 
 `ghost rules evaluate --file <request.json>` routes explicitly to
