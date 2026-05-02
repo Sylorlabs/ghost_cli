@@ -28,12 +28,16 @@ pub fn printHelp(writer: anytype) !void {
         \\  Rule evaluation is deterministic, bounded, and read-only.
         \\  It is structural matching only: no recursive inference, no Prolog,
         \\  no Transformers, embeddings, model adapters, semantic search, or network calls.
+        \\  Accepted reviewed corrections may influence rule.evaluate as
+        \\  warnings, exact repeated-output suppression, or candidate-only
+        \\  future behavior when a project shard is supplied.
+        \\  Accepted corrections are not proof, evidence, support, or global promotion.
         \\  RULE OUTPUTS ARE CANDIDATES ONLY.
         \\  Capacity telemetry is explicit: capped or rejected rule outputs mean
         \\  incomplete candidate evaluation, not proof or support.
         \\  NOT PROOF.
         \\  VERIFIERS NOT EXECUTED.
-        \\  PACKS / CORPUS / NEGATIVE KNOWLEDGE NOT MUTATED.
+        \\  PACKS / CORPUS / NEGATIVE KNOWLEDGE / CORRECTION RECORDS NOT MUTATED.
         \\  `--json` preserves raw engine stdout exactly.
         \\  `--debug` writes diagnostics to stderr only.
         \\
@@ -64,11 +68,13 @@ fn printEvaluateHelp(writer: anytype) !void {
         \\  Explicit invocation only.
         \\  Deterministic bounded rule evaluation over request-local facts/rules.
         \\  No recursive inference / no Prolog.
+        \\  Accepted reviewed corrections may influence output only as
+        \\  non-authorizing warnings, suppression, or future candidates.
         \\  RULE OUTPUTS ARE CANDIDATES ONLY.
         \\  Capacity warnings mean incomplete candidate evaluation.
         \\  NOT PROOF.
         \\  VERIFIERS NOT EXECUTED.
-        \\  PACKS / CORPUS / NEGATIVE KNOWLEDGE NOT MUTATED.
+        \\  PACKS / CORPUS / NEGATIVE KNOWLEDGE / CORRECTION RECORDS NOT MUTATED.
         \\  No Transformers / embeddings / semantic search.
         \\
     , .{});
@@ -255,6 +261,25 @@ fn printRuleEvaluationResult(writer: anytype, value: std.json.Value) !void {
         if (hasCapacityPressure(telemetry)) try printRuleCapacityWarning(writer, telemetry);
     }
 
+    const accepted_correction_warnings = rule.get("acceptedCorrectionWarnings");
+    const correction_influences = rule.get("correctionInfluences");
+    const future_behavior_candidates = rule.get("futureBehaviorCandidates");
+    const influence_telemetry = rule.get("influenceTelemetry");
+    if (hasAcceptedCorrectionInfluence(
+        accepted_correction_warnings,
+        correction_influences,
+        future_behavior_candidates,
+        influence_telemetry,
+    )) {
+        try printAcceptedCorrectionInfluence(
+            writer,
+            accepted_correction_warnings,
+            correction_influences,
+            future_behavior_candidates,
+            influence_telemetry,
+        );
+    }
+
     try printSection(writer, rule, "firedRules", "Fired Rules");
     try printSection(writer, rule, "emittedCandidates", "Emitted Candidates");
     try printSection(writer, rule, "emittedObligations", "Emitted Obligations");
@@ -287,6 +312,101 @@ fn printRuleCapacityWarning(writer: anytype, telemetry: std.json.Value) !void {
     try printCapacityField(writer, obj, "budgetHits");
     try printCapacityField(writer, obj, "capacityWarnings");
     try writer.print("\n", .{});
+}
+
+fn hasAcceptedCorrectionInfluence(
+    warnings: ?std.json.Value,
+    influences: ?std.json.Value,
+    future_candidates: ?std.json.Value,
+    telemetry: ?std.json.Value,
+) bool {
+    return (if (warnings) |v| !isEmptyJsonList(v) else false) or
+        (if (influences) |v| !isEmptyJsonList(v) else false) or
+        (if (future_candidates) |v| !isEmptyJsonList(v) else false) or
+        (if (telemetry) |v| hasInfluenceTelemetrySignal(v) else false);
+}
+
+fn printAcceptedCorrectionInfluence(
+    writer: anytype,
+    warnings: ?std.json.Value,
+    influences: ?std.json.Value,
+    future_candidates: ?std.json.Value,
+    telemetry: ?std.json.Value,
+) !void {
+    try writer.print("\nACCEPTED CORRECTION INFLUENCE / NON-AUTHORIZING\n", .{});
+    try writer.print("- Accepted corrections influenced this rule evaluation.\n", .{});
+    try writer.print("- This is not proof.\n", .{});
+    try writer.print("- This is not evidence.\n", .{});
+    try writer.print("- No corpus, pack, negative-knowledge, correction-record, command, or verifier mutation occurred.\n", .{});
+    try writer.print("- Future behavior remains candidate-only unless separately reviewed/applied.\n", .{});
+    if (hasSuppressedRuleOutput(telemetry, warnings, influences)) {
+        try writer.print("- A rule output was suppressed by accepted correction influence and is not rendered as active.\n", .{});
+    }
+    if (warnings) |value| {
+        if (!isEmptyJsonList(value)) {
+            try writer.print("acceptedCorrectionWarnings:\n", .{});
+            try printJsonValue(writer, value, 2);
+        }
+    }
+    if (influences) |value| {
+        if (!isEmptyJsonList(value)) {
+            try writer.print("correctionInfluences:\n", .{});
+            try printJsonValue(writer, value, 2);
+        }
+    }
+    if (telemetry) |value| {
+        if (!isEmptyJsonList(value) and hasInfluenceTelemetrySignal(value)) {
+            try writer.print("influenceTelemetry:\n", .{});
+            try printJsonValue(writer, value, 2);
+        }
+    }
+    if (future_candidates) |value| {
+        if (!isEmptyJsonList(value)) {
+            try printFutureBehaviorCandidates(writer, value);
+        }
+    }
+}
+
+fn printFutureBehaviorCandidates(writer: anytype, value: std.json.Value) !void {
+    try writer.print("\nFUTURE BEHAVIOR CANDIDATES / NOT APPLIED\n", .{});
+    try writer.print("- Candidates only.\n", .{});
+    try writer.print("- Not persisted as negative-knowledge, corpus, pack, or rule updates by this operation.\n", .{});
+    try writer.print("- No verifier/check executed.\n", .{});
+    try printJsonValue(writer, value, 2);
+}
+
+fn hasSuppressedRuleOutput(telemetry: ?std.json.Value, warnings: ?std.json.Value, influences: ?std.json.Value) bool {
+    if (telemetry) |value| {
+        switch (value) {
+            .object => |obj| {
+                if (obj.get("outputsSuppressed")) |suppressed| {
+                    if (isPressureValue(suppressed)) return true;
+                }
+            },
+            else => {},
+        }
+    }
+    return (if (warnings) |v| jsonContainsAny(v, &.{ "suppress", "suppressed", "exact repeated" }) else false) or
+        (if (influences) |v| jsonContainsAny(v, &.{ "suppress", "suppressed", "exact repeated", "suppress_exact_repeat" }) else false);
+}
+
+fn hasInfluenceTelemetrySignal(value: std.json.Value) bool {
+    const obj = switch (value) {
+        .object => |obj| obj,
+        else => return !isEmptyJsonList(value),
+    };
+    return hasPressureField(obj, "recordsRead") or
+        hasPressureField(obj, "acceptedRecords") or
+        hasPressureField(obj, "rejectedRecords") or
+        hasPressureField(obj, "malformedLines") or
+        hasPressureField(obj, "warnings") or
+        hasPressureField(obj, "influencesLoaded") or
+        hasPressureField(obj, "influencesApplied") or
+        hasPressureField(obj, "outputsSuppressed") or
+        hasPressureField(obj, "truncated") or
+        hasPressureField(obj, "mutationPerformed") or
+        hasPressureField(obj, "commandsExecuted") or
+        hasPressureField(obj, "verifiersExecuted");
 }
 
 fn findRuleEvaluation(value: std.json.Value) ?std.json.Value {
@@ -399,6 +519,34 @@ fn isEmptyJsonList(value: std.json.Value) bool {
         .object => |obj| obj.count() == 0,
         else => false,
     };
+}
+
+fn jsonContainsAny(value: std.json.Value, needles: []const []const u8) bool {
+    switch (value) {
+        .string => |s| {
+            for (needles) |needle| {
+                if (std.mem.indexOf(u8, s, needle) != null) return true;
+            }
+            return false;
+        },
+        .array => |arr| {
+            for (arr.items) |item| {
+                if (jsonContainsAny(item, needles)) return true;
+            }
+            return false;
+        },
+        .object => |obj| {
+            var iter = obj.iterator();
+            while (iter.next()) |entry| {
+                for (needles) |needle| {
+                    if (std.mem.indexOf(u8, entry.key_ptr.*, needle) != null) return true;
+                }
+                if (jsonContainsAny(entry.value_ptr.*, needles)) return true;
+            }
+            return false;
+        },
+        else => return false,
+    }
 }
 
 fn printJsonValue(writer: anytype, value: std.json.Value, indent: usize) !void {

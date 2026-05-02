@@ -377,6 +377,26 @@ WARNING / NON-AUTHORIZING**. Output caps, fired-rule caps, rejected outputs, and
 budget hits mean rule evaluation is incomplete. Capacity telemetry is rendered
 as a non-authorizing warning only; it is not evidence, proof, or support.
 
+If `acceptedCorrectionWarnings`, `correctionInfluences`,
+`futureBehaviorCandidates`, or non-empty `influenceTelemetry` report same-shard
+accepted reviewed correction influence, human mode displays **ACCEPTED
+CORRECTION INFLUENCE / NON-AUTHORIZING**. The block states that accepted
+corrections influenced this rule evaluation, are not proof or evidence, do not
+mutate corpus, packs, negative knowledge, correction records, commands, or
+verifiers, and leave future behavior candidate-only unless separately
+reviewed/applied. These fields are never rendered under Evidence Used, Proof,
+Support, Verified, or Accepted Knowledge.
+
+If `outputsSuppressed` or suppression influence records indicate exact repeated
+bad rule output suppression, human mode states that a rule output was suppressed
+by accepted correction influence and does not render the suppressed output as
+active. The corresponding warnings/influences remain visible in the
+non-authorizing influence block.
+
+`futureBehaviorCandidates` are rendered as **FUTURE BEHAVIOR CANDIDATES / NOT
+APPLIED**. They are candidates only, are not persisted as rule, corpus, pack, or
+negative-knowledge updates by this operation, and no verifier/check is executed.
+
 `--json` preserves raw engine stdout exactly. `--debug` writes diagnostics to
 stderr only: engine path, GIP kind, input file path, stdin byte count, exit
 code, and parse status.

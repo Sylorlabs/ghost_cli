@@ -1062,6 +1062,78 @@ test "rules evaluate human capacity telemetry renders non-authorizing warning" {
     try testing.expect(std.mem.indexOf(u8, res.stdout, "Safety Flags:") != null);
 }
 
+test "rules evaluate human accepted correction influence renders non-authorizing block" {
+    const mock_root = "/tmp/ghost-cli-rules-correction-influence";
+    const request_path = mock_root ++ "/request.json";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    {
+        const request = try std.fs.cwd().createFile(request_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"rule.evaluate\",\"projectShard\":\"project-a\",\"facts\":[],\"rules\":[]}");
+    }
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s' '{\"gipVersion\":\"gip.v0.1\",\"kind\":\"rule.evaluate\",\"status\":\"ok\",\"result\":{\"ruleEvaluation\":{\"nonAuthorizing\":true,\"candidateOnly\":true,\"proofDischarged\":false,\"supportGranted\":false,\"factsConsidered\":1,\"rulesConsidered\":1,\"outputsEmitted\":1,\"budgetExhausted\":false,\"firedRules\":[{\"id\":\"rule.runtime\",\"name\":\"Runtime checks\"}],\"emittedCandidates\":[{\"kind\":\"risk_candidate\",\"id\":\"risk.runtime\",\"summary\":\"runtime risk\"}],\"emittedObligations\":[],\"emittedUnknowns\":[],\"acceptedCorrectionWarnings\":[{\"lineNumber\":3,\"reason\":\"malformed reviewed correction line skipped\"}],\"correctionInfluences\":[{\"sourceReviewedCorrectionId\":\"reviewed-1\",\"influenceKind\":\"warning\",\"appliesTo\":\"rule.evaluate\",\"matchedOutputId\":\"risk.runtime\",\"reason\":\"accepted reviewed correction matched rule output\",\"nonAuthorizing\":true,\"treatedAsProof\":false,\"globalPromotion\":false,\"mutationFlags\":{\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"correctionRecordMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false}}],\"futureBehaviorCandidates\":[{\"kind\":\"rule_update_candidate\",\"status\":\"candidate\",\"reason\":\"candidate only\",\"sourceReviewedCorrectionId\":\"reviewed-1\",\"candidateOnly\":true,\"nonAuthorizing\":true,\"treatedAsProof\":false,\"globalPromotion\":false,\"mutationFlags\":{\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"correctionRecordMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false}}],\"influenceTelemetry\":{\"recordsRead\":2,\"acceptedRecords\":1,\"rejectedRecords\":1,\"malformedLines\":1,\"warnings\":1,\"influencesLoaded\":1,\"influencesApplied\":1,\"outputsSuppressed\":0,\"truncated\":false,\"sameShardOnly\":true,\"mutationPerformed\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false},\"explanationTrace\":[{\"ruleId\":\"rule.runtime\",\"fired\":true}],\"safetyFlags\":{\"commandsExecuted\":false,\"verifiersExecuted\":false,\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"proofDischarged\":false,\"supportGranted\":false}}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "rules", "evaluate", "--engine-root=" ++ mock_root, "--file", request_path });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    const influence_idx = std.mem.indexOf(u8, res.stdout, "ACCEPTED CORRECTION INFLUENCE / NON-AUTHORIZING") orelse return error.TestExpectedEqual;
+    const candidates_idx = std.mem.indexOf(u8, res.stdout, "Emitted Candidates:") orelse return error.TestExpectedEqual;
+    try testing.expect(influence_idx < candidates_idx);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Accepted corrections influenced this rule evaluation.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "This is not proof.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "This is not evidence.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "No corpus, pack, negative-knowledge, correction-record, command, or verifier mutation occurred.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "acceptedCorrectionWarnings:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "correctionInfluences:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "influenceTelemetry:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "FUTURE BEHAVIOR CANDIDATES / NOT APPLIED") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Not persisted as negative-knowledge, corpus, pack, or rule updates by this operation.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "No verifier/check executed.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Evidence Used") == null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Support:") == null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Verified") == null);
+}
+
+test "rules evaluate human suppressed output explains accepted correction influence" {
+    const mock_root = "/tmp/ghost-cli-rules-correction-suppressed";
+    const request_path = mock_root ++ "/request.json";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    {
+        const request = try std.fs.cwd().createFile(request_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"rule.evaluate\",\"projectShard\":\"project-a\",\"facts\":[],\"rules\":[]}");
+    }
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s' '{\"gipVersion\":\"gip.v0.1\",\"kind\":\"rule.evaluate\",\"status\":\"ok\",\"result\":{\"ruleEvaluation\":{\"nonAuthorizing\":true,\"candidateOnly\":true,\"proofDischarged\":false,\"supportGranted\":false,\"factsConsidered\":1,\"rulesConsidered\":1,\"outputsEmitted\":0,\"budgetExhausted\":false,\"firedRules\":[{\"id\":\"rule.bad\",\"name\":\"Bad rule\"}],\"emittedCandidates\":[],\"emittedObligations\":[],\"emittedUnknowns\":[],\"acceptedCorrectionWarnings\":[],\"correctionInfluences\":[{\"sourceReviewedCorrectionId\":\"reviewed-2\",\"influenceKind\":\"suppress_exact_repeat\",\"appliesTo\":\"rule.evaluate\",\"matchedRuleId\":\"rule.bad\",\"matchedOutputId\":\"risk.bad\",\"reason\":\"exact repeated bad rule output suppressed\",\"nonAuthorizing\":true,\"treatedAsProof\":false,\"globalPromotion\":false,\"mutationFlags\":{\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"correctionRecordMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false}}],\"futureBehaviorCandidates\":[{\"kind\":\"verifier_check_candidate\",\"status\":\"candidate\",\"reason\":\"suppressed exact repeated bad rule output requires explicit verifier/check candidate before reintroduction\",\"sourceReviewedCorrectionId\":\"reviewed-2\",\"candidateOnly\":true,\"nonAuthorizing\":true,\"treatedAsProof\":false,\"globalPromotion\":false,\"mutationFlags\":{\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"correctionRecordMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false}}],\"influenceTelemetry\":{\"recordsRead\":1,\"acceptedRecords\":1,\"rejectedRecords\":0,\"malformedLines\":0,\"warnings\":0,\"influencesLoaded\":1,\"influencesApplied\":1,\"outputsSuppressed\":1,\"truncated\":false,\"sameShardOnly\":true,\"mutationPerformed\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false},\"explanationTrace\":[{\"ruleId\":\"rule.bad\",\"fired\":true}],\"safetyFlags\":{\"commandsExecuted\":false,\"verifiersExecuted\":false,\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"proofDischarged\":false,\"supportGranted\":false}}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "rules", "evaluate", "--engine-root=" ++ mock_root, "--file", request_path });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "A rule output was suppressed by accepted correction influence and is not rendered as active.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "suppress_exact_repeat") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "outputsSuppressed") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Emitted Candidates:") == null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Emitted Obligations:") == null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "risk.bad") != null);
+}
+
 test "rules evaluate zero capacity telemetry renders normal candidates without warning" {
     const mock_root = "/tmp/ghost-cli-rules-capacity-clean";
     const request_path = mock_root ++ "/request.json";

@@ -162,11 +162,30 @@ WARNING / NON-AUTHORIZING`. Output, fired-rule, or rule caps mean evaluation is
 incomplete: emitted rule outputs remain candidates only, rejected or capped
 outputs are not proof, and no support gate was discharged.
 
+When same-shard accepted reviewed corrections influence `rule.evaluate`, human
+mode renders **ACCEPTED CORRECTION INFLUENCE / NON-AUTHORIZING**. It displays
+`acceptedCorrectionWarnings`, `correctionInfluences`, `influenceTelemetry`, and
+`futureBehaviorCandidates` separately from fired rules and emitted outputs.
+Accepted correction influence is not proof, not evidence, not support, and not
+global promotion. Exact repeated bad rule outputs may be suppressed; when that
+happens, human mode says a rule output was suppressed by accepted correction
+influence and does not render the suppressed output as active.
+
+`futureBehaviorCandidates` are rendered as **FUTURE BEHAVIOR CANDIDATES / NOT
+APPLIED**. They are candidates only, are not persisted as rule, corpus, pack, or
+negative-knowledge updates by this operation, and do not execute verifiers or
+checks.
+
 Rule evaluation is deterministic bounded rule matching over request-local facts
-and rules. It is not recursive inference, not Prolog, not semantic search, and
-does not use Transformers, embeddings, or model adapters. It does not execute
-emitted checks or verifier candidates, mutate corpus, mutate packs, mutate
-negative knowledge, or grant proof/support.
+and rules. If `projectShard` / `project_shard` is supplied, accepted reviewed
+corrections are read from that same shard only. Matching is conservative and
+structural: exact text, substring, or deterministic fingerprint matching against
+rule/output/obligation/unknown/trace fields. It is not recursive inference, not
+Prolog, not semantic search, and does not use Transformers, embeddings, model
+adapters, ranking models, cloud calls, or network calls. It does not execute
+emitted checks or verifier candidates, mutate rules, mutate corpus, mutate
+packs, mutate negative knowledge, mutate correction records, globally promote
+corrections, or grant proof/support.
 
 This command is explicit only. It does not run from help, startup, TUI launch,
 doctor, status, `corpus ask`, `context autopsy`, or pack validation.
