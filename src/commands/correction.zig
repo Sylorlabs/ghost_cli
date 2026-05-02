@@ -10,13 +10,14 @@ pub const CorrectionOptions = struct {
     operation_kind: ?[]const u8 = null,
     limit: ?usize = null,
     offset: ?usize = null,
+    include_records: bool = false,
     json: bool = false,
     debug: bool = false,
 };
 
 const max_request_bytes = 1024 * 1024;
 const usage =
-    \\Usage: ghost correction <propose|review|reviewed> [options]
+    \\Usage: ghost correction <propose|review|reviewed|influence> [options]
     \\
 ;
 
@@ -24,7 +25,7 @@ pub fn printHelp(writer: anytype) !void {
     try writer.print(
         \\correction
         \\
-        \\Usage: ghost correction <propose|review|reviewed> [options]
+        \\Usage: ghost correction <propose|review|reviewed|influence> [options]
         \\
         \\Explicit correction proposal, review, and reviewed-record inspection commands.
         \\
@@ -33,17 +34,19 @@ pub fn printHelp(writer: anytype) !void {
         \\  review --file <request.json>       Run a correction.review GIP request
         \\  reviewed list --project-shard=<id> List reviewed correction records
         \\  reviewed get --project-shard=<id> --id=<record-id>
+        \\  influence status --project-shard=<id> Show read-only influence diagnostics
         \\
         \\Safety:
         \\  This request runs only when this command is explicitly invoked.
         \\  Propose/review request files must be GIP-compatible JSON with kind "correction.propose" or "correction.review".
         \\  Reviewed list/get build read-only GIP requests with kind "correction.reviewed.list" or "correction.reviewed.get".
+        \\  Influence status builds a read-only GIP request with kind "correction.influence.status".
         \\  User corrections are signals, not proof.
         \\  Correction proposals are candidate-only and review-required.
         \\  Correction reviews record explicit accept/reject decisions only.
         \\  Accepted reviewed corrections are still not proof.
-        \\  Reviewed list/get are read-only, bounded inspection commands.
-        \\  Reviewed records are NOT PROOF and NON-AUTHORIZING.
+        \\  Reviewed list/get and influence status are read-only, bounded inspection commands.
+        \\  Reviewed records and influence status counts are NOT PROOF and NON-AUTHORIZING.
         \\  Accepted reviews do not mutate corpus, packs, or negative knowledge.
         \\  No global promotion is performed by default.
         \\  No hidden learning is performed.
@@ -66,6 +69,10 @@ pub fn printHelpForArgs(writer: anytype, args: []const []const u8) !void {
         if (args.len >= 2 and std.mem.eql(u8, args[1], "list")) return printReviewedListHelp(writer);
         if (args.len >= 2 and std.mem.eql(u8, args[1], "get")) return printReviewedGetHelp(writer);
         return printReviewedHelp(writer);
+    }
+    if (std.mem.eql(u8, args[0], "influence")) {
+        if (args.len >= 2 and std.mem.eql(u8, args[1], "status")) return printInfluenceStatusHelp(writer);
+        return printInfluenceHelp(writer);
     }
     return printHelp(writer);
 }
@@ -212,6 +219,55 @@ fn printReviewedGetHelp(writer: anytype) !void {
     , .{});
 }
 
+fn printInfluenceHelp(writer: anytype) !void {
+    try writer.print(
+        \\correction influence
+        \\
+        \\Usage: ghost correction influence <status> [options]
+        \\
+        \\Read-only influence diagnostic commands.
+        \\
+        \\Subcommands:
+        \\  status --project-shard=<id> [--operation-kind=<kind>] [--include-records] [--limit=<n>]
+        \\
+        \\Safety:
+        \\  Explicit invocation only.
+        \\  READ-ONLY.
+        \\  NOT PROOF.
+        \\  NON-AUTHORIZING.
+        \\  NO GLOBAL PROMOTION.
+        \\  NO KNOWLEDGE MUTATED.
+        \\  NO VERIFIERS EXECUTED.
+        \\  `--json` preserves raw engine stdout exactly.
+        \\  `--debug` writes diagnostics to stderr only.
+        \\
+    , .{});
+}
+
+fn printInfluenceStatusHelp(writer: anytype) !void {
+    try writer.print(
+        \\correction influence status
+        \\
+        \\Usage: ghost correction influence status --project-shard=<id> [--operation-kind=<kind>] [--include-records] [--limit=<n>] [--json] [--debug]
+        \\
+        \\Builds a correction.influence.status GIP request and sends it to ghost_gip --stdin.
+        \\
+        \\Options:
+        \\  --project-shard=<id>      Project shard to inspect
+        \\  --operation-kind=<kind>   Optional operation kind filter
+        \\  --include-records         Include sampled records
+        \\  --limit=<n>               Limit for included records
+        \\  --json                    Preserve raw GIP stdout exactly
+        \\  --debug                   Diagnostics to stderr
+        \\
+        \\Safety:
+        \\  READ-ONLY. NOT PROOF. NON-AUTHORIZING. NO GLOBAL PROMOTION.
+        \\  NO KNOWLEDGE MUTATED. NO VERIFIERS EXECUTED.
+        \\  STATUS COUNTS ARE OPERATOR DIAGNOSTICS ONLY.
+        \\
+    , .{});
+}
+
 pub fn executeFromArgs(
     allocator: std.mem.Allocator,
     engine_root: ?[]const u8,
@@ -222,13 +278,18 @@ pub fn executeFromArgs(
         try std.io.getStdErr().writer().print("{s}", .{usage});
         std.process.exit(1);
     };
-    if (!std.mem.eql(u8, sub, "propose") and !std.mem.eql(u8, sub, "review") and !std.mem.eql(u8, sub, "reviewed")) {
+    if (!std.mem.eql(u8, sub, "propose") and !std.mem.eql(u8, sub, "review") and !std.mem.eql(u8, sub, "reviewed") and !std.mem.eql(u8, sub, "influence")) {
         try std.io.getStdErr().writer().print("Unknown correction command: {s}\n{s}", .{ sub, usage });
         std.process.exit(1);
     }
 
     if (std.mem.eql(u8, sub, "reviewed")) {
         try executeReviewedFromArgs(allocator, engine_root, args[1..], base);
+        return;
+    }
+
+    if (std.mem.eql(u8, sub, "influence")) {
+        try executeInfluenceFromArgs(allocator, engine_root, args[1..], base);
         return;
     }
 
@@ -1175,4 +1236,170 @@ fn requireNonEmpty(value: ?[]const u8, message: []const u8) []const u8 {
 fn failMissingValue(flag: []const u8) !noreturn {
     try std.io.getStdErr().writer().print("{s} requires a value\n", .{flag});
     std.process.exit(1);
+}
+
+fn executeInfluenceFromArgs(
+    allocator: std.mem.Allocator,
+    engine_root: ?[]const u8,
+    args: []const []const u8,
+    base: CorrectionOptions,
+) !void {
+    const action = if (args.len > 0) args[0] else {
+        try printInfluenceHelp(std.io.getStdErr().writer());
+        std.process.exit(1);
+    };
+    if (!std.mem.eql(u8, action, "status")) {
+        try std.io.getStdErr().writer().print("Unknown correction influence command: {s}\n", .{action});
+        try printInfluenceHelp(std.io.getStdErr().writer());
+        std.process.exit(1);
+    }
+
+    var options = base;
+    var i: usize = 1;
+    while (i < args.len) : (i += 1) {
+        const arg = args[i];
+        if (try parseReviewedValueArg(args, &i, arg, "--project-shard")) |value| {
+            options.project_shard = value;
+        } else if (try parseReviewedValueArg(args, &i, arg, "--operation-kind")) |value| {
+            options.operation_kind = value;
+        } else if (try parseReviewedValueArg(args, &i, arg, "--limit")) |value| {
+            options.limit = parsePositiveUsize("--limit", value);
+        } else if (std.mem.eql(u8, arg, "--include-records")) {
+            options.include_records = true;
+        } else if (std.mem.startsWith(u8, arg, "--")) {
+            try std.io.getStdErr().writer().print("Unknown correction influence {s} option: {s}\n", .{ action, arg });
+            std.process.exit(1);
+        } else {
+            try std.io.getStdErr().writer().print("Unexpected correction influence {s} argument: {s}\n", .{ action, arg });
+            std.process.exit(1);
+        }
+    }
+
+    if (std.mem.eql(u8, action, "status")) {
+        try executeInfluenceStatus(allocator, engine_root, options);
+    }
+}
+
+fn executeInfluenceStatus(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: CorrectionOptions) !void {
+    const project_shard = requireNonEmpty(options.project_shard, "correction influence status --project-shard is required");
+
+    var request = std.ArrayList(u8).init(allocator);
+    defer request.deinit();
+    try request.writer().writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"correction.influence.status\",\"projectShard\":");
+    try std.json.stringify(project_shard, .{}, request.writer());
+    if (options.operation_kind) |operation_kind| {
+        try request.writer().writeAll(",\"operationKind\":");
+        try std.json.stringify(operation_kind, .{}, request.writer());
+    }
+    if (options.include_records) {
+        try request.writer().writeAll(",\"includeRecords\":true");
+    }
+    if (options.limit) |limit| {
+        try request.writer().print(",\"limit\":{d}", .{limit});
+    }
+    try request.writer().writeByte('}');
+
+    try executeReviewedGip(allocator, engine_root, options, "correction.influence.status", project_shard, null, request.items, printCorrectionInfluenceStatusResult);
+}
+
+fn printCorrectionInfluenceStatusResult(writer: anytype, value: std.json.Value) !void {
+    try writer.print("CORRECTION INFLUENCE STATUS / READ-ONLY\n", .{});
+    try writer.print("READ-ONLY\n", .{});
+    try writer.print("NOT PROOF\n", .{});
+    try writer.print("NON-AUTHORIZING\n", .{});
+    try writer.print("NO GLOBAL PROMOTION\n", .{});
+    try writer.print("NO KNOWLEDGE MUTATED\n", .{});
+    try writer.print("NO VERIFIERS EXECUTED\n", .{});
+    try writer.print("STATUS COUNTS ARE OPERATOR DIAGNOSTICS ONLY\n\n", .{});
+
+    if (findError(value)) |err_value| {
+        try writer.print("Engine Rejected Request:\n", .{});
+        try printJsonValue(writer, err_value, 2);
+        try writer.print("\n", .{});
+        return;
+    }
+
+    const status_value = findCorrectionInfluenceStatus(value) orelse {
+        try writer.print("No correctionInfluenceStatus result payload was present.\n", .{});
+        return;
+    };
+    const inf_status = switch (status_value) {
+        .object => |obj| obj,
+        else => {
+            try printJsonValue(writer, status_value, 2);
+            try writer.print("\n", .{});
+            return;
+        },
+    };
+
+    try printField(writer, inf_status, "status", "Status");
+    try printField(writer, inf_status, "projectShard", "Project Shard");
+    try printField(writer, inf_status, "project_shard", "Project Shard");
+    try printField(writer, inf_status, "readOnly", "Read Only");
+
+    if (inf_status.get("summary")) |summary| {
+        try writer.print("\nSummary:\n", .{});
+        if (summary == .object) {
+            const sum = summary.object;
+            try printIndentedField(writer, sum, "totalRecords", "Total Records", 2);
+            try printIndentedField(writer, sum, "acceptedRecords", "Accepted Records", 2);
+            try printIndentedField(writer, sum, "rejectedRecords", "Rejected Records", 2);
+            try printIndentedField(writer, sum, "malformedLines", "Malformed Lines", 2);
+            try printIndentedField(writer, sum, "suppressionCandidateCount", "Suppression Candidate Count", 2);
+            try printIndentedField(writer, sum, "strongerEvidenceCandidateCount", "Stronger Evidence Candidate Count", 2);
+            try printIndentedField(writer, sum, "verifierCandidateCount", "Verifier Candidate Count", 2);
+            try printIndentedField(writer, sum, "negativeKnowledgeCandidateCount", "Negative Knowledge Candidate Count", 2);
+            try printIndentedField(writer, sum, "corpusUpdateCandidateCount", "Corpus Update Candidate Count", 2);
+            try printIndentedField(writer, sum, "packGuidanceCandidateCount", "Pack Guidance Candidate Count", 2);
+            try printIndentedField(writer, sum, "ruleUpdateCandidateCount", "Rule Update Candidate Count", 2);
+            try printIndentedField(writer, sum, "futureBehaviorCandidateCount", "Future Behavior Candidate Count", 2);
+            try printIndentedSection(writer, sum, "operationKindCounts", "Operation Kind Counts", 2);
+            try printIndentedSection(writer, sum, "correctionTypeCounts", "Correction Type Counts", 2);
+            try printIndentedSection(writer, sum, "influenceKindCounts", "Influence Kind Counts", 2);
+        } else {
+            try printJsonValue(writer, summary, 2);
+        }
+    }
+
+    try printSection(writer, inf_status, "warnings", "Warnings");
+    try printSection(writer, inf_status, "capacityTelemetry", "Capacity Telemetry");
+    try printSection(writer, inf_status, "capacity_telemetry", "Capacity Telemetry");
+
+    if (inf_status.get("records")) |records| {
+        try writer.print("\nRecords:\n", .{});
+        if (records == .array) {
+            for (records.array.items, 0..) |record, index| {
+                try writer.print("- Record {d}:\n", .{index + 1});
+                try printReviewedRecordSummary(writer, record, 4);
+            }
+        } else {
+            try printJsonValue(writer, records, 2);
+        }
+    }
+
+    try printSection(writer, inf_status, "storage", "Append-Only Storage");
+    try printSection(writer, inf_status, "mutationFlags", "Mutation Flags");
+    try printSection(writer, inf_status, "mutation_flags", "Mutation Flags");
+    try printSection(writer, inf_status, "authority", "Authority Flags");
+    try printSection(writer, inf_status, "authorityFlags", "Authority Flags");
+    try printSection(writer, inf_status, "authority_flags", "Authority Flags");
+}
+
+fn findCorrectionInfluenceStatus(value: std.json.Value) ?std.json.Value {
+    const obj = switch (value) {
+        .object => |o| o,
+        else => return null,
+    };
+    if (obj.get("correctionInfluenceStatus")) |status| return status;
+    if (obj.get("correction_influence_status")) |status| return status;
+    if (obj.get("result")) |result| {
+        const result_obj = switch (result) {
+            .object => |o| o,
+            else => return result,
+        };
+        if (result_obj.get("correctionInfluenceStatus")) |status| return status;
+        if (result_obj.get("correction_influence_status")) |status| return status;
+        return result;
+    }
+    return null;
 }

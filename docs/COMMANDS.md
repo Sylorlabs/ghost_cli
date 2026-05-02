@@ -334,6 +334,34 @@ doctor, status, `correction propose`, `correction review`, `corpus ask`,
 stderr only, including engine path, GIP kind, project shard, record id, stdin
 byte count, exit code, and parse status.
 
+#### `ghost correction influence status`
+Inspect read-only influence status counts and bounded records through `ghost_gip`
+operation `correction.influence.status`.
+
+Usage: `ghost correction influence status --project-shard=my-project`
+Usage: `ghost correction influence status --project-shard=my-project --operation-kind=corpus.ask`
+Usage: `ghost correction influence status --project-shard=my-project --include-records`
+Usage: `ghost correction influence status --project-shard=my-project --include-records --limit=5`
+
+The CLI builds the GIP JSON request from flags and sends it to `ghost_gip --stdin`.
+It does not read or write `reviewed_corrections.jsonl` directly.
+
+Human output is labeled **CORRECTION INFLUENCE STATUS / READ-ONLY** and always
+prints `READ-ONLY`, `NOT PROOF`, `NON-AUTHORIZING`, `NO GLOBAL PROMOTION`,
+`NO KNOWLEDGE MUTATED`, `NO VERIFIERS EXECUTED`, and `STATUS COUNTS ARE OPERATOR DIAGNOSTICS ONLY`.
+
+It renders accepted/rejected records, malformed lines, operation kind counts,
+correction type counts, influence kind counts, warnings, and capacity telemetry.
+If `--include-records` is passed, it renders the sampled reviewed records.
+
+This command is explicit only. It does not run from help, startup, TUI launch,
+doctor, status, `correction propose`, `correction review`, `corpus ask`,
+`rules evaluate`, `context autopsy`, or pack validation.
+
+`--json` preserves raw GIP stdout exactly. `--debug` writes diagnostics to
+stderr only, including engine path, GIP kind, project shard, operation filter,
+includeRecords, limit, stdin byte count, exit code, and parse status.
+
 ### `ghost fix`
 User asks Ghost to propose or perform a fix.
 Usage: `ghost fix "make the failing runtime test pass" --reasoning=deep`

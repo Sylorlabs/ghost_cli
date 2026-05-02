@@ -311,6 +311,11 @@ explicitly to `ghost_gip --stdin` with GIP `kind:
 "correction.reviewed.get"`. The CLI builds the request from flags:
 `projectShard` and `id`.
 
+`ghost correction influence status --project-shard=<id>` routes explicitly to
+`ghost_gip --stdin` with GIP `kind: "correction.influence.status"`. The CLI builds
+the request from flags: `projectShard`, optional `operationKind`, optional boolean
+`includeRecords`, and optional numeric `limit`.
+
 The CLI never reads or writes `reviewed_corrections.jsonl` directly. It does
 not mutate correction records, compact/delete reviewed records, auto-review,
 auto-accept, mutate corpus, packs, or negative knowledge, or execute verifiers
@@ -329,19 +334,26 @@ Both human modes always display `READ-ONLY`, `NOT PROOF`, `NON-AUTHORIZING`,
 inspection data only; they are not proof, not evidence support, and not
 authorization for final supported output.
 
+Human influence status mode labels output `CORRECTION INFLUENCE STATUS / READ-ONLY`
+and always prints `READ-ONLY`, `NOT PROOF`, `NON-AUTHORIZING`, `NO GLOBAL PROMOTION`,
+`NO KNOWLEDGE MUTATED`, `NO VERIFIERS EXECUTED`, and `STATUS COUNTS ARE OPERATOR DIAGNOSTICS ONLY`.
+It renders accepted/rejected records, malformed lines, operation kind counts,
+correction type counts, influence kind counts, warnings, capacity telemetry, and
+sampled records if requested.
+
 The engine bounds reviewed inspection to 128 records and 256 KiB. Missing
 storage returns an empty list or `not_found`. Malformed lines are reported as
 warnings/telemetry and do not crash the CLI.
 
-`--json` preserves raw engine stdout exactly for list/get. `--debug` writes
+`--json` preserves raw engine stdout exactly for list/get/influence status. `--debug` writes
 diagnostics to stderr only: engine path, GIP kind, project shard, record id for
-get, stdin byte count, exit code, and parse status.
+get, stdin byte count, exit code, parse status, and operation filter for influence status.
 
 Reviewed inspection is explicit only. Help, startup, TUI launch/idle, no-arg
 non-TTY fallback, `ghost doctor`, `ghost status`, `ghost correction propose`,
 `ghost correction review`, `ghost corpus ask`, `ghost rules evaluate`,
 `ghost context autopsy`, and `ghost packs validate-autopsy-guidance` do not run
-`correction.reviewed.list` or `correction.reviewed.get`.
+`correction.reviewed.list`, `correction.reviewed.get`, or `correction.influence.status`.
 
 ## Rule Evaluation
 

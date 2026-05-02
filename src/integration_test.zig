@@ -180,7 +180,7 @@ test "subcommand help works without resolving engine" {
         testing.allocator.free(correction_res.stderr);
     }
     try testing.expectEqual(@as(u32, 0), correction_res.term.Exited);
-    try testing.expect(std.mem.indexOf(u8, correction_res.stderr, "Usage: ghost correction <propose|review|reviewed>") != null);
+    try testing.expect(std.mem.indexOf(u8, correction_res.stderr, "Usage: ghost correction <propose|review|reviewed|influence>") != null);
     try testing.expect(std.mem.indexOf(u8, correction_res.stderr, "review --file <request.json>") != null);
     try testing.expect(std.mem.indexOf(u8, correction_res.stderr, "Accepted reviewed corrections are still not proof") != null);
     try testing.expect(std.mem.indexOf(u8, correction_res.stderr, "reviewed list --project-shard=<id>") != null);
@@ -1816,6 +1816,66 @@ test "correction reviewed get missing renders not_found cleanly" {
     try testing.expect(std.mem.indexOf(u8, res.stdout, "Warnings:") != null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "reviewed correction record not found") != null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "Reviewed correction record not_found.") != null);
+}
+
+test "correction influence status routes correct GIP payload" {
+    const mock_root = "/tmp/ghost-cli-correction-influence-status";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat > /tmp/ghost_cli_test_influence_req.json\nprintf '%s' '{\"result\":{\"correctionInfluenceStatus\":{\"status\":\"ok\",\"projectShard\":\"project-a\"}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "correction", "influence", "status", "--engine-root=" ++ mock_root, "--project-shard=project-a", "--operation-kind=corpus.ask", "--include-records", "--limit=5" });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+
+    const written_req = try std.fs.cwd().readFileAlloc(testing.allocator, "/tmp/ghost_cli_test_influence_req.json", 1024 * 1024);
+    defer testing.allocator.free(written_req);
+    try testing.expect(std.mem.indexOf(u8, written_req, "\"gipVersion\":\"gip.v0.1\"") != null);
+    try testing.expect(std.mem.indexOf(u8, written_req, "\"kind\":\"correction.influence.status\"") != null);
+    try testing.expect(std.mem.indexOf(u8, written_req, "\"projectShard\":\"project-a\"") != null);
+    try testing.expect(std.mem.indexOf(u8, written_req, "\"operationKind\":\"corpus.ask\"") != null);
+    try testing.expect(std.mem.indexOf(u8, written_req, "\"includeRecords\":true") != null);
+    try testing.expect(std.mem.indexOf(u8, written_req, "\"limit\":5") != null);
+}
+
+test "correction influence status renders existing summary read-only" {
+    const mock_root = "/tmp/ghost-cli-correction-influence-renders";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s' '{\"result\":{\"correctionInfluenceStatus\":{\"status\":\"ok\",\"projectShard\":\"project-a\",\"summary\":{\"totalRecords\":10,\"acceptedRecords\":6,\"rejectedRecords\":4,\"malformedLines\":0,\"operationKindCounts\":{\"corpus.ask\":4},\"correctionTypeCounts\":{},\"influenceKindCounts\":{},\"suppressionCandidateCount\":0,\"strongerEvidenceCandidateCount\":0,\"verifierCandidateCount\":0,\"negativeKnowledgeCandidateCount\":0,\"corpusUpdateCandidateCount\":0,\"packGuidanceCandidateCount\":0,\"ruleUpdateCandidateCount\":0,\"futureBehaviorCandidateCount\":2},\"readOnly\":true}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "correction", "influence", "status", "--engine-root=" ++ mock_root, "--project-shard=project-a" });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "CORRECTION INFLUENCE STATUS / READ-ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "READ-ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "NOT PROOF") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "NON-AUTHORIZING") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "NO GLOBAL PROMOTION") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "NO KNOWLEDGE MUTATED") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "STATUS COUNTS ARE OPERATOR DIAGNOSTICS ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Total Records: 10") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Accepted Records: 6") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Rejected Records: 4") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Future Behavior Candidate Count: 2") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Operation Kind Counts:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "\"corpus.ask\": 4") != null);
 }
 
 test "correction reviewed list renders warnings and capacity telemetry" {
