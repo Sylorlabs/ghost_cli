@@ -180,9 +180,10 @@ test "subcommand help works without resolving engine" {
         testing.allocator.free(correction_res.stderr);
     }
     try testing.expectEqual(@as(u32, 0), correction_res.term.Exited);
-    try testing.expect(std.mem.indexOf(u8, correction_res.stderr, "Usage: ghost correction <propose|review> --file <request.json>") != null);
+    try testing.expect(std.mem.indexOf(u8, correction_res.stderr, "Usage: ghost correction <propose|review|reviewed>") != null);
     try testing.expect(std.mem.indexOf(u8, correction_res.stderr, "review --file <request.json>") != null);
     try testing.expect(std.mem.indexOf(u8, correction_res.stderr, "Accepted reviewed corrections are still not proof") != null);
+    try testing.expect(std.mem.indexOf(u8, correction_res.stderr, "reviewed list --project-shard=<id>") != null);
     try testing.expect(std.mem.indexOf(u8, correction_res.stderr, "No correction.accept exists yet") != null);
 
     const correction_propose_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "correction", "propose", "--help", "--engine-root=/tmp/ghost-help-missing" });
@@ -203,7 +204,33 @@ test "subcommand help works without resolving engine" {
     try testing.expect(std.mem.indexOf(u8, correction_review_res.stderr, "Usage: ghost correction review --file <request.json>") != null);
     try testing.expect(std.mem.indexOf(u8, correction_review_res.stderr, "REVIEWED CORRECTION RECORD") != null);
     try testing.expect(std.mem.indexOf(u8, correction_review_res.stderr, "FUTURE BEHAVIOR IS CANDIDATE-ONLY") != null);
-    try testing.expect(std.mem.indexOf(u8, correction_review_res.stderr, "correction.reviewed.list/get are not available yet") != null);
+
+    const correction_reviewed_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "correction", "reviewed", "--help", "--engine-root=/tmp/ghost-help-missing" });
+    defer {
+        testing.allocator.free(correction_reviewed_res.stdout);
+        testing.allocator.free(correction_reviewed_res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), correction_reviewed_res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, correction_reviewed_res.stderr, "Usage: ghost correction reviewed <list|get>") != null);
+    try testing.expect(std.mem.indexOf(u8, correction_reviewed_res.stderr, "Cursor is currently a numeric offset alias") != null);
+
+    const correction_reviewed_list_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "correction", "reviewed", "list", "--help", "--engine-root=/tmp/ghost-help-missing" });
+    defer {
+        testing.allocator.free(correction_reviewed_list_res.stdout);
+        testing.allocator.free(correction_reviewed_list_res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), correction_reviewed_list_res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, correction_reviewed_list_res.stderr, "Usage: ghost correction reviewed list --project-shard=<id>") != null);
+    try testing.expect(std.mem.indexOf(u8, correction_reviewed_list_res.stderr, "READ-ONLY. NOT PROOF. NON-AUTHORIZING") != null);
+
+    const correction_reviewed_get_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "correction", "reviewed", "get", "--help", "--engine-root=/tmp/ghost-help-missing" });
+    defer {
+        testing.allocator.free(correction_reviewed_get_res.stdout);
+        testing.allocator.free(correction_reviewed_get_res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), correction_reviewed_get_res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, correction_reviewed_get_res.stderr, "Usage: ghost correction reviewed get --project-shard=<id> --id=<record-id>") != null);
+    try testing.expect(std.mem.indexOf(u8, correction_reviewed_get_res.stderr, "Missing storage or records render cleanly as not_found") != null);
 }
 
 test "TUI read-only help works with command parser" {
@@ -1549,6 +1576,270 @@ test "correction review debug diagnostics stay on stderr" {
     try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Parse Status: ok") != null);
 }
 
+test "correction reviewed list routes correct GIP payload" {
+    const mock_root = "/tmp/ghost-cli-correction-reviewed-list-route";
+    const payload_path = mock_root ++ "/payload.json";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat > '" ++ payload_path ++ "'\nprintf '%s' '{\"result\":{\"correctionReviewedList\":{\"status\":\"ok\",\"projectShard\":\"project-a\",\"decision\":\"accepted\",\"records\":[],\"totalRead\":0,\"returnedCount\":0,\"malformedLines\":0,\"warnings\":[],\"capacityTelemetry\":{\"limit\":2},\"readOnly\":true,\"mutationFlags\":{\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false},\"authority\":{\"nonAuthorizing\":true,\"treatedAsProof\":false}}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "correction",
+        "reviewed",
+        "list",
+        "--engine-root=" ++ mock_root,
+        "--project-shard=project-a",
+        "--decision=accepted",
+        "--operation-kind=corpus.ask",
+        "--limit=2",
+        "--offset=1",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    const payload = try std.fs.cwd().readFileAlloc(testing.allocator, payload_path, 1024 * 1024);
+    defer testing.allocator.free(payload);
+    var parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, payload, .{});
+    defer parsed.deinit();
+    const obj = parsed.value.object;
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expectEqualStrings("gip.v0.1", obj.get("gipVersion").?.string);
+    try testing.expectEqualStrings("correction.reviewed.list", obj.get("kind").?.string);
+    try testing.expectEqualStrings("project-a", obj.get("projectShard").?.string);
+    try testing.expectEqualStrings("accepted", obj.get("decision").?.string);
+    try testing.expectEqualStrings("corpus.ask", obj.get("operationKind").?.string);
+    try testing.expectEqual(@as(i64, 2), obj.get("limit").?.integer);
+    try testing.expectEqual(@as(i64, 1), obj.get("offset").?.integer);
+}
+
+test "correction reviewed get routes correct GIP payload" {
+    const mock_root = "/tmp/ghost-cli-correction-reviewed-get-route";
+    const payload_path = mock_root ++ "/payload.json";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat > '" ++ payload_path ++ "'\nprintf '%s' '{\"result\":{\"correctionReviewedGet\":{\"status\":\"ok\",\"projectShard\":\"project-a\",\"id\":\"reviewed-1\",\"reviewedCorrectionRecord\":{\"id\":\"reviewed-1\",\"decision\":\"accepted\",\"nonAuthorizing\":true,\"treatedAsProof\":false},\"warnings\":[],\"readOnly\":true,\"mutationFlags\":{\"corpusMutation\":false},\"authority\":{\"nonAuthorizing\":true,\"treatedAsProof\":false}}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "correction",
+        "reviewed",
+        "get",
+        "--engine-root=" ++ mock_root,
+        "--project-shard",
+        "project-a",
+        "--id=reviewed-1",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    const payload = try std.fs.cwd().readFileAlloc(testing.allocator, payload_path, 1024 * 1024);
+    defer testing.allocator.free(payload);
+    var parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, payload, .{});
+    defer parsed.deinit();
+    const obj = parsed.value.object;
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expectEqualStrings("correction.reviewed.get", obj.get("kind").?.string);
+    try testing.expectEqualStrings("project-a", obj.get("projectShard").?.string);
+    try testing.expectEqualStrings("reviewed-1", obj.get("id").?.string);
+}
+
+test "correction reviewed list human output renders accepted and rejected read-only records" {
+    const mock_root = "/tmp/ghost-cli-correction-reviewed-list-human";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s' '{\"result\":{\"correctionReviewedList\":{\"status\":\"ok\",\"projectShard\":\"project-a\",\"decision\":\"all\",\"records\":[{\"id\":\"reviewed-1\",\"operationKind\":\"corpus.ask\",\"decision\":\"accepted\",\"reviewerNoteSummary\":\"accepted summary\",\"acceptedLearningOutputs\":[{\"candidateKind\":\"future_behavior_candidate\"}],\"readOnly\":true,\"nonAuthorizing\":true,\"treatedAsProof\":false,\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"verifiersExecuted\":false},{\"id\":\"reviewed-2\",\"operationKind\":\"corpus.ask\",\"decision\":\"rejected\",\"reviewerNoteSummary\":\"rejected summary\",\"rejectedReason\":\"insufficient evidence\",\"readOnly\":true,\"nonAuthorizing\":true,\"treatedAsProof\":false,\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"verifiersExecuted\":false}],\"totalRead\":2,\"returnedCount\":2,\"malformedLines\":0,\"warnings\":[],\"capacityTelemetry\":{\"maxRecordsRead\":128,\"limit\":128,\"offset\":0},\"readOnly\":true,\"mutationFlags\":{\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false},\"authority\":{\"nonAuthorizing\":true,\"treatedAsProof\":false}}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "correction", "reviewed", "list", "--engine-root=" ++ mock_root, "--project-shard=project-a" });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "REVIEWED CORRECTION RECORDS / READ-ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "READ-ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "NOT PROOF") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "NON-AUTHORIZING") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "NO KNOWLEDGE MUTATED") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "NO VERIFIERS EXECUTED") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Project Shard: project-a") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Total Read: 2") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Returned Count: 2") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Malformed Lines: 0") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Records (append order):") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "ID: reviewed-1") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Decision: accepted") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Reviewer Note Summary: accepted summary") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Accepted Learning Outputs:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "ID: reviewed-2") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Decision: rejected") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Rejected Reason: insufficient evidence") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Mutation Flags:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Authority Flags:") != null);
+}
+
+test "correction reviewed get human output renders existing record read-only" {
+    const mock_root = "/tmp/ghost-cli-correction-reviewed-get-human";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s' '{\"result\":{\"correctionReviewedGet\":{\"status\":\"ok\",\"projectShard\":\"project-a\",\"id\":\"reviewed-1\",\"reviewedCorrectionRecord\":{\"id\":\"reviewed-1\",\"projectShard\":\"project-a\",\"operationKind\":\"corpus.ask\",\"decision\":\"accepted\",\"reviewerNote\":\"accepted after review\",\"acceptedLearningOutputs\":[{\"candidateKind\":\"future_behavior_candidate\",\"summary\":\"candidate only\"}],\"futureBehaviorCandidate\":{\"status\":\"candidate\",\"nonAuthorizing\":true,\"treatedAsProof\":false},\"appendOnly\":{\"storage\":\"jsonl\",\"stableOrdering\":\"file_append_order\"},\"readOnly\":true,\"nonAuthorizing\":true,\"treatedAsProof\":false,\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false},\"warnings\":[],\"readOnly\":true,\"mutationFlags\":{\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false},\"authority\":{\"nonAuthorizing\":true,\"treatedAsProof\":false}}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "correction", "reviewed", "get", "--engine-root=" ++ mock_root, "--project-shard=project-a", "--id=reviewed-1" });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "REVIEWED CORRECTION RECORD / READ-ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Decision: accepted") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Reviewer Note: accepted after review") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Accepted Learning Outputs:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Future Behavior Candidate:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Append-Only Metadata:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "NO KNOWLEDGE MUTATED") != null);
+}
+
+test "correction reviewed get missing renders not_found cleanly" {
+    const mock_root = "/tmp/ghost-cli-correction-reviewed-get-missing";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s' '{\"result\":{\"correctionReviewedGet\":{\"status\":\"not_found\",\"projectShard\":\"project-a\",\"id\":\"missing\",\"warnings\":[\"reviewed correction record not found\"],\"totalRead\":0,\"malformedLines\":0,\"readOnly\":true,\"mutationFlags\":{\"corpusMutation\":false},\"authority\":{\"nonAuthorizing\":true,\"treatedAsProof\":false}}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "correction", "reviewed", "get", "--engine-root=" ++ mock_root, "--project-shard=project-a", "--id=missing" });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Status: not_found") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Warnings:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "reviewed correction record not found") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Reviewed correction record not_found.") != null);
+}
+
+test "correction reviewed list renders warnings and capacity telemetry" {
+    const mock_root = "/tmp/ghost-cli-correction-reviewed-list-warnings";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s' '{\"result\":{\"correctionReviewedList\":{\"status\":\"ok\",\"projectShard\":\"project-a\",\"records\":[],\"totalRead\":128,\"returnedCount\":0,\"malformedLines\":2,\"warnings\":[\"malformed line skipped\"],\"capacityTelemetry\":{\"maxRecordsRead\":128,\"maxRecordsHit\":true,\"limit\":1,\"offset\":0,\"limitHit\":true,\"fileBytesLimit\":262144,\"fileBytesLimitHit\":true},\"readOnly\":true,\"mutationFlags\":{\"corpusMutation\":false},\"authority\":{\"nonAuthorizing\":true,\"treatedAsProof\":false}}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "correction", "reviewed", "list", "--engine-root=" ++ mock_root, "--project-shard=project-a", "--limit=1" });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Malformed Lines: 2") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Warnings:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "malformed line skipped") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Capacity Telemetry:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "\"maxRecordsHit\": true") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "\"limitHit\": true") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "\"fileBytesLimitHit\": true") != null);
+}
+
+test "correction reviewed list and get json byte match direct ghost_gip stdout" {
+    const mock_root = "/tmp/ghost-cli-correction-reviewed-json";
+    const raw_json = "{\"result\":{\"correctionReviewedList\":{\"status\":\"ok\",\"projectShard\":\"project-a\",\"records\":[],\"totalRead\":0,\"returnedCount\":0,\"malformedLines\":0,\"warnings\":[],\"readOnly\":true}}}";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(mock_root ++ "/ghost_gip", "#!/bin/sh\ncat >/dev/null\nprintf '%s' '" ++ raw_json ++ "'\n");
+
+    const list_request = "{\"gipVersion\":\"gip.v0.1\",\"kind\":\"correction.reviewed.list\",\"projectShard\":\"project-a\"}";
+    const direct_list = try runCmdWithInput(testing.allocator, &[_][]const u8{ mock_root ++ "/ghost_gip", "--stdin" }, list_request);
+    defer {
+        testing.allocator.free(direct_list.stdout);
+        testing.allocator.free(direct_list.stderr);
+    }
+    const cli_list = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "correction", "reviewed", "list", "--json", "--engine-root=" ++ mock_root, "--project-shard=project-a" });
+    defer {
+        testing.allocator.free(cli_list.stdout);
+        testing.allocator.free(cli_list.stderr);
+    }
+    try testing.expectEqualStrings(direct_list.stdout, cli_list.stdout);
+    try testing.expectEqualStrings("", cli_list.stderr);
+
+    const raw_get_json = "{\"result\":{\"correctionReviewedGet\":{\"status\":\"not_found\",\"projectShard\":\"project-a\",\"id\":\"missing\",\"warnings\":[],\"readOnly\":true}}}";
+    try writeMockExecutable(mock_root ++ "/ghost_gip", "#!/bin/sh\ncat >/dev/null\nprintf '%s' '" ++ raw_get_json ++ "'\n");
+    const get_request = "{\"gipVersion\":\"gip.v0.1\",\"kind\":\"correction.reviewed.get\",\"projectShard\":\"project-a\",\"id\":\"missing\"}";
+    const direct_get = try runCmdWithInput(testing.allocator, &[_][]const u8{ mock_root ++ "/ghost_gip", "--stdin" }, get_request);
+    defer {
+        testing.allocator.free(direct_get.stdout);
+        testing.allocator.free(direct_get.stderr);
+    }
+    const cli_get = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "correction", "reviewed", "get", "--json", "--engine-root=" ++ mock_root, "--project-shard=project-a", "--id=missing" });
+    defer {
+        testing.allocator.free(cli_get.stdout);
+        testing.allocator.free(cli_get.stderr);
+    }
+    try testing.expectEqualStrings(direct_get.stdout, cli_get.stdout);
+    try testing.expectEqualStrings("", cli_get.stderr);
+}
+
+test "correction reviewed debug diagnostics stay on stderr" {
+    const mock_root = "/tmp/ghost-cli-correction-reviewed-debug";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s' '{\"result\":{\"correctionReviewedGet\":{\"status\":\"not_found\",\"projectShard\":\"project-a\",\"id\":\"missing\",\"warnings\":[],\"readOnly\":true,\"mutationFlags\":{\"corpusMutation\":false},\"authority\":{\"nonAuthorizing\":true,\"treatedAsProof\":false}}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "correction", "reviewed", "get", "--debug", "--engine-root=" ++ mock_root, "--project-shard=project-a", "--id=missing" });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "[DEBUG]") == null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "REVIEWED CORRECTION RECORD / READ-ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Engine Binary:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] GIP Kind: correction.reviewed.get") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Project Shard: project-a") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] ID: missing") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Stdin Byte Count:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Exit Code: 0") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Parse Status: ok") != null);
+}
+
 test "correction review rejects wrong request kind before engine" {
     const mock_root = "/tmp/ghost-cli-correction-review-wrong-kind";
     const request_path = "/tmp/ghost-cli-correction-review-wrong-kind-request.json";
@@ -1575,7 +1866,7 @@ test "correction review rejects wrong request kind before engine" {
     try testing.expectError(error.FileNotFound, std.fs.cwd().access(marker, .{}));
 }
 
-test "doctor status and no-arg TUI do not run correction propose or review" {
+test "doctor status and no-arg TUI do not run correction propose review or reviewed inspection" {
     const mock_root = "/tmp/ghost-cli-correction-no-hidden";
     const marker = "/tmp/ghost-cli-correction-no-hidden-marker";
     std.fs.cwd().deleteTree(mock_root) catch {};
@@ -1587,7 +1878,7 @@ test "doctor status and no-arg TUI do not run correction propose or review" {
     try writeMockExecutable(mock_root ++ "/ghost_task_operator", "#!/bin/sh\nprintf 'task help\\n'\n");
     try writeMockExecutable(
         mock_root ++ "/ghost_gip",
-        "#!/bin/sh\npayload=$(cat)\ncase \"$payload\" in *correction.propose*|*correction.review*) printf correction > '" ++ marker ++ "'; exit 77 ;; *) printf '{\"status\":\"ok\"}' ;; esac\n",
+        "#!/bin/sh\npayload=$(cat)\ncase \"$payload\" in *correction.propose*|*correction.review*|*correction.reviewed.list*|*correction.reviewed.get*) printf correction > '" ++ marker ++ "'; exit 77 ;; *) printf '{\"status\":\"ok\"}' ;; esac\n",
     );
 
     const doctor_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "doctor", "--engine-root=" ++ mock_root });

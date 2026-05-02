@@ -288,8 +288,7 @@ upgrading authority.
 Accepted reviewed corrections remain non-authorizing and are not proof. They do
 not mutate corpus, packs, or negative knowledge; do not execute commands or
 verifiers; do not grant support; and do not imply global promotion. Future
-behavior remains candidate-only. `correction.reviewed.list` and
-`correction.reviewed.get` do not exist yet.
+behavior remains candidate-only.
 
 `--json` preserves raw engine stdout exactly. `--debug` writes diagnostics to
 stderr only: engine binary path, GIP kind, input file path, stdin byte count,
@@ -299,6 +298,50 @@ This command is explicit only. Help, startup, TUI launch, non-TTY fallback,
 `ghost doctor`, `ghost status`, `ghost correction propose`, `ghost corpus ask`,
 `ghost rules evaluate`, `ghost context autopsy`, and
 `ghost packs validate-autopsy-guidance` do not run `correction.review`.
+
+`ghost correction reviewed list --project-shard=<id>` routes explicitly to
+`ghost_gip --stdin` with GIP `kind: "correction.reviewed.list"`. The CLI builds
+the request from flags: `projectShard`, optional `decision` (`accepted`,
+`rejected`, or `all`), optional `operationKind`, optional numeric `limit`, and
+optional numeric `offset`. `--cursor=<n>` is treated only as the engine's
+current numeric offset alias; the CLI does not invent opaque cursor behavior.
+
+`ghost correction reviewed get --project-shard=<id> --id=<record-id>` routes
+explicitly to `ghost_gip --stdin` with GIP `kind:
+"correction.reviewed.get"`. The CLI builds the request from flags:
+`projectShard` and `id`.
+
+The CLI never reads or writes `reviewed_corrections.jsonl` directly. It does
+not mutate correction records, compact/delete reviewed records, auto-review,
+auto-accept, mutate corpus, packs, or negative knowledge, or execute verifiers
+or checks.
+
+Human list mode labels output `REVIEWED CORRECTION RECORDS / READ-ONLY` and
+renders project shard, `totalRead`, `returnedCount`, `malformedLines`,
+warnings, capacity telemetry, records in append order, reviewer summaries, and
+authority/mutation flags. Human get mode labels output `REVIEWED CORRECTION
+RECORD / READ-ONLY` and renders the reviewed record summary, decision,
+reviewer note, accepted learning outputs, rejected reason, future behavior
+candidate, append-only metadata, warnings, and authority/mutation flags.
+
+Both human modes always display `READ-ONLY`, `NOT PROOF`, `NON-AUTHORIZING`,
+`NO KNOWLEDGE MUTATED`, and `NO VERIFIERS EXECUTED`. Reviewed records are
+inspection data only; they are not proof, not evidence support, and not
+authorization for final supported output.
+
+The engine bounds reviewed inspection to 128 records and 256 KiB. Missing
+storage returns an empty list or `not_found`. Malformed lines are reported as
+warnings/telemetry and do not crash the CLI.
+
+`--json` preserves raw engine stdout exactly for list/get. `--debug` writes
+diagnostics to stderr only: engine path, GIP kind, project shard, record id for
+get, stdin byte count, exit code, and parse status.
+
+Reviewed inspection is explicit only. Help, startup, TUI launch/idle, no-arg
+non-TTY fallback, `ghost doctor`, `ghost status`, `ghost correction propose`,
+`ghost correction review`, `ghost corpus ask`, `ghost rules evaluate`,
+`ghost context autopsy`, and `ghost packs validate-autopsy-guidance` do not run
+`correction.reviewed.list` or `correction.reviewed.get`.
 
 ## Rule Evaluation
 

@@ -21,7 +21,7 @@ ghost
 
 This is a renderer/front-door path. No doctor/status diagnostic, context/project
 autopsy scan, correction proposal, verifier execution, pack mutation, or
-negative-knowledge mutation, or correction review is started by launch or idle rendering. Explicit
+negative-knowledge mutation, correction review, or reviewed correction inspection is started by launch or idle rendering. Explicit
 slash commands and submitted prompts may invoke engine binaries according to
 their command contract.
 
@@ -238,8 +238,7 @@ mutation flags, and authority flags. It prints these required safety labels:
 Correction review records explicit accept/reject decisions. Accepted reviewed
 corrections are still not proof, do not mutate corpus, packs, or negative
 knowledge, do not execute verifier/check candidates, and do not imply global
-promotion. Future behavior is candidate-only. `correction.reviewed.list` and
-`correction.reviewed.get` are not available yet.
+promotion. Future behavior is candidate-only.
 
 This command is explicit only. It does not run from help, startup, TUI launch,
 doctor, status, `correction propose`, `corpus ask`, `rules evaluate`,
@@ -248,6 +247,73 @@ doctor, status, `correction propose`, `corpus ask`, `rules evaluate`,
 `--json` preserves raw GIP stdout exactly. `--debug` writes diagnostics to
 stderr only, including engine path, GIP kind, input file path, stdin byte count,
 exit code, and parse status.
+
+#### `ghost correction reviewed list`
+Inspect reviewed correction records through `ghost_gip` operation
+`correction.reviewed.list`.
+
+Usage: `ghost correction reviewed list --project-shard=my-project`
+Usage: `ghost correction reviewed list --project-shard=my-project --decision=accepted`
+Usage: `ghost correction reviewed list --project-shard=my-project --decision=rejected`
+Usage: `ghost correction reviewed list --project-shard=my-project --decision=all --operation-kind=corpus.ask`
+Usage: `ghost correction reviewed list --project-shard=my-project --limit=20 --offset=40`
+Usage: `ghost correction reviewed list --json --project-shard=my-project`
+Usage: `ghost correction reviewed list --debug --project-shard=my-project`
+
+The CLI builds the GIP JSON request from flags and sends it to
+`ghost_gip --stdin`. It does not read or write `reviewed_corrections.jsonl`
+directly. `--cursor=<n>` is accepted as the engine's current numeric alias for
+`--offset=<n>`; it is not documented as an opaque cursor.
+
+Human output is labeled **REVIEWED CORRECTION RECORDS / READ-ONLY** and always
+prints `READ-ONLY`, `NOT PROOF`, `NON-AUTHORIZING`, `NO KNOWLEDGE MUTATED`, and
+`NO VERIFIERS EXECUTED`. It renders project shard, `totalRead`,
+`returnedCount`, `malformedLines`, warnings, capacity telemetry when present,
+records in append order, decision, id, operation kind, reviewer note summary
+when present, and authority/mutation flags.
+
+This command is bounded by the engine: at most 128 records and 256 KiB are read
+per request. Missing storage returns an empty list. Malformed lines render as
+warnings and telemetry; they do not crash the CLI.
+
+This command is explicit only. It does not run from help, startup, TUI launch,
+doctor, status, `correction propose`, `correction review`, `corpus ask`,
+`rules evaluate`, `context autopsy`, or pack validation.
+
+`--json` preserves raw GIP stdout exactly. `--debug` writes diagnostics to
+stderr only, including engine path, GIP kind, project shard, stdin byte count,
+exit code, and parse status.
+
+#### `ghost correction reviewed get`
+Inspect one reviewed correction record through `ghost_gip` operation
+`correction.reviewed.get`.
+
+Usage: `ghost correction reviewed get --project-shard=my-project --id=reviewed-1`
+Usage: `ghost correction reviewed get --json --project-shard=my-project --id=reviewed-1`
+Usage: `ghost correction reviewed get --debug --project-shard=my-project --id=reviewed-1`
+
+The CLI builds the GIP JSON request from flags and sends it to
+`ghost_gip --stdin`. It does not read or write `reviewed_corrections.jsonl`
+directly.
+
+Human output is labeled **REVIEWED CORRECTION RECORD / READ-ONLY** and always
+prints `READ-ONLY`, `NOT PROOF`, `NON-AUTHORIZING`, `NO KNOWLEDGE MUTATED`, and
+`NO VERIFIERS EXECUTED`. It renders the full reviewed record summary, decision,
+reviewer note, accepted learning outputs, rejected reason, future behavior
+candidate, append-only metadata, warnings for missing/malformed data, and
+authority/mutation flags.
+
+Missing storage or a missing record renders cleanly as `not_found`. Reviewed
+records remain read-only inspection data: not proof, not evidence support, not
+global promotion, and not authorization for future output.
+
+This command is explicit only. It does not run from help, startup, TUI launch,
+doctor, status, `correction propose`, `correction review`, `corpus ask`,
+`rules evaluate`, `context autopsy`, or pack validation.
+
+`--json` preserves raw GIP stdout exactly. `--debug` writes diagnostics to
+stderr only, including engine path, GIP kind, project shard, record id, stdin
+byte count, exit code, and parse status.
 
 ### `ghost fix`
 User asks Ghost to propose or perform a fix.
@@ -388,8 +454,9 @@ in the TUI status bar.
 
 If stdin/stdout is not an interactive TTY, `ghost`/`ghost tui` exits gracefully
 with a message. The covered smoke path verifies that no CLI-owned TUI command,
-doctor check, context/project autopsy scan, correction proposal, verifier, pack
-mutation, or negative-knowledge mutation is started from that non-TTY fallback.
+doctor check, context/project autopsy scan, correction proposal/review/reviewed
+inspection, verifier, pack mutation, or negative-knowledge mutation is started
+from that non-TTY fallback.
 
 #### Keybindings
 - `Ctrl+C`: Quit
