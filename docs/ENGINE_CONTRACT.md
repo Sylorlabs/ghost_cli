@@ -442,6 +442,51 @@ evaluate`, `ghost context autopsy`, and `ghost packs validate-autopsy-guidance`
 do not run `negative_knowledge.review`, `negative_knowledge.reviewed.list`, or
 `negative_knowledge.reviewed.get`.
 
+## Learning Loop Status
+
+`ghost learn status --project-shard=<id>` routes explicitly to
+`ghost_gip --stdin` with GIP `kind: "learning.status"`. The CLI builds the
+request from flags: `projectShard`, optional boolean `includeRecords`, optional
+boolean `includeWarnings` defaulting to true, and optional numeric `limit`.
+The CLI never reads or writes reviewed correction JSONL or reviewed
+negative-knowledge JSONL stores directly.
+
+Human mode labels the result `LEARNING LOOP STATUS / READ-ONLY` and always
+prints `READ-ONLY`, `NOT PROOF`, `NOT EVIDENCE`, `NON-AUTHORIZING`,
+`NO GLOBAL PROMOTION`, `NO KNOWLEDGE MUTATED`, `NO VERIFIERS EXECUTED`, and
+`SCOREBOARD COUNTS ARE OPERATOR DIAGNOSTICS ONLY`. It renders project shard,
+status, correction summary, negative-knowledge summary, influence summary,
+warning summary, capacity telemetry, storage metadata, optional sampled
+records, mutation flags, and authority flags from the engine payload.
+
+Learning status is a scoreboard only. Counts are operator diagnostics; they are
+not proof, not evidence, not support, and do not discharge verifier, evidence,
+proof, or support gates. The operation is same-shard only and engine-bounded.
+Missing files return zero summaries, malformed lines are counted as warnings,
+and capacity telemetry must be treated as disclosure of bounds rather than
+negative evidence.
+
+`learning.status` does not rewrite, compact, delete, review, accept, mutate
+corpus, mutate packs, execute verifier/check candidates, execute commands,
+apply future behavior candidates, mutate correction records, mutate negative
+knowledge, grant proof/support/evidence, or globally promote reviewed
+corrections or reviewed negative knowledge.
+
+`--json` preserves raw engine stdout exactly. `--debug` writes diagnostics to
+stderr only: engine path, GIP kind, project shard, include-records,
+include-warnings, optional limit, request byte count, exit code, and parse
+status.
+
+Learning status uses no semantic matching, model adapters, embeddings,
+Transformers, ranking model, cloud calls, network calls, or black-box search.
+
+This operation is explicit only. Help, startup, TUI launch/idle, no-arg
+non-TTY fallback, `ghost doctor`, `ghost status`, `ghost correction propose`,
+`ghost correction review`, `ghost correction reviewed list/get`,
+`ghost correction influence status`, `ghost nk review`, `ghost nk reviewed
+list/get`, `ghost corpus ask`, `ghost rules evaluate`, `ghost context autopsy`,
+and `ghost packs validate-autopsy-guidance` do not run `learning.status`.
+
 ## Rule Evaluation
 
 `ghost rules evaluate --file <request.json>` routes explicitly to

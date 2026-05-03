@@ -570,6 +570,175 @@ test "missing required learn flags fail clearly" {
     try testing.expect(std.mem.indexOf(u8, res.stderr, "--project-shard is required") != null);
 }
 
+test "learn status help works without resolving engine" {
+    const learn_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "learn", "--help", "--engine-root=/tmp/ghost-help-missing" });
+    defer {
+        testing.allocator.free(learn_res.stdout);
+        testing.allocator.free(learn_res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), learn_res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, learn_res.stderr, "status --project-shard=<id>") != null);
+    try testing.expect(std.mem.indexOf(u8, learn_res.stderr, "Scoreboard counts are diagnostics only") != null);
+
+    const status_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "learn", "status", "--help", "--engine-root=/tmp/ghost-help-missing" });
+    defer {
+        testing.allocator.free(status_res.stdout);
+        testing.allocator.free(status_res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), status_res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, status_res.stderr, "Usage: ghost learn status --project-shard=<id>") != null);
+    try testing.expect(std.mem.indexOf(u8, status_res.stderr, "SCOREBOARD COUNTS ARE OPERATOR DIAGNOSTICS ONLY") != null);
+}
+
+test "learn status routes learning status payload flags" {
+    const mock_root = "/tmp/ghost-cli-learn-status-payload";
+    const payload_path = mock_root ++ "/payload.json";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\n" ++
+            "cat > '" ++ payload_path ++ "'\n" ++
+            "printf '%s' '{\"gipVersion\":\"gip.v0.1\",\"kind\":\"learning.status\",\"status\":\"ok\",\"result\":{\"learningStatus\":{\"status\":\"ok\",\"projectShard\":\"project-a\",\"readOnly\":true,\"correctionSummary\":{\"totalRecords\":0},\"negativeKnowledgeSummary\":{\"totalRecords\":0},\"influenceSummary\":{\"sameShardOnly\":true},\"warningSummary\":{\"malformedLines\":0},\"capacityTelemetry\":{\"recordsRead\":0},\"storage\":{\"missing\":true},\"mutationFlags\":{\"corpusMutation\":false},\"authority\":{\"nonAuthorizing\":true,\"treatedAsProof\":false,\"usedAsEvidence\":false,\"supportGranted\":false,\"proofDischarged\":false}}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "learn",
+        "status",
+        "--engine-root=" ++ mock_root,
+        "--project-shard=project-a",
+        "--include-records",
+        "--no-warnings",
+        "--limit=1",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "LEARNING LOOP STATUS / READ-ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "NOT EVIDENCE") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "SCOREBOARD COUNTS ARE OPERATOR DIAGNOSTICS ONLY") != null);
+
+    const payload = try std.fs.cwd().readFileAlloc(testing.allocator, payload_path, 4096);
+    defer testing.allocator.free(payload);
+    try testing.expect(std.mem.indexOf(u8, payload, "\"kind\":\"learning.status\"") != null);
+    try testing.expect(std.mem.indexOf(u8, payload, "\"projectShard\":\"project-a\"") != null);
+    try testing.expect(std.mem.indexOf(u8, payload, "\"includeRecords\":true") != null);
+    try testing.expect(std.mem.indexOf(u8, payload, "\"includeWarnings\":false") != null);
+    try testing.expect(std.mem.indexOf(u8, payload, "\"limit\":1") != null);
+
+    const include_warnings_res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "learn",
+        "status",
+        "--engine-root=" ++ mock_root,
+        "--project-shard=project-a",
+        "--include-warnings",
+    });
+    defer {
+        testing.allocator.free(include_warnings_res.stdout);
+        testing.allocator.free(include_warnings_res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), include_warnings_res.term.Exited);
+    const include_payload = try std.fs.cwd().readFileAlloc(testing.allocator, payload_path, 4096);
+    defer testing.allocator.free(include_payload);
+    try testing.expect(std.mem.indexOf(u8, include_payload, "\"includeWarnings\":true") != null);
+}
+
+test "learn status renders populated records warnings and capacity telemetry" {
+    const mock_root = "/tmp/ghost-cli-learn-status-render";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s' '{\"gipVersion\":\"gip.v0.1\",\"kind\":\"learning.status\",\"status\":\"ok\",\"result\":{\"learningStatus\":{\"status\":\"ok\",\"projectShard\":\"project-b\",\"readOnly\":true,\"correctionSummary\":{\"acceptedRecords\":1,\"rejectedRecords\":1},\"negativeKnowledgeSummary\":{\"acceptedRecords\":1,\"rejectedRecords\":1},\"influenceSummary\":{\"correctionInfluences\":1,\"negativeKnowledgeInfluences\":1,\"sameShardOnly\":true},\"warningSummary\":{\"malformedLines\":2,\"warnings\":[\"malformed line skipped\"]},\"capacityTelemetry\":{\"recordsRead\":4,\"byteCapHit\":false,\"recordCapHit\":false},\"storage\":{\"corrections\":\"bounded\",\"negativeKnowledge\":\"bounded\"},\"sampledRecords\":[{\"id\":\"reviewed-1\",\"kind\":\"correction\"},{\"id\":\"nk-reviewed-1\",\"kind\":\"negative_knowledge\"}],\"mutationFlags\":{\"correctionRecordMutation\":false,\"negativeKnowledgeMutation\":false,\"corpusMutation\":false,\"packMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false},\"authority\":{\"nonAuthorizing\":true,\"treatedAsProof\":false,\"usedAsEvidence\":false,\"supportGranted\":false,\"proofDischarged\":false}}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "learn",
+        "status",
+        "--engine-root=" ++ mock_root,
+        "--project-shard=project-b",
+        "--include-records",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Correction Summary:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "\"acceptedRecords\"") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "1") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Negative Knowledge Summary:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Warning Summary:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Capacity Telemetry:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Sampled Records:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Authority Flags:") != null);
+}
+
+test "learn status json byte matches direct ghost gip output and debug stays stderr" {
+    const mock_root = "/tmp/ghost-cli-learn-status-json";
+    const payload_path = mock_root ++ "/payload.json";
+    const raw_json = "{\"gipVersion\":\"gip.v0.1\",\"kind\":\"learning.status\",\"status\":\"ok\",\"result\":{\"learningStatus\":{\"status\":\"ok\",\"projectShard\":\"project-c\",\"readOnly\":true,\"authority\":{\"nonAuthorizing\":true}}}}";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat > '" ++ payload_path ++ "'\nprintf '%s' '" ++ raw_json ++ "'\n",
+    );
+
+    const cli_res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "learn",
+        "status",
+        "--engine-root=" ++ mock_root,
+        "--project-shard=project-c",
+        "--json",
+    });
+    defer {
+        testing.allocator.free(cli_res.stdout);
+        testing.allocator.free(cli_res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), cli_res.term.Exited);
+    try testing.expectEqualStrings(raw_json, cli_res.stdout);
+
+    const payload = try std.fs.cwd().readFileAlloc(testing.allocator, payload_path, 4096);
+    defer testing.allocator.free(payload);
+    const direct_res = try runCmdWithInput(testing.allocator, &[_][]const u8{ mock_root ++ "/ghost_gip", "--stdin" }, payload);
+    defer {
+        testing.allocator.free(direct_res.stdout);
+        testing.allocator.free(direct_res.stderr);
+    }
+    try testing.expectEqualStrings(direct_res.stdout, cli_res.stdout);
+
+    const debug_res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "learn",
+        "status",
+        "--engine-root=" ++ mock_root,
+        "--project-shard=project-c",
+        "--debug",
+    });
+    defer {
+        testing.allocator.free(debug_res.stdout);
+        testing.allocator.free(debug_res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), debug_res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, debug_res.stderr, "[DEBUG] Engine Binary:") != null);
+    try testing.expect(std.mem.indexOf(u8, debug_res.stderr, "[DEBUG] GIP Kind: learning.status") != null);
+    try testing.expect(std.mem.indexOf(u8, debug_res.stderr, "[DEBUG] Parse Status: ok") != null);
+    try testing.expect(std.mem.indexOf(u8, debug_res.stdout, "[DEBUG]") == null);
+}
+
 test "missing required pack args fail clearly" {
     const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "packs", "inspect" });
     defer {
@@ -926,6 +1095,7 @@ test "doctor status and no-arg TUI do not run autopsy guidance validation" {
     const marker = mock_root ++ "/validation-marker";
     const corpus_marker = mock_root ++ "/corpus-ask-marker";
     const corpus_ingest_marker = mock_root ++ "/corpus-ingest-marker";
+    const learning_marker = mock_root ++ "/learning-status-marker";
     try std.fs.cwd().makePath(mock_root);
     defer std.fs.cwd().deleteTree(mock_root) catch {};
 
@@ -943,6 +1113,7 @@ test "doctor status and no-arg TUI do not run autopsy guidance validation" {
         "#!/bin/sh\n" ++
             "payload=$(cat 2>/dev/null || true)\n" ++
             "case \"$payload $*\" in *corpus.ask*) touch '" ++ corpus_marker ++ "';; esac\n" ++
+            "case \"$payload $*\" in *learning.status*) touch '" ++ learning_marker ++ "';; esac\n" ++
             "printf '{\"status\":\"ok\"}'\n",
     );
     try writeMockExecutable(mock_root ++ "/ghost_corpus_ingest", "#!/bin/sh\ntouch '" ++ corpus_ingest_marker ++ "'\nprintf '{}'\n");
@@ -967,6 +1138,7 @@ test "doctor status and no-arg TUI do not run autopsy guidance validation" {
     try testing.expectError(error.FileNotFound, std.fs.cwd().access(marker, .{}));
     try testing.expectError(error.FileNotFound, std.fs.cwd().access(corpus_marker, .{}));
     try testing.expectError(error.FileNotFound, std.fs.cwd().access(corpus_ingest_marker, .{}));
+    try testing.expectError(error.FileNotFound, std.fs.cwd().access(learning_marker, .{}));
 }
 
 test "rules help works without resolving engine" {

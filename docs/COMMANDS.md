@@ -681,7 +681,46 @@ Invalid slash commands are rejected locally with `Not a valid command: /name` an
 - `/context <path>`: Set context artifact path
 
 ### `ghost learn`
-Feedback/distillation surface for managing knowledge growth.
+Feedback/distillation surface for managing knowledge growth and read-only
+learning-loop status.
+
+#### `ghost learn status`
+Usage: `ghost learn status --project-shard=my-project`
+Usage: `ghost learn status --project-shard=my-project --include-records`
+Usage: `ghost learn status --project-shard=my-project --include-records --limit=1`
+Usage: `ghost learn status --project-shard=my-project --no-warnings`
+Usage: `ghost learn status --json --project-shard=my-project`
+Usage: `ghost learn status --debug --project-shard=my-project`
+
+Runs an explicit read-only `learning.status` GIP request through
+`ghost_gip --stdin`. The CLI builds the request from flags and does not read or
+write reviewed correction or reviewed negative-knowledge JSONL stores directly.
+The engine owns same-shard enforcement, record and byte bounds, warning
+classification, and sampled-record selection.
+
+Human output is headed **LEARNING LOOP STATUS / READ-ONLY** and labels the
+scoreboard as **READ-ONLY**, **NOT PROOF**, **NOT EVIDENCE**,
+**NON-AUTHORIZING**, **NO GLOBAL PROMOTION**, **NO KNOWLEDGE MUTATED**,
+**NO VERIFIERS EXECUTED**, and **SCOREBOARD COUNTS ARE OPERATOR DIAGNOSTICS
+ONLY**. It renders project shard, status, correction summary, negative
+knowledge summary, influence summary, warning summary, capacity telemetry,
+storage metadata, optional sampled records, mutation flags, and authority
+flags.
+
+Scoreboard counts are diagnostics only. They are not proof, not evidence, not
+support, and do not discharge verifier, evidence, proof, or support gates.
+`learning.status` does not review, accept, compact, rewrite, delete, mutate
+corpus, mutate packs, execute verifier/check candidates, execute commands,
+apply future behavior candidates, or globally promote reviewed corrections or
+reviewed negative knowledge.
+
+`--json` preserves raw engine stdout exactly. `--debug` writes diagnostics to
+stderr only, including engine path, GIP kind, project shard, include-records,
+include-warnings, optional limit, request byte count, exit code, and parse
+status.
+
+There is no semantic matching, model adapter, embedding, Transformer, ranking
+model, cloud, network, or black-box search behavior in this CLI command.
 
 #### `ghost learn candidates`
 List potential knowledge distillation candidates.

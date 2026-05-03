@@ -77,7 +77,7 @@ const command_registry = [_]CommandDef{
     .{ .name = "corpus", .kind = .corpus, .group = .knowledge, .help = "Ingest, apply, and ask from shard corpus", .usage = "ghost corpus <ingest|apply-staged|ask> [options]" },
     .{ .name = "correction", .kind = .correction, .group = .knowledge, .help = "Propose, review, and inspect correction records", .usage = "ghost correction <propose|review|reviewed> [options]" },
     .{ .name = "nk", .kind = .nk, .group = .knowledge, .help = "Review and inspect reviewed negative knowledge", .usage = "ghost nk <review|reviewed> [options]" },
-    .{ .name = "learn", .kind = .learn, .group = .knowledge, .help = "Feedback/distillation surface", .usage = "ghost learn <candidates|show|export> [options]" },
+    .{ .name = "learn", .kind = .learn, .group = .knowledge, .help = "Feedback/distillation and read-only learning status", .usage = "ghost learn <candidates|show|export|status> [options]" },
     .{ .name = "rules", .kind = .rules, .group = .advanced, .help = "Evaluate bounded non-authorizing rules", .usage = "ghost rules evaluate --file <request.json> [--json] [--debug]" },
     .{ .name = "debug", .kind = .debug, .group = .advanced, .help = "Advanced raw engine diagnostics", .usage = "ghost debug raw <engine-binary> [args...]" },
     .{ .name = "tui", .kind = .tui, .group = .interface, .help = "Interactive Ghost operator console", .usage = "ghost tui [options]" },
@@ -169,6 +169,10 @@ pub fn main() !void {
         }
         if (parsed.command.? == .nk) {
             try nk.printHelpForArgs(std.io.getStdErr().writer(), parsed.leftover_args.items);
+            return;
+        }
+        if (parsed.command.? == .learn) {
+            try learn.printHelpForArgs(std.io.getStdErr().writer(), parsed.leftover_args.items);
             return;
         }
         try printCommandHelp(std.io.getStdErr().writer(), parsed.command.?);
@@ -389,10 +393,67 @@ fn runChatLike(allocator: std.mem.Allocator, root: ?[]const u8, parsed: *ParsedC
 
 fn runLearn(allocator: std.mem.Allocator, root: ?[]const u8, parsed: ParsedCli) !void {
     const sub = if (parsed.leftover_args.items.len > 0) parsed.leftover_args.items[0] else {
-        try std.io.getStdErr().writer().print("Usage: ghost learn <candidates|show|export>\n", .{});
+        try std.io.getStdErr().writer().print("Usage: ghost learn <candidates|show|export|status>\n", .{});
         return;
     };
-    const c_id = if (parsed.leftover_args.items.len > 1) parsed.leftover_args.items[1] else null;
+    var c_id: ?[]const u8 = null;
+    var include_records = false;
+    var include_warnings = true;
+    var include_warnings_explicit = false;
+    var limit: ?usize = null;
+    var i: usize = 1;
+    while (i < parsed.leftover_args.items.len) : (i += 1) {
+        const arg = parsed.leftover_args.items[i];
+        if (std.mem.eql(u8, sub, "status")) {
+            if (std.mem.eql(u8, arg, "--include-records")) {
+                include_records = true;
+            } else if (std.mem.eql(u8, arg, "--include-warnings")) {
+                include_warnings = true;
+                include_warnings_explicit = true;
+            } else if (std.mem.eql(u8, arg, "--no-warnings")) {
+                include_warnings = false;
+                include_warnings_explicit = true;
+            } else if (std.mem.eql(u8, arg, "--limit")) {
+                i += 1;
+                if (i >= parsed.leftover_args.items.len) {
+                    try std.io.getStdErr().writer().print("--limit requires a value\n", .{});
+                    std.process.exit(1);
+                }
+                limit = std.fmt.parseInt(usize, parsed.leftover_args.items[i], 10) catch {
+                    try std.io.getStdErr().writer().print("Invalid --limit value: {s}. Use a positive integer.\n", .{parsed.leftover_args.items[i]});
+                    std.process.exit(1);
+                };
+                if (limit.? == 0) {
+                    try std.io.getStdErr().writer().print("Invalid --limit value: 0. Use a positive integer.\n", .{});
+                    std.process.exit(1);
+                }
+            } else if (std.mem.startsWith(u8, arg, "--limit=")) {
+                const raw = arg["--limit=".len..];
+                limit = std.fmt.parseInt(usize, raw, 10) catch {
+                    try std.io.getStdErr().writer().print("Invalid --limit value: {s}. Use a positive integer.\n", .{raw});
+                    std.process.exit(1);
+                };
+                if (limit.? == 0) {
+                    try std.io.getStdErr().writer().print("Invalid --limit value: 0. Use a positive integer.\n", .{});
+                    std.process.exit(1);
+                }
+            } else if (std.mem.startsWith(u8, arg, "--")) {
+                try std.io.getStdErr().writer().print("Unknown learn status option: {s}\n", .{arg});
+                std.process.exit(1);
+            } else {
+                try std.io.getStdErr().writer().print("Unexpected learn status argument: {s}\n", .{arg});
+                std.process.exit(1);
+            }
+        } else if (c_id == null and !std.mem.startsWith(u8, arg, "--")) {
+            c_id = arg;
+        } else if (std.mem.startsWith(u8, arg, "--")) {
+            try std.io.getStdErr().writer().print("Unknown learn {s} option: {s}\n", .{ sub, arg });
+            std.process.exit(1);
+        } else {
+            try std.io.getStdErr().writer().print("Unexpected learn {s} argument: {s}\n", .{ sub, arg });
+            std.process.exit(1);
+        }
+    }
     try learn.execute(allocator, root, .{
         .subcommand = sub,
         .project_shard = parsed.options.project_shard,
@@ -400,6 +461,10 @@ fn runLearn(allocator: std.mem.Allocator, root: ?[]const u8, parsed: ParsedCli) 
         .pack_id = parsed.options.pack_id,
         .version = parsed.options.version,
         .approve = parsed.options.approve,
+        .include_records = include_records,
+        .include_warnings = include_warnings,
+        .include_warnings_explicit = include_warnings_explicit,
+        .limit = limit,
         .json = parsed.options.json_out,
         .debug = parsed.options.debug_mode,
     });
@@ -552,6 +617,7 @@ fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
             \\  candidates --project-shard=<id>
             \\  show <candidate-id> --project-shard=<id>
             \\  export <candidate-id> --project-shard=<id> --pack-id=<id> --version=<v> --approve
+            \\  status --project-shard=<id> [--include-records] [--limit=<n>] [--no-warnings]
             \\
         , .{}),
         .debug => try writer.print("\nAdvanced raw diagnostic command. Does not reinterpret engine output.\n", .{}),
