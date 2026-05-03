@@ -219,6 +219,44 @@ doctor, status, `corpus ask`, `context autopsy`, or pack validation.
 stderr only, including engine path, GIP kind, input file path, stdin byte count,
 exit code, and parse status.
 
+### `ghost sigil`
+Advanced/debug Sigil inspection commands.
+
+#### `ghost sigil inspect`
+Run an explicit read-only Sigil inspection through `ghost_gip` operation
+`sigil.inspect`.
+
+Usage: `ghost sigil inspect --file request.json`
+Usage: `ghost sigil inspect --json --file request.json`
+Usage: `ghost sigil inspect --debug --file request.json`
+
+The file must be a GIP-compatible JSON request with top-level
+`kind: "sigil.inspect"`. The CLI reads the file, validates that kind, and sends
+the bytes unchanged to `ghost_gip --stdin`. It does not invent a Sigil
+mini-language and does not infer proof/support from `status: "ok"` or prose.
+
+Human-readable output is labeled **READ-ONLY / NON-AUTHORIZING / CANDIDATE
+ONLY** and prints `PROCEDURE INSPECTION RECORDS ARE CANDIDATES ONLY`, `NOT
+PROOF`, `NOT SUPPORT`, `VM CODE NOT EXECUTED`, `COMMANDS NOT EXECUTED`, and
+`NO MUTATION`. It displays validation, safety flags, instructions, procedure
+inspection records, and disassembly text when supplied by the engine.
+Validation and syntax failures render as rejected/failed inspection output,
+never as Verified.
+
+Sigil inspection compiles, validates, disassembles, and renders procedure
+inspection records without VM execution. The CLI does not execute VM code,
+execute commands, mutate packs, corpus, negative knowledge, scratch state,
+trust state, snapshots, or any other engine state. Procedure inspection records
+are not proof, evidence, support, installed procedures, or authorization.
+
+This command is explicit only. It does not run from help, startup, TUI launch,
+doctor, status, `corpus ask`, `rules evaluate`, `context autopsy`, correction
+commands, NK commands, or pack validation.
+
+`--json` preserves raw GIP stdout exactly. `--debug` writes diagnostics to
+stderr only, including engine path, GIP kind, input file path, stdin byte count,
+exit code, and parse status.
+
 ### `ghost correction`
 Explicit correction proposal and review commands.
 

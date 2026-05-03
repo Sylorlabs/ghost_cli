@@ -81,6 +81,7 @@ test "help text lists all top-level commands" {
     try testing.expect(std.mem.indexOf(u8, res.stderr, "autopsy") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "context") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "rules") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "sigil") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "debug") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "tui") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "Core:") != null);
@@ -105,6 +106,15 @@ test "subcommand help works without resolving engine" {
     try testing.expect(std.mem.indexOf(u8, tui_res.stderr, "--max-history-turns=<n>") != null);
     try testing.expect(std.mem.indexOf(u8, tui_res.stderr, "prefix-first fuzzy suggestions") != null);
     try testing.expect(std.mem.indexOf(u8, tui_res.stderr, "Explicit slash commands and submitted prompts may invoke engine binaries") != null);
+
+    const sigil_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "sigil", "--help", "--engine-root=/tmp/ghost-help-missing" });
+    defer {
+        testing.allocator.free(sigil_res.stdout);
+        testing.allocator.free(sigil_res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), sigil_res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, sigil_res.stderr, "Usage: ghost sigil inspect") != null);
+    try testing.expect(std.mem.indexOf(u8, sigil_res.stderr, "READ-ONLY / NON-AUTHORIZING / CANDIDATE ONLY") != null);
 
     const autopsy_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "autopsy", "--help", "--engine-root=/tmp/ghost-help-missing" });
     defer {
@@ -4167,6 +4177,231 @@ test "context autopsy debug stays on stderr" {
     try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Input File Refs: 1") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Exit Code: 0") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] JSON Parse: SUCCESS") != null);
+}
+
+test "sigil inspect human output renders safe response as candidate only" {
+    const mock_root = "/tmp/ghost-cli-sigil-safe";
+    const request_path = mock_root ++ "/request.json";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    {
+        const file = try std.fs.cwd().createFile(request_path, .{});
+        defer file.close();
+        try file.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"sigil.inspect\",\"source\":\"LOOM CPU_ONLY\\nSCAN \\\"system_memory\\\"\",\"validationScope\":\"boot_control\"}");
+    }
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\n" ++
+            "cat >/dev/null\n" ++
+            "printf '%s' '{\"gipVersion\":\"gip.v0.1\",\"kind\":\"sigil.inspect\",\"status\":\"ok\",\"resultState\":{\"state\":\"draft\"},\"result\":{\"sigilInspection\":{\"status\":\"ok\",\"sourceBytes\":35,\"instructionCount\":2,\"stringCount\":1,\"validation\":{\"scope\":\"boot_control\",\"status\":\"ok\",\"issue\":null},\"safety\":{\"non_authorizing\":true,\"read_only\":true,\"executed\":false,\"mutates_state\":false,\"authority_effect\":\"candidate\",\"vm_execution\":false,\"commands_executed\":false,\"support_granted\":false,\"proof_gate_bypassed\":false},\"instructions\":[{\"instructionIndex\":0,\"opcode\":\"loom\",\"mode\":\"enum\",\"a\":0,\"b\":0}],\"procedureInspectionRecords\":[{\"instructionIndex\":1,\"kind\":\"scan_candidate\",\"opcode\":\"scan\",\"non_authorizing\":true,\"authority_effect\":\"candidate\",\"requires_review\":false,\"requires_verification\":false}],\"disassemblyText\":\"0000 opcode=loom\"}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "sigil",
+        "inspect",
+        "--engine-root=" ++ mock_root,
+        "--file",
+        request_path,
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Sigil Inspection Result") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "READ-ONLY / NON-AUTHORIZING / CANDIDATE ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Inspection Status: ok") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "executed: false") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "mutates_state: false") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "authority_effect: candidate") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Procedure Inspection Records / CANDIDATE ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Verified") == null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Evidence Used") == null);
+}
+
+test "sigil inspect validation failed output stays failed closed" {
+    const mock_root = "/tmp/ghost-cli-sigil-forbidden";
+    const request_path = mock_root ++ "/request.json";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    {
+        const file = try std.fs.cwd().createFile(request_path, .{});
+        defer file.close();
+        try file.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"sigil.inspect\",\"sigilSource\":\"LOOM SHELL\",\"validation_scope\":\"scratch_session\"}");
+    }
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\n" ++
+            "cat >/dev/null\n" ++
+            "printf '%s' '{\"gipVersion\":\"gip.v0.1\",\"kind\":\"sigil.inspect\",\"status\":\"rejected\",\"error\":{\"code\":\"invalid_request\",\"message\":\"sigil validation failed\"},\"result\":{\"sigilInspection\":{\"status\":\"validation_failed\",\"validation\":{\"scope\":\"scratch_session\",\"status\":\"failed\",\"issue\":{\"code\":\"forbidden_authority_source\",\"instructionIndex\":0,\"message\":\"forbidden authority source\"}},\"safety\":{\"non_authorizing\":true,\"read_only\":true,\"executed\":false,\"mutates_state\":false,\"authority_effect\":\"candidate\",\"commands_executed\":false,\"pack_mutation\":false,\"negative_knowledge_mutation\":false,\"support_granted\":false,\"proof_gate_bypassed\":false},\"instructions\":[],\"procedureInspectionRecords\":[],\"disassemblyText\":null}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "sigil",
+        "inspect",
+        "--engine-root=" ++ mock_root,
+        "--file=" ++ request_path,
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Engine Rejected Request:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Inspection Status: validation_failed") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "executed: false") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "commands_executed: false") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "support_granted: false") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Verified") == null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Evidence Used") == null);
+}
+
+test "sigil inspect unknown supported-shaped output cannot render verified" {
+    const mock_root = "/tmp/ghost-cli-sigil-unknown-authority";
+    const request_path = mock_root ++ "/request.json";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    {
+        const file = try std.fs.cwd().createFile(request_path, .{});
+        defer file.close();
+        try file.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"sigil.inspect\",\"source\":\"MOOD \\\"focused\\\"\"}");
+    }
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\n" ++
+            "cat >/dev/null\n" ++
+            "printf '%s' '{\"gipVersion\":\"gip.v0.1\",\"kind\":\"sigil.inspect\",\"status\":\"ok\",\"permission\":\"supported\",\"result\":{\"sigilInspection\":{\"status\":\"ok\",\"safety\":{\"authority_effect\":\"support\"},\"procedureInspectionRecords\":[{\"kind\":\"unknown\",\"authority_effect\":\"support\"}]}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "sigil",
+        "inspect",
+        "--engine-root=" ++ mock_root,
+        "--file",
+        request_path,
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "READ-ONLY / NON-AUTHORIZING / CANDIDATE ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "PROCEDURE INSPECTION RECORDS ARE CANDIDATES ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Verified") == null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Evidence Used") == null);
+}
+
+test "sigil inspect json preserves raw GIP stdout" {
+    const mock_root = "/tmp/ghost-cli-sigil-json";
+    const request_path = mock_root ++ "/request.json";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+    const raw_json = "{\"gipVersion\":\"gip.v0.1\",\"kind\":\"sigil.inspect\",\"status\":\"ok\",\"result\":{\"sigilInspection\":{\"status\":\"ok\",\"safety\":{\"non_authorizing\":true,\"read_only\":true,\"executed\":false,\"mutates_state\":false,\"authority_effect\":\"candidate\"}}}}";
+
+    {
+        const file = try std.fs.cwd().createFile(request_path, .{});
+        defer file.close();
+        try file.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"sigil.inspect\",\"source\":\"MOOD \\\"focused\\\"\"}");
+    }
+    const file = try std.fs.cwd().createFile(mock_root ++ "/ghost_gip", .{ .mode = 0o755 });
+    try file.writeAll("#!/bin/sh\ncat >/dev/null\nprintf '%s' '");
+    try file.writeAll(raw_json);
+    try file.writeAll("'\n");
+    file.close();
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "sigil",
+        "inspect",
+        "--engine-root=" ++ mock_root,
+        "--json",
+        "--file",
+        request_path,
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqualStrings(raw_json, res.stdout);
+}
+
+test "sigil inspect rejects wrong request kind before engine invocation" {
+    const mock_root = "/tmp/ghost-cli-sigil-wrong-kind";
+    const request_path = mock_root ++ "/request.json";
+    const marker = mock_root ++ "/engine-invoked";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    {
+        const file = try std.fs.cwd().createFile(request_path, .{});
+        defer file.close();
+        try file.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"rule.evaluate\"}");
+    }
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ntouch '" ++ marker ++ "'\nprintf '{}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "sigil",
+        "inspect",
+        "--engine-root=" ++ mock_root,
+        "--file",
+        request_path,
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqual(@as(u32, 1), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "kind \"sigil.inspect\"") != null);
+    try testing.expectError(error.FileNotFound, std.fs.cwd().access(marker, .{}));
+}
+
+test "sigil inspect unrecognized engine output reports parse failure" {
+    const mock_root = "/tmp/ghost-cli-sigil-unrecognized";
+    const request_path = mock_root ++ "/request.json";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    {
+        const file = try std.fs.cwd().createFile(request_path, .{});
+        defer file.close();
+        try file.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"sigil.inspect\",\"source\":\"MOOD \\\"focused\\\"\"}");
+    }
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s' 'not json'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "sigil",
+        "inspect",
+        "--engine-root=" ++ mock_root,
+        "--file",
+        request_path,
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "Failed to parse engine output as sigil.inspect JSON") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Verified") == null);
 }
 
 test "context autopsy human output renders input coverage" {

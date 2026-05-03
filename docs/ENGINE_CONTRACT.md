@@ -202,6 +202,33 @@ propose`, `ghost correction review`, `ghost correction reviewed list/get`,
 list/get`, `ghost learn status`, `ghost corpus ask`, `ghost rules evaluate`,
 `ghost context autopsy`, and `ghost packs validate-autopsy-guidance`.
 
+## Sigil Inspection
+
+`ghost sigil inspect --file <request.json>` routes explicitly to
+`ghost_gip --stdin` with GIP `kind: "sigil.inspect"`. The request file must
+already be GIP-compatible JSON and must include the top-level kind. The CLI
+validates that kind, then sends the file bytes unchanged; it does not define a
+Sigil mini-language.
+
+Human output renders **READ-ONLY / NON-AUTHORIZING / CANDIDATE ONLY** and
+labels procedure inspection records as candidate-only. It may display
+`validation`, `safety`, `instructions`, `procedureInspectionRecords`, and
+`disassemblyText` from the engine, but it does not reinterpret those fields as
+proof, evidence, support, or authorization. `status: "ok"` is not enough to
+render Verified.
+
+Sigil inspection is read-only bytecode/procedure inspection. The CLI does not
+execute VM code, execute commands, mutate packs, corpus, negative knowledge,
+scratch state, trust state, snapshots, or any other engine state. Validation
+and syntax failures render as rejected/failed inspection output, not Verified.
+Procedure inspection records remain candidates only and do not count as
+evidence or support.
+
+This operation is explicit only. Help, startup, TUI launch/idle, no-arg
+non-TTY fallback, `ghost doctor`, `ghost status`, `ghost corpus ask`,
+`ghost rules evaluate`, `ghost correction propose`, `ghost context autopsy`,
+and `ghost packs validate-autopsy-guidance` do not run `sigil.inspect`.
+
 ## Corpus Lifecycle
 
 `ghost corpus ingest` routes explicitly to `ghost_corpus_ingest <path>`.

@@ -7,6 +7,7 @@ const status = @import("commands/status.zig");
 const packs = @import("commands/packs.zig");
 const corpus = @import("commands/corpus.zig");
 const rules = @import("commands/rules.zig");
+const sigil = @import("commands/sigil.zig");
 const correction = @import("commands/correction.zig");
 const nk = @import("commands/nk.zig");
 const verify = @import("commands/verify.zig");
@@ -27,6 +28,7 @@ const CommandKind = enum {
     packs,
     corpus,
     rules,
+    sigil,
     correction,
     nk,
     learn,
@@ -79,6 +81,7 @@ const command_registry = [_]CommandDef{
     .{ .name = "nk", .kind = .nk, .group = .knowledge, .help = "Review and inspect reviewed negative knowledge", .usage = "ghost nk <review|reviewed> [options]" },
     .{ .name = "learn", .kind = .learn, .group = .knowledge, .help = "Feedback/distillation and read-only learning status", .usage = "ghost learn <candidates|show|export|status> [options]" },
     .{ .name = "rules", .kind = .rules, .group = .advanced, .help = "Evaluate bounded non-authorizing rules", .usage = "ghost rules evaluate --file <request.json> [--json] [--debug]" },
+    .{ .name = "sigil", .kind = .sigil, .group = .advanced, .help = "Inspect Sigil bytecode read-only", .usage = "ghost sigil inspect --file <request.json> [--json] [--debug]" },
     .{ .name = "debug", .kind = .debug, .group = .advanced, .help = "Advanced raw engine diagnostics", .usage = "ghost debug raw <engine-binary> [args...]" },
     .{ .name = "tui", .kind = .tui, .group = .interface, .help = "Interactive Ghost operator console", .usage = "ghost tui [options]" },
 };
@@ -163,6 +166,10 @@ pub fn main() !void {
             try rules.printHelpForArgs(std.io.getStdErr().writer(), parsed.leftover_args.items);
             return;
         }
+        if (parsed.command.? == .sigil) {
+            try sigil.printHelpForArgs(std.io.getStdErr().writer(), parsed.leftover_args.items);
+            return;
+        }
         if (parsed.command.? == .correction) {
             try correction.printHelpForArgs(std.io.getStdErr().writer(), parsed.leftover_args.items);
             return;
@@ -217,6 +224,10 @@ pub fn main() !void {
             .debug = parsed.options.debug_mode,
         }),
         .rules => try rules.executeFromArgs(allocator, root, parsed.leftover_args.items, .{
+            .json = parsed.options.json_out,
+            .debug = parsed.options.debug_mode,
+        }),
+        .sigil => try sigil.executeFromArgs(allocator, root, parsed.leftover_args.items, .{
             .json = parsed.options.json_out,
             .debug = parsed.options.debug_mode,
         }),
@@ -541,6 +552,7 @@ fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
     if (kind == .packs) return packs.printHelp(writer);
     if (kind == .corpus) return corpus.printHelp(writer);
     if (kind == .rules) return rules.printHelp(writer);
+    if (kind == .sigil) return sigil.printHelp(writer);
     if (kind == .correction) return correction.printHelp(writer);
     if (kind == .nk) return nk.printHelp(writer);
 
@@ -614,7 +626,7 @@ fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
             \\  This scan runs only when this command is explicitly invoked.
             \\
         , .{}),
-        .context, .packs, .corpus, .rules, .correction, .nk => unreachable,
+        .context, .packs, .corpus, .rules, .sigil, .correction, .nk => unreachable,
         .learn => try writer.print(
             \\
             \\Subcommands:
