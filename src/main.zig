@@ -167,6 +167,10 @@ pub fn main() !void {
             try correction.printHelpForArgs(std.io.getStdErr().writer(), parsed.leftover_args.items);
             return;
         }
+        if (parsed.command.? == .packs) {
+            try packs.printHelpForArgs(std.io.getStdErr().writer(), parsed.leftover_args.items);
+            return;
+        }
         if (parsed.command.? == .nk) {
             try nk.printHelpForArgs(std.io.getStdErr().writer(), parsed.leftover_args.items);
             return;

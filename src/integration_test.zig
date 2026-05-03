@@ -590,6 +590,324 @@ test "learn status help works without resolving engine" {
     try testing.expect(std.mem.indexOf(u8, status_res.stderr, "SCOREBOARD COUNTS ARE OPERATOR DIAGNOSTICS ONLY") != null);
 }
 
+test "packs candidates help works without resolving engine" {
+    const packs_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "packs", "--help", "--engine-root=/tmp/ghost-help-missing" });
+    defer {
+        testing.allocator.free(packs_res.stdout);
+        testing.allocator.free(packs_res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), packs_res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, packs_res.stderr, "candidates propose --file <request.json>") != null);
+    try testing.expect(std.mem.indexOf(u8, packs_res.stderr, "Procedure pack candidates are not installed packs") != null);
+
+    const candidates_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "packs", "candidates", "--help", "--engine-root=/tmp/ghost-help-missing" });
+    defer {
+        testing.allocator.free(candidates_res.stdout);
+        testing.allocator.free(candidates_res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), candidates_res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, candidates_res.stderr, "Usage: ghost packs candidates <propose|review|reviewed>") != null);
+    try testing.expect(std.mem.indexOf(u8, candidates_res.stderr, "NOT PROOF") != null);
+
+    const list_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "packs", "candidates", "reviewed", "list", "--help", "--engine-root=/tmp/ghost-help-missing" });
+    defer {
+        testing.allocator.free(list_res.stdout);
+        testing.allocator.free(list_res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), list_res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, list_res.stderr, "procedure_pack.candidate.reviewed.list") != null);
+}
+
+test "packs candidates propose and review route file payloads to ghost_gip" {
+    const mock_root = "/tmp/ghost-cli-pack-candidates-route";
+    const payload_path = mock_root ++ "/payload.json";
+    const propose_path = mock_root ++ "/propose.json";
+    const review_path = mock_root ++ "/review.json";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    {
+        const request = try std.fs.cwd().createFile(propose_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"procedure_pack.candidate.propose\",\"projectShard\":\"project-a\",\"sourceCorrectionReviewId\":\"reviewed-correction-1\"}");
+    }
+    {
+        const request = try std.fs.cwd().createFile(review_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"procedure_pack.candidate.review\",\"projectShard\":\"project-a\",\"candidateId\":\"candidate-1\",\"decision\":\"accepted\",\"reviewerNote\":\"accepted\"}");
+    }
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat > '" ++ payload_path ++ "'\npayload=$(cat '" ++ payload_path ++ "')\ncase \"$payload\" in *procedure_pack.candidate.review*) printf '%s' '{\"result\":{\"procedurePackCandidateReview\":{\"status\":\"reviewed\",\"decision\":\"accepted\",\"reviewedProcedurePackCandidateRecord\":{\"id\":\"reviewed-pack-1\",\"decision\":\"accepted\"},\"mutationFlags\":{\"packMutation\":false},\"authorityFlags\":{\"nonAuthorizing\":true}}}}' ;; *) printf '%s' '{\"result\":{\"procedurePackCandidateProposal\":{\"status\":\"proposed\",\"id\":\"candidate-1\",\"candidateKind\":\"procedure_pack_candidate\",\"summary\":\"candidate\",\"triggers\":[],\"steps\":[],\"requiredEvidence\":[],\"safetyBoundaries\":[],\"mutationFlags\":{\"packMutation\":false},\"authorityFlags\":{\"nonAuthorizing\":true,\"treatedAsProof\":false,\"usedAsEvidence\":false}}}}' ;; esac\n",
+    );
+
+    const propose_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "packs", "candidates", "propose", "--engine-root=" ++ mock_root, "--file", propose_path });
+    defer {
+        testing.allocator.free(propose_res.stdout);
+        testing.allocator.free(propose_res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), propose_res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, propose_res.stdout, "PROCEDURE PACK CANDIDATE / NON-AUTHORIZING") != null);
+    const payload = try std.fs.cwd().readFileAlloc(testing.allocator, payload_path, 1024 * 1024);
+    defer testing.allocator.free(payload);
+    try testing.expect(std.mem.indexOf(u8, payload, "\"kind\":\"procedure_pack.candidate.propose\"") != null);
+    try testing.expect(std.mem.indexOf(u8, payload, "\"sourceCorrectionReviewId\":\"reviewed-correction-1\"") != null);
+
+    const review_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "packs", "candidates", "review", "--engine-root=" ++ mock_root, "--file", review_path });
+    defer {
+        testing.allocator.free(review_res.stdout);
+        testing.allocator.free(review_res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), review_res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, review_res.stdout, "REVIEWED PROCEDURE PACK CANDIDATE") != null);
+    const review_payload = try std.fs.cwd().readFileAlloc(testing.allocator, payload_path, 1024 * 1024);
+    defer testing.allocator.free(review_payload);
+    try testing.expect(std.mem.indexOf(u8, review_payload, "\"kind\":\"procedure_pack.candidate.review\"") != null);
+    try testing.expect(std.mem.indexOf(u8, review_payload, "\"decision\":\"accepted\"") != null);
+}
+
+test "packs candidates reviewed list and get route correct GIP payloads" {
+    const mock_root = "/tmp/ghost-cli-pack-candidates-reviewed-route";
+    const payload_path = mock_root ++ "/payload.json";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat > '" ++ payload_path ++ "'\nprintf '%s' '{\"result\":{\"reviewedProcedurePackCandidate\":{\"status\":\"ok\",\"projectShard\":\"project-a\",\"records\":[],\"totalRead\":0,\"returnedCount\":0,\"malformedLines\":0,\"warnings\":[],\"readOnly\":true,\"mutationFlags\":{\"packMutation\":false},\"authorityFlags\":{\"nonAuthorizing\":true}}}}'\n",
+    );
+
+    const list_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "packs", "candidates", "reviewed", "list", "--engine-root=" ++ mock_root, "--project-shard=project-a", "--decision=accepted", "--limit=2", "--offset=1" });
+    defer {
+        testing.allocator.free(list_res.stdout);
+        testing.allocator.free(list_res.stderr);
+    }
+    const list_payload = try std.fs.cwd().readFileAlloc(testing.allocator, payload_path, 1024 * 1024);
+    defer testing.allocator.free(list_payload);
+    var parsed_list = try std.json.parseFromSlice(std.json.Value, testing.allocator, list_payload, .{});
+    defer parsed_list.deinit();
+    try testing.expectEqualStrings("procedure_pack.candidate.reviewed.list", parsed_list.value.object.get("kind").?.string);
+    try testing.expectEqualStrings("project-a", parsed_list.value.object.get("projectShard").?.string);
+    try testing.expectEqualStrings("accepted", parsed_list.value.object.get("decision").?.string);
+    try testing.expectEqual(@as(i64, 2), parsed_list.value.object.get("limit").?.integer);
+    try testing.expectEqual(@as(i64, 1), parsed_list.value.object.get("offset").?.integer);
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat > '" ++ payload_path ++ "'\nprintf '%s' '{\"result\":{\"reviewedProcedurePackCandidate\":{\"status\":\"found\",\"projectShard\":\"project-a\",\"id\":\"reviewed-pack-1\",\"reviewedProcedurePackCandidateRecord\":{\"id\":\"reviewed-pack-1\",\"decision\":\"accepted\"},\"warnings\":[],\"readOnly\":true,\"mutationFlags\":{\"packMutation\":false},\"authorityFlags\":{\"nonAuthorizing\":true}}}}'\n",
+    );
+    const get_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "packs", "candidates", "reviewed", "get", "--engine-root=" ++ mock_root, "--project-shard", "project-a", "--id=reviewed-pack-1" });
+    defer {
+        testing.allocator.free(get_res.stdout);
+        testing.allocator.free(get_res.stderr);
+    }
+    const get_payload = try std.fs.cwd().readFileAlloc(testing.allocator, payload_path, 1024 * 1024);
+    defer testing.allocator.free(get_payload);
+    var parsed_get = try std.json.parseFromSlice(std.json.Value, testing.allocator, get_payload, .{});
+    defer parsed_get.deinit();
+    try testing.expectEqualStrings("procedure_pack.candidate.reviewed.get", parsed_get.value.object.get("kind").?.string);
+    try testing.expectEqualStrings("project-a", parsed_get.value.object.get("projectShard").?.string);
+    try testing.expectEqualStrings("reviewed-pack-1", parsed_get.value.object.get("id").?.string);
+}
+
+test "packs candidates human output renders required safety labels and records" {
+    const mock_root = "/tmp/ghost-cli-pack-candidates-human";
+    const propose_path = mock_root ++ "/propose.json";
+    const review_path = mock_root ++ "/review.json";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+    {
+        const request = try std.fs.cwd().createFile(propose_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"procedure_pack.candidate.propose\",\"projectShard\":\"project-a\"}");
+    }
+    {
+        const request = try std.fs.cwd().createFile(review_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"procedure_pack.candidate.review\",\"projectShard\":\"project-a\",\"candidateId\":\"candidate-1\",\"decision\":\"rejected\",\"reviewerNote\":\"reviewed\",\"rejectedReason\":\"too broad\"}");
+    }
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\npayload=$(cat)\ncase \"$payload\" in *reviewed.list*) printf '%s' '{\"result\":{\"reviewedProcedurePackCandidate\":{\"status\":\"ok\",\"projectShard\":\"project-a\",\"decision\":\"all\",\"records\":[{\"id\":\"reviewed-pack-1\",\"decision\":\"accepted\",\"candidateKind\":\"procedure_pack_candidate\",\"reviewerNoteSummary\":\"accepted summary\",\"candidateSnapshot\":{\"summary\":\"candidate\"},\"nonAuthorizing\":true,\"treatedAsProof\":false,\"usedAsEvidence\":false,\"executesByDefault\":false,\"packMutation\":false,\"globalPromotion\":false},{\"id\":\"reviewed-pack-2\",\"decision\":\"rejected\",\"candidateKind\":\"procedure_pack_candidate\",\"rejectedReason\":\"too broad\",\"nonAuthorizing\":true,\"treatedAsProof\":false,\"usedAsEvidence\":false,\"executesByDefault\":false,\"packMutation\":false,\"globalPromotion\":false}],\"totalRead\":2,\"returnedCount\":2,\"malformedLines\":1,\"warnings\":[{\"kind\":\"malformed_jsonl\"}],\"capacityTelemetry\":{\"maxRecordsRead\":128},\"mutationFlags\":{\"packMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false},\"authorityFlags\":{\"nonAuthorizing\":true,\"treatedAsProof\":false,\"usedAsEvidence\":false}}}}' ;; *reviewed.get*missing*) printf '%s' '{\"result\":{\"reviewedProcedurePackCandidate\":{\"status\":\"not_found\",\"projectShard\":\"project-a\",\"id\":\"missing\",\"reviewedProcedurePackCandidateRecord\":null,\"warnings\":[\"not found\"],\"malformedLines\":0,\"mutationFlags\":{\"packMutation\":false},\"authorityFlags\":{\"nonAuthorizing\":true}}}}' ;; *reviewed.get*) printf '%s' '{\"result\":{\"reviewedProcedurePackCandidate\":{\"status\":\"found\",\"projectShard\":\"project-a\",\"id\":\"reviewed-pack-1\",\"reviewedProcedurePackCandidateRecord\":{\"id\":\"reviewed-pack-1\",\"decision\":\"accepted\",\"candidateKind\":\"procedure_pack_candidate\",\"reviewerNote\":\"accepted\",\"candidateSnapshot\":{\"summary\":\"candidate\"},\"appendOnly\":{\"stableOrdering\":\"file_append_order\"},\"nonAuthorizing\":true,\"treatedAsProof\":false,\"usedAsEvidence\":false,\"executesByDefault\":false,\"packMutation\":false,\"globalPromotion\":false},\"warnings\":[],\"mutationFlags\":{\"packMutation\":false},\"authorityFlags\":{\"nonAuthorizing\":true}}}}' ;; *procedure_pack.candidate.review*) printf '%s' '{\"result\":{\"procedurePackCandidateReview\":{\"status\":\"reviewed\",\"decision\":\"rejected\",\"reviewerNote\":\"reviewed\",\"rejectedReason\":\"too broad\",\"candidateSnapshot\":{\"summary\":\"candidate\"},\"appendOnly\":{\"stableOrdering\":\"file_append_order\"},\"mutationFlags\":{\"packMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false},\"authorityFlags\":{\"nonAuthorizing\":true,\"treatedAsProof\":false,\"usedAsEvidence\":false}}}}' ;; *) printf '%s' '{\"result\":{\"procedurePackCandidateProposal\":{\"status\":\"proposed\",\"id\":\"candidate-1\",\"candidateKind\":\"procedure_pack_candidate\",\"summary\":\"candidate summary\",\"triggers\":[\"correction accepted\"],\"steps\":[{\"summary\":\"candidate step\",\"executesByDefault\":false}],\"requiredEvidence\":[\"explicit review\"],\"safetyBoundaries\":[\"no execution\"],\"sourceCorrectionReviewId\":\"reviewed-correction-1\",\"mutationFlags\":{\"packMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false},\"authorityFlags\":{\"nonAuthorizing\":true,\"treatedAsProof\":false,\"usedAsEvidence\":false}}}}' ;; esac\n",
+    );
+
+    const propose = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "packs", "candidates", "propose", "--engine-root=" ++ mock_root, "--file", propose_path });
+    defer {
+        testing.allocator.free(propose.stdout);
+        testing.allocator.free(propose.stderr);
+    }
+    try testing.expect(std.mem.indexOf(u8, propose.stdout, "CANDIDATE ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, propose.stdout, "NOT PROOF") != null);
+    try testing.expect(std.mem.indexOf(u8, propose.stdout, "NOT EVIDENCE") != null);
+    try testing.expect(std.mem.indexOf(u8, propose.stdout, "NOT INSTALLED") != null);
+    try testing.expect(std.mem.indexOf(u8, propose.stdout, "NOT EXECUTED") != null);
+    try testing.expect(std.mem.indexOf(u8, propose.stdout, "NO PACK MUTATION") != null);
+    try testing.expect(std.mem.indexOf(u8, propose.stdout, "NO GLOBAL PROMOTION") != null);
+    try testing.expect(std.mem.indexOf(u8, propose.stdout, "Source Correction Review ID: reviewed-correction-1") != null);
+    try testing.expect(std.mem.indexOf(u8, propose.stdout, "Triggers:") != null);
+    try testing.expect(std.mem.indexOf(u8, propose.stdout, "Steps:") != null);
+
+    const review = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "packs", "candidates", "review", "--engine-root=" ++ mock_root, "--file", review_path });
+    defer {
+        testing.allocator.free(review.stdout);
+        testing.allocator.free(review.stderr);
+    }
+    try testing.expect(std.mem.indexOf(u8, review.stdout, "APPEND-ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, review.stdout, "Decision: rejected") != null);
+    try testing.expect(std.mem.indexOf(u8, review.stdout, "Rejected Reason: too broad") != null);
+    try testing.expect(std.mem.indexOf(u8, review.stdout, "Mutation Flags:") != null);
+
+    const list = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "packs", "candidates", "reviewed", "list", "--engine-root=" ++ mock_root, "--project-shard=project-a", "--decision=all" });
+    defer {
+        testing.allocator.free(list.stdout);
+        testing.allocator.free(list.stderr);
+    }
+    try testing.expect(std.mem.indexOf(u8, list.stdout, "REVIEWED PROCEDURE PACK CANDIDATES / READ-ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, list.stdout, "READ-ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, list.stdout, "Records (append order):") != null);
+    try testing.expect(std.mem.indexOf(u8, list.stdout, "Decision: accepted") != null);
+    try testing.expect(std.mem.indexOf(u8, list.stdout, "Decision: rejected") != null);
+    try testing.expect(std.mem.indexOf(u8, list.stdout, "Warnings:") != null);
+    try testing.expect(std.mem.indexOf(u8, list.stdout, "Capacity Telemetry:") != null);
+
+    const get = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "packs", "candidates", "reviewed", "get", "--engine-root=" ++ mock_root, "--project-shard=project-a", "--id=reviewed-pack-1" });
+    defer {
+        testing.allocator.free(get.stdout);
+        testing.allocator.free(get.stderr);
+    }
+    try testing.expect(std.mem.indexOf(u8, get.stdout, "REVIEWED PROCEDURE PACK CANDIDATE / READ-ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, get.stdout, "Append-Only Metadata:") != null);
+
+    const missing = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "packs", "candidates", "reviewed", "get", "--engine-root=" ++ mock_root, "--project-shard=project-a", "--id=missing" });
+    defer {
+        testing.allocator.free(missing.stdout);
+        testing.allocator.free(missing.stderr);
+    }
+    try testing.expect(std.mem.indexOf(u8, missing.stdout, "Status: not_found") != null);
+    try testing.expect(std.mem.indexOf(u8, missing.stdout, "Reviewed procedure pack candidate not_found.") != null);
+}
+
+test "packs candidates list accepted rejected all filters render correctly" {
+    const mock_root = "/tmp/ghost-cli-pack-candidates-list-filters";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\npayload=$(cat)\ncase \"$payload\" in *'\"decision\":\"accepted\"'*) decision=accepted ;; *'\"decision\":\"rejected\"'*) decision=rejected ;; *) decision=all ;; esac\nprintf '%s' '{\"result\":{\"reviewedProcedurePackCandidate\":{\"status\":\"ok\",\"projectShard\":\"project-a\",\"decision\":\"'\"$decision\"'\",\"records\":[],\"totalRead\":0,\"returnedCount\":0,\"malformedLines\":0,\"warnings\":[],\"mutationFlags\":{\"packMutation\":false},\"authorityFlags\":{\"nonAuthorizing\":true}}}}'\n",
+    );
+    const all_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "packs", "candidates", "reviewed", "list", "--engine-root=" ++ mock_root, "--project-shard=project-a" });
+    defer {
+        testing.allocator.free(all_res.stdout);
+        testing.allocator.free(all_res.stderr);
+    }
+    try testing.expect(std.mem.indexOf(u8, all_res.stdout, "Decision Filter: all") != null);
+    const accepted_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "packs", "candidates", "reviewed", "list", "--engine-root=" ++ mock_root, "--project-shard=project-a", "--decision=accepted" });
+    defer {
+        testing.allocator.free(accepted_res.stdout);
+        testing.allocator.free(accepted_res.stderr);
+    }
+    try testing.expect(std.mem.indexOf(u8, accepted_res.stdout, "Decision Filter: accepted") != null);
+    const rejected_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "packs", "candidates", "reviewed", "list", "--engine-root=" ++ mock_root, "--project-shard=project-a", "--decision=rejected" });
+    defer {
+        testing.allocator.free(rejected_res.stdout);
+        testing.allocator.free(rejected_res.stderr);
+    }
+    try testing.expect(std.mem.indexOf(u8, rejected_res.stdout, "Decision Filter: rejected") != null);
+}
+
+test "packs candidates json byte matches direct ghost_gip and debug stays stderr" {
+    const mock_root = "/tmp/ghost-cli-pack-candidates-json-debug";
+    const request_path = mock_root ++ "/propose.json";
+    const raw = "{\"result\":{\"procedurePackCandidateProposal\":{\"status\":\"proposed\",\"id\":\"candidate-1\",\"authorityFlags\":{\"nonAuthorizing\":true}}}}";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+    {
+        const request = try std.fs.cwd().createFile(request_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"procedure_pack.candidate.propose\",\"projectShard\":\"project-a\"}");
+    }
+    try writeMockExecutable(mock_root ++ "/ghost_gip", "#!/bin/sh\ncat >/dev/null\nprintf '%s' '" ++ raw ++ "'\n");
+    const request_bytes = try std.fs.cwd().readFileAlloc(testing.allocator, request_path, 1024 * 1024);
+    defer testing.allocator.free(request_bytes);
+    const direct = try runCmdWithInput(testing.allocator, &[_][]const u8{ mock_root ++ "/ghost_gip", "--stdin" }, request_bytes);
+    defer {
+        testing.allocator.free(direct.stdout);
+        testing.allocator.free(direct.stderr);
+    }
+    const cli = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "packs", "candidates", "propose", "--json", "--engine-root=" ++ mock_root, "--file", request_path });
+    defer {
+        testing.allocator.free(cli.stdout);
+        testing.allocator.free(cli.stderr);
+    }
+    try testing.expectEqualStrings(direct.stdout, cli.stdout);
+    try testing.expectEqualStrings("", cli.stderr);
+
+    const debug = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "packs", "candidates", "propose", "--debug", "--engine-root=" ++ mock_root, "--file", request_path });
+    defer {
+        testing.allocator.free(debug.stdout);
+        testing.allocator.free(debug.stderr);
+    }
+    try testing.expect(std.mem.indexOf(u8, debug.stdout, "[DEBUG]") == null);
+    try testing.expect(std.mem.indexOf(u8, debug.stderr, "[DEBUG] Engine Binary:") != null);
+    try testing.expect(std.mem.indexOf(u8, debug.stderr, "[DEBUG] GIP Kind: procedure_pack.candidate.propose") != null);
+    try testing.expect(std.mem.indexOf(u8, debug.stderr, "[DEBUG] Input File:") != null);
+    try testing.expect(std.mem.indexOf(u8, debug.stderr, "[DEBUG] Stdin Byte Count:") != null);
+    try testing.expect(std.mem.indexOf(u8, debug.stderr, "[DEBUG] Exit Code: 0") != null);
+    try testing.expect(std.mem.indexOf(u8, debug.stderr, "[DEBUG] Parse Status: ok") != null);
+}
+
+test "packs candidates wrong kind rejects before engine and no hidden startup invocation" {
+    const mock_root = "/tmp/ghost-cli-pack-candidates-no-hidden";
+    const request_path = mock_root ++ "/wrong.json";
+    const marker = mock_root ++ "/procedure-marker";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+    {
+        const request = try std.fs.cwd().createFile(request_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"correction.propose\"}");
+    }
+    try writeMockExecutable(mock_root ++ "/ghost_task_operator", "#!/bin/sh\nprintf 'task help\\n'\n");
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\npayload=$(cat 2>/dev/null || true)\ncase \"$payload\" in *procedure_pack.candidate*) touch '" ++ marker ++ "' ;; esac\nprintf '{\"status\":\"ok\"}'\n",
+    );
+
+    const wrong = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "packs", "candidates", "propose", "--engine-root=" ++ mock_root, "--file", request_path });
+    defer {
+        testing.allocator.free(wrong.stdout);
+        testing.allocator.free(wrong.stderr);
+    }
+    try testing.expect(wrong.term.Exited != 0);
+    try testing.expect(std.mem.indexOf(u8, wrong.stderr, "top-level kind \"procedure_pack.candidate.propose\"") != null);
+    try testing.expectError(error.FileNotFound, std.fs.cwd().access(marker, .{}));
+
+    const doctor_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "doctor", "--engine-root=" ++ mock_root });
+    defer {
+        testing.allocator.free(doctor_res.stdout);
+        testing.allocator.free(doctor_res.stderr);
+    }
+    const status_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "status", "--engine-root=" ++ mock_root });
+    defer {
+        testing.allocator.free(status_res.stdout);
+        testing.allocator.free(status_res.stderr);
+    }
+    const no_arg_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "--engine-root=" ++ mock_root });
+    defer {
+        testing.allocator.free(no_arg_res.stdout);
+        testing.allocator.free(no_arg_res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), doctor_res.term.Exited);
+    try testing.expectEqual(@as(u32, 0), status_res.term.Exited);
+    try testing.expectError(error.FileNotFound, std.fs.cwd().access(marker, .{}));
+}
+
 test "learn status routes learning status payload flags" {
     const mock_root = "/tmp/ghost-cli-learn-status-payload";
     const payload_path = mock_root ++ "/payload.json";

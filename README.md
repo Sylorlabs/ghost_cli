@@ -46,7 +46,8 @@ Binary resolution is explicit: candidates are reported as engine-root, engine-ro
 In a non-interactive pipe or script, the TUI path exits cleanly and reports that
 no CLI-owned TUI command, doctor check, context/project autopsy scan, correction
 proposal/review/reviewed inspection, reviewed negative-knowledge review/list/get,
-verifier, or pack mutation was started from that fallback path.
+procedure pack candidate operation, verifier, or pack mutation was started from
+that fallback path.
 
 ### Examples
 
@@ -138,6 +139,15 @@ ghost packs validate-autopsy-guidance --pack-id=zig_runtime_sync --version=1.0.0
 ghost packs validate-autopsy-guidance --all-mounted --project-shard=my-project
 ghost packs validate-autopsy-guidance --manifest=path/to/manifest.json --max-guidance-bytes=524288
 
+# Explicit procedure pack candidate lifecycle through GIP
+ghost packs candidates propose --file request.json
+ghost packs candidates review --file request.json
+ghost packs candidates reviewed list --project-shard=my-project
+ghost packs candidates reviewed list --project-shard=my-project --decision=accepted --limit=20 --offset=0
+ghost packs candidates reviewed get --project-shard=my-project --id=reviewed-pack-1
+ghost packs candidates propose --json --file request.json
+ghost packs candidates reviewed get --debug --project-shard=my-project --id=reviewed-pack-1
+
 # Feedback and Distillation (Learn)
 ghost learn candidates --project-shard=my-project
 ghost learn show action_surface:candidate_local_guard --project-shard=my-project
@@ -159,6 +169,7 @@ ghost doctor --report
 - **Distillation Candidates**: Reviewed and aggregated knowledge ready for promotion.
 - **Exported Packs**: User-approved knowledge units that act as non-authorizing hints for future reasoning.
 - **Autopsy Guidance Validation**: Explicit `ghost packs validate-autopsy-guidance` checks pack guidance shape/content via the engine. It first checks `ghost_knowledge_pack capabilities --json`, requires an advertised validation command and supported schema versions, and routes validation limit overrides only when advertised. Human mode renders clean success, warning, and error summaries without raw Zig traces; `--json` preserves raw engine stdout exactly. It is review-only: no pack mutation, no auto-fix, no auto-promotion, and no proof upgrade.
+- **Procedure Pack Candidates**: Explicit `ghost packs candidates propose --file <request.json>` and `ghost packs candidates review --file <request.json>` call `ghost_gip` operations `procedure_pack.candidate.propose` and `procedure_pack.candidate.review` with the request file bytes after validating the top-level kind. Explicit `ghost packs candidates reviewed list|get` builds read-only GIP requests for `procedure_pack.candidate.reviewed.list|get`. Procedure pack candidates are not installed packs; reviewed records are append-only; the CLI never reads or writes `reviewed_pack_candidates.jsonl` directly. Human output labels candidates and reviewed records as **CANDIDATE ONLY**, **READ-ONLY** where applicable, **NOT PROOF**, **NOT EVIDENCE**, **NOT INSTALLED**, **NOT EXECUTED**, **NO PACK MUTATION**, **NO GLOBAL PROMOTION**, and **NO VERIFIERS EXECUTED**. No procedure steps, commands, verifiers/checks, pack mutation, proof/evidence/support use, auto-promotion, or global promotion occur. `--json` preserves raw engine stdout exactly and `--debug` writes diagnostics to stderr only.
 - **Corpus Lifecycle**: Explicit `ghost corpus ingest` stages corpus through `ghost_corpus_ingest`; explicit `ghost corpus apply-staged` promotes staged corpus into the live shard corpus. Staged corpus is not visible to `ghost corpus ask` before apply. `--json` preserves raw engine stdout; the verified engine emits JSON for ingest/apply without accepting a separate engine `--json` flag.
 - **Corpus Ask**: Explicit `ghost corpus ask` calls `ghost_gip` operation `corpus.ask` against live shard corpus excerpts. Human output is **DRAFT** and **NON-AUTHORIZING**, renders bounded evidence and unknowns, labels learning candidates as candidate-only/not-persisted, renders `similarCandidates` separately as non-authorizing routing hints, and preserves raw stdout under `--json`. If `capacityTelemetry` reports pressure or `capacity_limited` unknowns are present, it prints **CAPACITY / COVERAGE WARNING**: skipped, dropped, truncated, or capped data is partial coverage and cannot support an answer. Accepted reviewed corrections may render as **ACCEPTED CORRECTION INFLUENCE / NON-AUTHORIZING** warnings, telemetry, and candidate-only future behavior; accepted reviewed negative knowledge may render as **REVIEWED NEGATIVE KNOWLEDGE INFLUENCE / NON-AUTHORIZING** warnings, telemetry, and candidate-only future behavior. Neither is proof, evidence, global promotion, or Evidence Used. Exact repeated `wrong_answer` or known-bad patterns may suppress `answerDraft`; human mode says whether suppression came from accepted correction influence or reviewed negative knowledge influence. Exact evidence is required for answer drafts; approximate similarity hints are not proof or Evidence Used. Retrieval is bounded local matching, not semantic search; there are no Transformers/embeddings/model adapters, and mounted pack corpus is not included yet.
 - **Rule Evaluation**: Explicit `ghost rules evaluate --file <request.json>` calls `ghost_gip` operation `rule.evaluate` with the request file bytes. Human output is **DRAFT / NON-AUTHORIZING** and renders fired rules, candidates, obligations, unknowns, explanation traces, safety flags, and **RULE CAPACITY WARNING / NON-AUTHORIZING** when capacity telemetry reports pressure. Same-shard accepted reviewed corrections may render as **ACCEPTED CORRECTION INFLUENCE / NON-AUTHORIZING** warnings, influences, telemetry, exact repeated-output suppression, and **FUTURE BEHAVIOR CANDIDATES / NOT APPLIED**. Same-shard accepted reviewed negative knowledge may render as **REVIEWED NEGATIVE KNOWLEDGE INFLUENCE / NON-AUTHORIZING** warnings, influences, telemetry, exact repeated known-bad output suppression, and candidate-only future behavior. Rule outputs, correction influence, and NK influence are candidates only, not proof or evidence; capacity-limited evaluation is incomplete; verifiers/checks are not executed; rules, packs, corpus, negative knowledge, and correction records are not mutated; accepted corrections and reviewed NK are not globally promoted. Evaluation is deterministic bounded structural matching only: no recursive inference, no Prolog, no Transformers, no embeddings, no model adapters, no ranking model, no cloud calls, and no semantic search.

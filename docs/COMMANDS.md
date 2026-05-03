@@ -22,7 +22,8 @@ ghost
 This is a renderer/front-door path. No doctor/status diagnostic, context/project
 autopsy scan, correction proposal, verifier execution, pack mutation,
 negative-knowledge mutation, correction review, reviewed correction inspection,
-or reviewed negative-knowledge review/list/get is started by launch or idle rendering. Explicit
+reviewed negative-knowledge review/list/get, or procedure pack candidate
+operation is started by launch or idle rendering. Explicit
 slash commands and submitted prompts may invoke engine binaries according to
 their command contract.
 
@@ -607,6 +608,98 @@ advertises them:
 - `--max-array-items=<n>`
 - `--max-string-bytes=<n>`
 
+#### `ghost packs candidates propose`
+Run an explicit procedure pack candidate proposal through `ghost_gip` operation
+`procedure_pack.candidate.propose`.
+
+Usage: `ghost packs candidates propose --file request.json`
+Usage: `ghost packs candidates propose --json --file request.json`
+Usage: `ghost packs candidates propose --debug --file request.json`
+
+The request file must be full GIP-compatible JSON with top-level
+`kind: "procedure_pack.candidate.propose"`. The CLI reads the file, validates
+that kind, and sends the bytes unchanged to `ghost_gip --stdin`. It does not
+invent a candidate mini-language and does not infer candidates from correction,
+NK, learning, corpus, rules, context, doctor, status, TUI, or startup paths.
+
+Human output renders **PROCEDURE PACK CANDIDATE / NON-AUTHORIZING** with
+candidate id, candidate kind, summary, triggers, steps, required evidence,
+safety boundaries, source correction/NK/learning ids when present, mutation
+flags, and authority flags. It labels output **CANDIDATE ONLY**, **NOT PROOF**,
+**NOT EVIDENCE**, **NOT INSTALLED**, **NOT EXECUTED**, **NO PACK MUTATION**, and
+**NO GLOBAL PROMOTION**.
+
+Proposals are non-persistent by default. The command does not mutate packs,
+execute procedure steps, execute verifiers/checks, treat candidates as proof or
+evidence, install packs, auto-promote candidates, or globally promote state.
+`--json` preserves raw engine stdout exactly. `--debug` writes engine path, GIP
+kind, input file path, stdin byte count, exit code, and parse status to stderr
+only.
+
+#### `ghost packs candidates review`
+Run an explicit procedure pack candidate review through `ghost_gip` operation
+`procedure_pack.candidate.review`.
+
+Usage: `ghost packs candidates review --file request.json`
+Usage: `ghost packs candidates review --json --file request.json`
+Usage: `ghost packs candidates review --debug --file request.json`
+
+The request file must be full GIP-compatible JSON with top-level
+`kind: "procedure_pack.candidate.review"`. The CLI validates that kind and sends
+the file bytes unchanged to `ghost_gip --stdin`.
+
+Human output renders **REVIEWED PROCEDURE PACK CANDIDATE**, **APPEND-ONLY**,
+decision accepted/rejected, reviewer note, rejected reason when present,
+candidate snapshot summary, append-only metadata, mutation flags, and authority
+flags. It labels reviewed records **NOT PROOF**, **NOT EVIDENCE**,
+**NOT INSTALLED**, **NOT EXECUTED**, **NO PACK MUTATION**, and
+**NO GLOBAL PROMOTION**.
+
+The engine appends explicit reviews under the project shard at
+`procedure_packs/reviewed_pack_candidates.jsonl`; the CLI does not read or
+write that file directly. Review does not mutate packs, install packs, execute
+procedure steps, execute verifiers/checks, treat candidates as proof/evidence,
+auto-promote candidates, or globally promote state.
+
+#### `ghost packs candidates reviewed list`
+Inspect reviewed procedure pack candidates through `ghost_gip` operation
+`procedure_pack.candidate.reviewed.list`.
+
+Usage: `ghost packs candidates reviewed list --project-shard=my-project`
+Usage: `ghost packs candidates reviewed list --project-shard=my-project --decision=accepted`
+Usage: `ghost packs candidates reviewed list --project-shard=my-project --decision=rejected`
+Usage: `ghost packs candidates reviewed list --project-shard=my-project --decision=all --limit=20 --offset=40`
+Usage: `ghost packs candidates reviewed list --json --project-shard=my-project`
+Usage: `ghost packs candidates reviewed list --debug --project-shard=my-project`
+
+The CLI builds the GIP request from flags and sends it to `ghost_gip --stdin`.
+It never reads or writes `procedure_packs/reviewed_pack_candidates.jsonl`
+directly.
+
+Human output renders **REVIEWED PROCEDURE PACK CANDIDATES / READ-ONLY**, project
+shard, counts, warnings/malformed lines, capacity telemetry, record summaries
+in append order, decision, ids, candidate kind, mutation flags, and authority
+flags. It labels records **READ-ONLY**, **NOT PROOF**, **NOT EVIDENCE**,
+**NOT INSTALLED**, **NO PACK MUTATION**, and **NO VERIFIERS EXECUTED**.
+
+#### `ghost packs candidates reviewed get`
+Inspect one reviewed procedure pack candidate through `ghost_gip` operation
+`procedure_pack.candidate.reviewed.get`.
+
+Usage: `ghost packs candidates reviewed get --project-shard=my-project --id=reviewed-pack-1`
+Usage: `ghost packs candidates reviewed get --json --project-shard=my-project --id=reviewed-pack-1`
+Usage: `ghost packs candidates reviewed get --debug --project-shard=my-project --id=reviewed-pack-1`
+
+The CLI builds the GIP request from flags and sends it to `ghost_gip --stdin`.
+It never reads or writes `procedure_packs/reviewed_pack_candidates.jsonl`
+directly.
+
+Human output renders **REVIEWED PROCEDURE PACK CANDIDATE / READ-ONLY**, the full
+record summary, warnings/malformed lines, capacity telemetry, mutation flags,
+authority flags, and clean `not_found` text when missing. Reviewed procedure
+pack candidates are not installed packs, not proof, not evidence, and do not
+mutate packs or execute verifiers.
+
 ### `ghost tui`
 Interactive Ghost Console TUI. Provides a live cockpit view for interacting with the engine.
 
@@ -635,9 +728,9 @@ in the TUI status bar.
 If stdin/stdout is not an interactive TTY, `ghost`/`ghost tui` exits gracefully
 with a message. The covered smoke path verifies that no CLI-owned TUI command,
 doctor check, context/project autopsy scan, correction proposal/review/reviewed
-inspection, reviewed negative-knowledge review/list/get, verifier, pack
-mutation, or negative-knowledge mutation is started
-from that non-TTY fallback.
+inspection, reviewed negative-knowledge review/list/get, procedure pack
+candidate operation, verifier, pack mutation, or negative-knowledge mutation is
+started from that non-TTY fallback.
 
 #### Keybindings
 - `Ctrl+C`: Quit

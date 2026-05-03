@@ -82,8 +82,9 @@ When present, correction, negative-knowledge, and epistemic fields are displayed
 
 These sections are display-only. Rendering them does not execute verifiers,
 correction review, negative-knowledge review/mutation APIs, pack mutation, or MCP
-calls. Explicit user commands may still invoke engine binaries according to
-their command contract.
+calls. Rendering them also does not run procedure pack candidate lifecycle
+operations. Explicit user commands may still invoke engine binaries according
+to their command contract.
 
 ### Rules
 1. The CLI must never reinterpret verification results.
@@ -147,6 +148,58 @@ validation limit flags. It does not run validation, mutate packs, auto-fix
 guidance, auto-promote guidance, or treat capability availability as proof.
 Unavailable or unparsable capabilities render a compatibility warning and an
 engine upgrade/rebuild suggestion.
+
+## Procedure Pack Candidate Lifecycle
+
+`ghost packs candidates propose --file <request.json>` routes explicitly to
+`ghost_gip --stdin` with GIP `kind: "procedure_pack.candidate.propose"`. The
+CLI reads the request file, validates that the top-level kind matches, and sends
+the file bytes unchanged. The CLI does not define a procedure pack candidate
+mini-language and does not infer candidate fields from adjacent command output.
+
+`ghost packs candidates review --file <request.json>` routes explicitly to
+`ghost_gip --stdin` with GIP `kind: "procedure_pack.candidate.review"`. The CLI
+validates the top-level kind and sends the file bytes unchanged.
+
+`ghost packs candidates reviewed list --project-shard=<id>` and
+`ghost packs candidates reviewed get --project-shard=<id> --id=<record-id>`
+build GIP requests for `procedure_pack.candidate.reviewed.list` and
+`procedure_pack.candidate.reviewed.get`, then send them to `ghost_gip --stdin`.
+Supported list flags are `--decision=accepted|rejected|all`, `--limit=<n>`,
+and `--offset=<n>`.
+
+The engine stores explicit reviews under the project shard at
+`procedure_packs/reviewed_pack_candidates.jsonl`. The CLI never reads or writes
+that JSONL file directly; all access goes through `ghost_gip`.
+
+Human proposal output renders **PROCEDURE PACK CANDIDATE / NON-AUTHORIZING**,
+candidate id, candidate kind, summary, triggers, steps, required evidence,
+safety boundaries, source correction/NK/learning ids when present, mutation
+flags, and authority flags. Human review output renders **REVIEWED PROCEDURE
+PACK CANDIDATE**, **APPEND-ONLY**, decision, reviewer note, rejected reason when
+present, candidate snapshot summary, append-only metadata, mutation flags, and
+authority flags. Human reviewed list/get output renders **READ-ONLY** records,
+project shard, counts, warnings/malformed lines, capacity telemetry,
+append-order record summaries, and clean `not_found` output when missing.
+
+Procedure pack candidates are not installed packs. Candidate and reviewed
+candidate output is not proof, not evidence, not support, not executed, and not
+globally promoted. The CLI does not mutate packs, execute procedure steps,
+execute commands, execute verifiers/checks, treat candidates as proof/evidence,
+auto-promote candidates, or perform global promotion. `--json` preserves raw
+engine stdout exactly. `--debug` writes engine path, GIP kind, input file path
+for propose/review, project shard for list/get, id for get, request byte count,
+exit code, and parse status to stderr only.
+
+The following commands and paths do not run
+`procedure_pack.candidate.propose`, `procedure_pack.candidate.review`,
+`procedure_pack.candidate.reviewed.list`, or
+`procedure_pack.candidate.reviewed.get`: help, startup, TUI launch/idle,
+no-arg non-TTY fallback, `ghost doctor`, `ghost status`, `ghost correction
+propose`, `ghost correction review`, `ghost correction reviewed list/get`,
+`ghost correction influence status`, `ghost nk review`, `ghost nk reviewed
+list/get`, `ghost learn status`, `ghost corpus ask`, `ghost rules evaluate`,
+`ghost context autopsy`, and `ghost packs validate-autopsy-guidance`.
 
 ## Corpus Lifecycle
 
