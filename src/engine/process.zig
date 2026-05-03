@@ -7,6 +7,8 @@ pub const ProcessResult = struct {
 };
 
 pub fn runEngineCommand(allocator: std.mem.Allocator, args: []const []const u8) !ProcessResult {
+    // Output is bounded, but runtime timeout/cancellation is still command-runner
+    // hygiene pending. Keep callers explicit about long-running engine work.
     const result = try std.process.Child.run(.{
         .allocator = allocator,
         .argv = args,

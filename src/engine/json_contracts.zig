@@ -214,9 +214,48 @@ pub const EngineResponse = struct {
     pub fn isDraftStatus(self: EngineResponse) bool {
         if (self.isDraft) |val| return val;
         if (self.is_draft) |val| return val;
-        if (std.mem.eql(u8, self.getVerificationState() orelse "", "draft")) return true;
+        if (std.mem.eql(u8, self.getExplicitAuthorityState() orelse "", "draft")) return true;
         if (std.mem.eql(u8, self.getStatus() orelse "", "draft")) return true;
         return false;
+    }
+
+    pub const VisualAuthorityState = union(enum) {
+        draft,
+        verified,
+        unresolved,
+        failed,
+        other: []const u8,
+        unrecognized,
+    };
+
+    pub fn getVisualAuthorityState(self: EngineResponse) VisualAuthorityState {
+        if (self.isDraftStatus()) return .draft;
+
+        if (self.getExplicitAuthorityState()) |state| {
+            if (std.mem.eql(u8, state, "verified") or std.mem.eql(u8, state, "supported")) return .verified;
+            if (std.mem.eql(u8, state, "unresolved")) return .unresolved;
+            if (std.mem.eql(u8, state, "failed")) return .failed;
+            return .{ .other = state };
+        }
+
+        if (self.getStatus()) |status| {
+            if (std.mem.eql(u8, status, "unresolved")) return .unresolved;
+            if (std.mem.eql(u8, status, "failed")) return .failed;
+        }
+
+        return .unrecognized;
+    }
+
+    pub fn getExplicitAuthorityState(self: EngineResponse) ?[]const u8 {
+        if (self.verificationState) |val| return val;
+        if (self.verification_state) |val| return val;
+        if (self.claim_status) |val| return val;
+        if (self.permission) |val| return val;
+        if (self.last_result) |lr| if (lr.selected_mode) |val| return val;
+        if (self.lastResult) |lr| if (lr.selectedMode) |val| return val;
+        if (self.current_intent) |ci| if (ci.selected_mode) |val| return val;
+        if (self.currentIntent) |ci| if (ci.selectedMode) |val| return val;
+        return null;
     }
 
     pub fn getVerificationState(self: EngineResponse) ?[]const u8 {

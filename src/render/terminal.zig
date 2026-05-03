@@ -11,20 +11,13 @@ const blue = "\x1b[34m";
 pub fn printEngineOutput(writer: anytype, response: json_contracts.EngineResponse) !void {
     // 1. Status Line
     try writer.print("{s}Status:{s} ", .{ bold, reset });
-    if (response.isDraftStatus()) {
-        try writer.print("{s}Draft / unverified{s}\n", .{ yellow, reset });
-    } else if (response.getVerificationState()) |state| {
-        if (std.mem.eql(u8, state, "verified") or std.mem.eql(u8, state, "supported")) {
-            try writer.print("{s}Verified{s}\n", .{ green, reset });
-        } else if (std.mem.eql(u8, state, "unresolved")) {
-            try writer.print("{s}Unresolved{s}\n", .{ yellow, reset });
-        } else if (std.mem.eql(u8, state, "failed")) {
-            try writer.print("{s}Failed{s}\n", .{ red, reset });
-        } else {
-            try writer.print("{s}{s}{s}\n", .{ blue, state, reset });
-        }
-    } else {
-        try writer.print("{s}Parsed JSON, unrecognized contract{s}\n", .{ yellow, reset });
+    switch (response.getVisualAuthorityState()) {
+        .draft => try writer.print("{s}Draft / unverified{s}\n", .{ yellow, reset }),
+        .verified => try writer.print("{s}Verified{s}\n", .{ green, reset }),
+        .unresolved => try writer.print("{s}Unresolved{s}\n", .{ yellow, reset }),
+        .failed => try writer.print("{s}Failed{s}\n", .{ red, reset }),
+        .other => |state| try writer.print("{s}{s}{s}\n", .{ blue, state, reset }),
+        .unrecognized => try writer.print("{s}Parsed JSON, no verified authority state{s}\n", .{ yellow, reset }),
     }
 
     // 2. Metadata

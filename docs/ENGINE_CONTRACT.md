@@ -53,8 +53,9 @@ The CLI supports several JSON shapes for the task operator, including nested res
 ### Supported Fields (Consolidated)
 The CLI consolidates fields from the top level and nested objects:
 
-- **Status**: `status`, `claim_status`, `lastResult.status`, `lastResult.kind`, `currentIntent.status`.
-- **Verification State**: `verification_state`, `verificationState`, `lastResult.selected_mode`.
+- **Status**: `status`, `lastResult.status`, `lastResult.kind`, `currentIntent.status`.
+- **Explicit Authority State**: `verification_state`, `verificationState`, `claim_status`, `permission`, `lastResult.selected_mode`.
+- Generic or unknown JSON `status` values are not enough to render **Verified**. The CLI renders **Verified** only from explicit authority-state fields that say `verified` or `supported`.
 - **Draft Status**: `is_draft`, `isDraft`, or status/state equal to `draft`.
 - **Summary**: `summary`, `lastResult.summary`.
 - **Detail**: `detail`, `message`, `response`, `lastResult.detail`.

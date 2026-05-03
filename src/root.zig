@@ -555,7 +555,8 @@ test "unrecognized contract rendering" {
     defer out_buf.deinit();
 
     try terminal.printEngineOutput(out_buf.writer(), val);
-    try testing.expect(std.mem.indexOf(u8, out_buf.items, "unrecognized contract") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "no verified authority state") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "Verified") == null);
 }
 
 test "install scripts exist" {

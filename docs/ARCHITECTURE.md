@@ -14,6 +14,7 @@ The architecture strictly adheres to separating product UX from engine reasoning
 2. **Engine Invocation (`src/engine/`)**:
    - `locator.zig`: Resolves the absolute path to engine binaries like `ghost_task_operator`.
    - `process.zig`: Executes engine binaries safely and captures `stdout`/`stderr` and exit codes.
+   - Current hygiene: output is capped at 10 MiB. Runtime timeout/cancellation is still pending and should be added at this runner boundary, not inside renderers.
    - `json_contracts.zig`: Defines the schema for mapping engine JSON output to internal representations.
 
 3. **Renderers (`src/render/`)**:

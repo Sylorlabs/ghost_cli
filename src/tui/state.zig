@@ -166,16 +166,11 @@ pub const SessionState = struct {
     }
 
     pub fn recordResponseState(self: *SessionState, response: json_contracts.EngineResponse) void {
-        if (response.isDraftStatus()) {
-            self.draft_count += 1;
-            return;
-        }
-        if (response.getVerificationState()) |verification| {
-            if (std.mem.eql(u8, verification, "verified") or std.mem.eql(u8, verification, "supported")) {
-                self.verified_count += 1;
-            } else if (std.mem.eql(u8, verification, "unresolved")) {
-                self.unresolved_count += 1;
-            }
+        switch (response.getVisualAuthorityState()) {
+            .draft => self.draft_count += 1,
+            .verified => self.verified_count += 1,
+            .unresolved => self.unresolved_count += 1,
+            .failed, .other, .unrecognized => {},
         }
     }
 

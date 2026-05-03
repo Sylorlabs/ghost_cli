@@ -3821,6 +3821,122 @@ test "json debug mode keeps stdout raw and debug on stderr" {
     try testing.expect(std.mem.indexOf(u8, res.stderr, "[DEBUG] Engine Binary:") != null);
 }
 
+test "ask human draft remains draft unverified" {
+    const mock_root = "/tmp/ghost-cli-authority-draft";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_task_operator",
+        "#!/bin/sh\nprintf '%s' '{\"is_draft\":true,\"summary\":\"draft answer\"}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "ask",
+        "--engine-root=" ++ mock_root,
+        "hello",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Draft / unverified") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "This is an unverified draft") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Verified") == null);
+}
+
+test "ask human unresolved remains unresolved" {
+    const mock_root = "/tmp/ghost-cli-authority-unresolved";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_task_operator",
+        "#!/bin/sh\nprintf '%s' '{\"verification_state\":\"unresolved\",\"unresolved_reason\":\"missing retained evidence\",\"pending_obligations\":[{\"id\":\"evidence\"}]}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "ask",
+        "--engine-root=" ++ mock_root,
+        "hello",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Unresolved") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "missing retained evidence") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Pending Obligations:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Verified") == null);
+}
+
+test "ask human correction negative knowledge and epistemic output stay non-authorizing" {
+    const mock_root = "/tmp/ghost-cli-authority-non-authorizing";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_task_operator",
+        "#!/bin/sh\nprintf '%s' '{\"status\":\"supported\",\"summary\":\"display-only state\",\"corrections\":{\"summary\":\"prior answer overstated support\",\"items\":[{\"id\":\"corr-1\"}]},\"negative_knowledge\":{\"proposed_candidates\":[{\"id\":\"nk-cand-1\",\"reason\":\"candidate only\"}],\"items\":[{\"kind\":\"stronger_verifier_required\",\"verifier\":\"integration\"}]},\"epistemic_render\":{\"state_label\":\"unresolved\",\"authority_statement\":\"does not prove support\"}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "ask",
+        "--engine-root=" ++ mock_root,
+        "hello",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Parsed JSON, no verified authority state") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Epistemic State:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Non-authorizing display only") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Does not prove support") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Correction Recorded:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Non-authorizing") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Correction record only. Does not prove support.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Negative Knowledge Candidate Proposed:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Candidate only; Requires review; Non-authorizing") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Stronger Verifier Required") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Verified") == null);
+}
+
+test "ask human unknown supported-shaped json is not rendered verified" {
+    const mock_root = "/tmp/ghost-cli-authority-unknown";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_task_operator",
+        "#!/bin/sh\nprintf '%s' '{\"status\":\"supported\",\"random\":\"not a known authority contract\"}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "ask",
+        "--engine-root=" ++ mock_root,
+        "hello",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Parsed JSON, no verified authority state") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Verified") == null);
+}
+
 test "context autopsy renders draft non-authorizing human output" {
     const mock_root = "/tmp/ghost-cli-context-human";
     try std.fs.cwd().makePath(mock_root);
