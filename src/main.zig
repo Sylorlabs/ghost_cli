@@ -186,6 +186,10 @@ pub fn main() !void {
             try learn.printHelpForArgs(std.io.getStdErr().writer(), parsed.leftover_args.items);
             return;
         }
+        if (parsed.command.? == .verify) {
+            try verify.printHelpForArgs(std.io.getStdErr().writer(), parsed.leftover_args.items);
+            return;
+        }
         try printCommandHelp(std.io.getStdErr().writer(), parsed.command.?);
         return;
     }
@@ -198,7 +202,7 @@ pub fn main() !void {
         .chat => try runChatLike(allocator, root, &parsed, null),
         .ask => try runChatLike(allocator, root, &parsed, .balanced),
         .fix => try runChatLike(allocator, root, &parsed, .deep),
-        .verify => try verify.execute(allocator, root, .{
+        .verify => try verify.executeFromArgs(allocator, root, parsed.leftover_args.items, .{
             .reasoning = parsed.options.reasoning_level,
             .context_artifact = parsed.options.context_artifact,
             .json = parsed.options.json_out,
@@ -579,6 +583,7 @@ fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
     if (kind == .sigil) return sigil.printHelp(writer);
     if (kind == .correction) return correction.printHelp(writer);
     if (kind == .nk) return nk.printHelp(writer);
+    if (kind == .verify) return verify.printHelp(writer);
 
     const command = commandByKind(kind).?;
     try writer.print("{s}\n\nUsage: {s}\n\n{s}\n", .{ command.name, command.usage, command.help });

@@ -928,6 +928,207 @@ test "packs candidates wrong kind rejects before engine and no hidden startup in
     try testing.expectError(error.FileNotFound, std.fs.cwd().access(marker, .{}));
 }
 
+test "verify candidates help works without resolving engine" {
+    const verify_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "verify", "--help", "--engine-root=/tmp/ghost-help-missing" });
+    defer {
+        testing.allocator.free(verify_res.stdout);
+        testing.allocator.free(verify_res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), verify_res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, verify_res.stderr, "candidates propose --file <request.json>") != null);
+    try testing.expect(std.mem.indexOf(u8, verify_res.stderr, "COMMANDS NOT EXECUTED") != null);
+
+    const candidates_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "verify", "candidates", "--help", "--engine-root=/tmp/ghost-help-missing" });
+    defer {
+        testing.allocator.free(candidates_res.stdout);
+        testing.allocator.free(candidates_res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), candidates_res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, candidates_res.stderr, "Usage: ghost verify candidates <propose|list|review>") != null);
+    try testing.expect(std.mem.indexOf(u8, candidates_res.stderr, "APPROVAL METADATA ONLY") != null);
+}
+
+test "verify candidates route file payloads and render lifecycle safety" {
+    const mock_root = "/tmp/ghost-cli-verifier-candidates-route";
+    const payload_path = mock_root ++ "/payload.json";
+    const propose_path = mock_root ++ "/propose.json";
+    const list_path = mock_root ++ "/list.json";
+    const approve_path = mock_root ++ "/approve.json";
+    const reject_path = mock_root ++ "/reject.json";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+    {
+        const request = try std.fs.cwd().createFile(propose_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"verifier.candidate.propose_from_learning_plan\",\"projectShard\":\"project-a\",\"learningLoopPlan\":{\"verifier_candidate_refs\":[{\"id\":\"ref-zig\",\"source_command_candidate_id\":\"zig_build\",\"argv\":[\"zig\",\"build\"],\"requires_approval\":true,\"executes_by_default\":false}]}}");
+    }
+    {
+        const request = try std.fs.cwd().createFile(list_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"verifier.candidate.list\",\"projectShard\":\"project-a\"}");
+    }
+    {
+        const request = try std.fs.cwd().createFile(approve_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"verifier.candidate.review\",\"projectShard\":\"project-a\",\"candidateId\":\"candidate-1\",\"decision\":\"approved\",\"reviewedBy\":\"operator\",\"reviewReason\":\"bounded\"}");
+    }
+    {
+        const request = try std.fs.cwd().createFile(reject_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"verifier.candidate.review\",\"projectShard\":\"project-a\",\"candidateId\":\"candidate-1\",\"decision\":\"rejected\",\"reviewedBy\":\"operator\",\"reviewReason\":\"too broad\"}");
+    }
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat > '" ++ payload_path ++ "'\npayload=$(cat '" ++ payload_path ++ "')\ncase \"$payload\" in *'\"decision\":\"rejected\"'*) printf '%s' '{\"result\":{\"verifierCandidateReview\":{\"candidateId\":\"candidate-1\",\"status\":\"rejected\",\"reviewDecision\":\"rejected\",\"reviewedBy\":\"operator\",\"reviewReason\":\"too broad\",\"executed\":false,\"producedEvidence\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false,\"supportGranted\":false,\"proofDischarged\":false,\"authorityEffect\":\"candidate\"}}}' ;; *verifier.candidate.review*) printf '%s' '{\"result\":{\"verifierCandidateReview\":{\"candidateId\":\"candidate-1\",\"status\":\"approved\",\"reviewDecision\":\"approved\",\"reviewedBy\":\"operator\",\"reviewReason\":\"bounded\",\"approvalMeaning\":\"approved for possible future execution only; this record does not execute the verifier or produce evidence\",\"approvalCreatesEvidence\":false,\"executed\":false,\"producedEvidence\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false,\"supportGranted\":false,\"proofDischarged\":false,\"authorityEffect\":\"candidate\"}}}' ;; *verifier.candidate.list*) printf '%s' '{\"result\":{\"verifierCandidateList\":{\"candidates\":[{\"id\":\"candidate-1\",\"status\":\"approved\",\"sourceKind\":\"learning_loop_plan\",\"sourceRef\":\"ref-zig\",\"sourceCommandCandidateId\":\"zig_build\",\"argv\":[\"zig\",\"build\"],\"purpose\":\"approval-required verifier candidate from learning.loop.plan\",\"reason\":\"build candidate\",\"riskLevel\":\"review_required\",\"reviewRequired\":true,\"reviewedBy\":\"operator\",\"reviewReason\":\"bounded\",\"executed\":false,\"producedEvidence\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false,\"supportGranted\":false,\"proofDischarged\":false}],\"readOnly\":true,\"candidateOnly\":true,\"nonAuthorizing\":true,\"commandsExecuted\":false,\"verifiersExecuted\":false,\"executed\":false,\"producedEvidence\":false,\"authorityEffect\":\"candidate\"}}}' ;; *) printf '%s' '{\"result\":{\"verifierCandidateProposal\":{\"candidateCount\":1,\"records\":[{\"id\":\"candidate-1\",\"status\":\"proposed\",\"sourceKind\":\"learning_loop_plan\",\"sourceRef\":\"ref-zig\",\"sourceCommandCandidateId\":\"zig_build\",\"argv\":[\"zig\",\"build\"],\"purpose\":\"approval-required verifier candidate from learning.loop.plan\",\"reason\":\"build candidate\",\"riskLevel\":\"review_required\",\"reviewRequired\":true,\"candidateOnly\":true,\"nonAuthorizing\":true,\"executed\":false,\"producedEvidence\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false,\"supportGranted\":false,\"proofDischarged\":false}],\"reviewRequired\":true,\"candidateOnly\":true,\"nonAuthorizing\":true,\"commandsExecuted\":false,\"verifiersExecuted\":false,\"executed\":false,\"producedEvidence\":false,\"authorityEffect\":\"candidate\"}}}' ;; esac\n",
+    );
+
+    const proposed = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "verify", "candidates", "propose", "--engine-root=" ++ mock_root, "--file", propose_path });
+    defer {
+        testing.allocator.free(proposed.stdout);
+        testing.allocator.free(proposed.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), proposed.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, proposed.stdout, "VERIFIER CANDIDATE PROPOSAL / NON-AUTHORIZING") != null);
+    try testing.expect(std.mem.indexOf(u8, proposed.stdout, "CANDIDATE ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, proposed.stdout, "COMMANDS NOT EXECUTED") != null);
+    try testing.expect(std.mem.indexOf(u8, proposed.stdout, "VERIFIERS NOT EXECUTED") != null);
+    try testing.expect(std.mem.indexOf(u8, proposed.stdout, "Produced Evidence: false") != null);
+    try testing.expect(std.mem.indexOf(u8, proposed.stdout, "Argv:") != null);
+    try testing.expect(std.mem.indexOf(u8, proposed.stdout, "Risk Level: review_required") != null);
+    const propose_payload = try std.fs.cwd().readFileAlloc(testing.allocator, payload_path, 1024 * 1024);
+    defer testing.allocator.free(propose_payload);
+    try testing.expect(std.mem.indexOf(u8, propose_payload, "\"kind\":\"verifier.candidate.propose_from_learning_plan\"") != null);
+
+    const list = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "verify", "candidates", "list", "--engine-root=" ++ mock_root, "--file", list_path });
+    defer {
+        testing.allocator.free(list.stdout);
+        testing.allocator.free(list.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), list.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, list.stdout, "VERIFIER CANDIDATES / READ-ONLY / NON-AUTHORIZING") != null);
+    try testing.expect(std.mem.indexOf(u8, list.stdout, "Status: approved") != null);
+    try testing.expect(std.mem.indexOf(u8, list.stdout, "Support Granted: false") != null);
+    try testing.expect(std.mem.indexOf(u8, list.stdout, "Verified:") == null);
+    const list_payload = try std.fs.cwd().readFileAlloc(testing.allocator, payload_path, 1024 * 1024);
+    defer testing.allocator.free(list_payload);
+    try testing.expect(std.mem.indexOf(u8, list_payload, "\"kind\":\"verifier.candidate.list\"") != null);
+
+    const approved = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "verify", "candidates", "review", "--engine-root=" ++ mock_root, "--file", approve_path });
+    defer {
+        testing.allocator.free(approved.stdout);
+        testing.allocator.free(approved.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), approved.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, approved.stdout, "APPROVAL METADATA ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, approved.stdout, "Approval Creates Evidence: false") != null);
+    const approve_payload = try std.fs.cwd().readFileAlloc(testing.allocator, payload_path, 1024 * 1024);
+    defer testing.allocator.free(approve_payload);
+    try testing.expect(std.mem.indexOf(u8, approve_payload, "\"kind\":\"verifier.candidate.review\"") != null);
+    try testing.expect(std.mem.indexOf(u8, approve_payload, "\"decision\":\"approved\"") != null);
+
+    const rejected = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "verify", "candidates", "review", "--engine-root=" ++ mock_root, "--file", reject_path });
+    defer {
+        testing.allocator.free(rejected.stdout);
+        testing.allocator.free(rejected.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), rejected.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, rejected.stdout, "REJECTION METADATA ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, rejected.stdout, "REJECTION IS NOT GLOBAL NEGATIVE EVIDENCE") != null);
+    try testing.expect(std.mem.indexOf(u8, rejected.stdout, "Review Reason: too broad") != null);
+}
+
+test "verify candidates json byte matches direct ghost_gip and debug stays stderr" {
+    const mock_root = "/tmp/ghost-cli-verifier-candidates-json-debug";
+    const request_path = mock_root ++ "/propose.json";
+    const raw = "{\"result\":{\"verifierCandidateProposal\":{\"candidateCount\":0,\"records\":[],\"candidateOnly\":true,\"nonAuthorizing\":true}}}";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+    {
+        const request = try std.fs.cwd().createFile(request_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"verifier.candidate.propose_from_learning_plan\",\"projectShard\":\"project-a\",\"learningLoopPlan\":{\"verifier_candidate_refs\":[{\"id\":\"ref\",\"source_command_candidate_id\":\"cmd\",\"argv\":[\"zig\"],\"requires_approval\":true,\"executes_by_default\":false}]}}");
+    }
+    try writeMockExecutable(mock_root ++ "/ghost_gip", "#!/bin/sh\ncat >/dev/null\nprintf '%s' '" ++ raw ++ "'\n");
+    const request_bytes = try std.fs.cwd().readFileAlloc(testing.allocator, request_path, 1024 * 1024);
+    defer testing.allocator.free(request_bytes);
+    const direct = try runCmdWithInput(testing.allocator, &[_][]const u8{ mock_root ++ "/ghost_gip", "--stdin" }, request_bytes);
+    defer {
+        testing.allocator.free(direct.stdout);
+        testing.allocator.free(direct.stderr);
+    }
+    const cli = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "verify", "candidates", "propose", "--json", "--engine-root=" ++ mock_root, "--file", request_path });
+    defer {
+        testing.allocator.free(cli.stdout);
+        testing.allocator.free(cli.stderr);
+    }
+    try testing.expectEqualStrings(direct.stdout, cli.stdout);
+    try testing.expectEqualStrings("", cli.stderr);
+
+    const debug = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "verify", "candidates", "propose", "--debug", "--engine-root=" ++ mock_root, "--file", request_path });
+    defer {
+        testing.allocator.free(debug.stdout);
+        testing.allocator.free(debug.stderr);
+    }
+    try testing.expect(std.mem.indexOf(u8, debug.stdout, "[DEBUG]") == null);
+    try testing.expect(std.mem.indexOf(u8, debug.stderr, "[DEBUG] Engine Binary:") != null);
+    try testing.expect(std.mem.indexOf(u8, debug.stderr, "[DEBUG] GIP Kind: verifier.candidate.propose_from_learning_plan") != null);
+    try testing.expect(std.mem.indexOf(u8, debug.stderr, "[DEBUG] Parse Status: ok") != null);
+}
+
+test "verify candidates wrong kind rejects before engine invocation" {
+    const mock_root = "/tmp/ghost-cli-verifier-candidates-wrong-kind";
+    const request_path = mock_root ++ "/wrong.json";
+    const marker = mock_root ++ "/marker";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+    {
+        const request = try std.fs.cwd().createFile(request_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"learning.loop.plan\"}");
+    }
+    try writeMockExecutable(mock_root ++ "/ghost_gip", "#!/bin/sh\ntouch '" ++ marker ++ "'\nprintf '{}'\n");
+    const wrong = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "verify", "candidates", "propose", "--engine-root=" ++ mock_root, "--file", request_path });
+    defer {
+        testing.allocator.free(wrong.stdout);
+        testing.allocator.free(wrong.stderr);
+    }
+    try testing.expect(wrong.term.Exited != 0);
+    try testing.expect(std.mem.indexOf(u8, wrong.stderr, "top-level kind \"verifier.candidate.propose_from_learning_plan\"") != null);
+    try testing.expectError(error.FileNotFound, std.fs.cwd().access(marker, .{}));
+}
+
+test "unknown verifier candidate shaped output cannot promote authority" {
+    const mock_root = "/tmp/ghost-cli-verifier-candidates-unknown-authority";
+    const list_path = mock_root ++ "/list.json";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+    {
+        const request = try std.fs.cwd().createFile(list_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"verifier.candidate.list\",\"projectShard\":\"project-a\"}");
+    }
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s' '{\"result\":{\"verifierCandidateList\":{\"candidates\":[{\"id\":\"candidate-unknown\",\"status\":\"approved\",\"sourceKind\":\"learning_loop_plan\",\"sourceRef\":\"ref\",\"argv\":[\"zig\",\"build\"],\"reason\":\"looks useful\"}],\"readOnly\":true}}}'\n",
+    );
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "verify", "candidates", "list", "--engine-root=" ++ mock_root, "--file", list_path });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "VERIFIER CANDIDATES / READ-ONLY / NON-AUTHORIZING") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "CANDIDATE ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "NO EVIDENCE PRODUCED") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Status: approved") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Verified: true") == null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Support Granted: true") == null);
+}
+
 test "learn status routes learning status payload flags" {
     const mock_root = "/tmp/ghost-cli-learn-status-payload";
     const payload_path = mock_root ++ "/payload.json";

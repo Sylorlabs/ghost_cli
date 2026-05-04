@@ -606,6 +606,40 @@ from plan-shaped output.
 stderr only: engine path, GIP kind, input file, workspace, request byte count,
 exit code, and parse status.
 
+## Verifier Candidate Lifecycle
+
+`ghost verify candidates propose|list|review --file <request.json>` routes
+explicitly to `ghost_gip --stdin`. The CLI validates the top-level kind before
+engine invocation and sends the request file bytes unchanged.
+
+The supported request kinds are:
+
+- `verifier.candidate.propose_from_learning_plan`
+- `verifier.candidate.list`
+- `verifier.candidate.review`
+
+The CLI is a wrapper/renderer only. It does not implement candidate storage,
+candidate validation, review folding, append-only behavior, same-shard
+enforcement, or authority logic. It does not read or write
+`verifier_candidates/verifier_candidates.jsonl` directly.
+
+Verifier candidates are **CANDIDATE ONLY** and **NON-AUTHORIZING**. Approval is
+metadata only for possible future execution and does not execute commands, run
+verifiers, produce evidence, grant proof, grant support, discharge obligations,
+apply patches, ingest failures, mutate packs, mutate corpus, mutate corrections,
+mutate negative knowledge, mutate trust, mutate snapshots, or mutate scratch
+state. Rejection is metadata only and is not global negative evidence.
+
+Human rendering may explain these authority boundaries and display structured
+engine fields such as candidate id, status, source kind/ref, argv, purpose,
+reason, risk level, review metadata, execution flags, evidence flags, and
+authority effect. Rendering must not infer proof/support from prose, status,
+approval state, or command text.
+
+`--json` preserves raw engine stdout exactly. `--debug` writes diagnostics to
+stderr only: engine path, GIP kind, input file, request byte count, exit code,
+and parse status.
+
 ## Rule Evaluation
 
 `ghost rules evaluate --file <request.json>` routes explicitly to

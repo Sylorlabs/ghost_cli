@@ -544,6 +544,45 @@ Ask engine to verify current task/workspace state.
 Usage: `ghost verify --reasoning=deep`
 Usage: `ghost verify --context-artifact=src/main.zig --reasoning=max`
 
+#### `ghost verify candidates`
+Explicit verifier candidate lifecycle wrapper.
+
+Usage: `ghost verify candidates propose --file request.json`
+Usage: `ghost verify candidates list --file request.json`
+Usage: `ghost verify candidates review --file request.json`
+Usage: `ghost verify candidates propose --json --file request.json`
+Usage: `ghost verify candidates review --debug --file request.json`
+
+The request file must be full GIP JSON. The CLI validates the top-level kind
+before invoking the engine, then sends the file bytes unchanged to
+`ghost_gip --stdin`.
+
+Expected kinds:
+
+- `propose`: `verifier.candidate.propose_from_learning_plan`
+- `list`: `verifier.candidate.list`
+- `review`: `verifier.candidate.review`
+
+Human output labels verifier candidates as **NON-AUTHORIZING** and
+**CANDIDATE ONLY**. It renders candidate id, status, source kind/ref, argv,
+purpose/reason, risk level, review required, reviewer/review reason when
+present, execution flags, evidence flags, and authority effect when the engine
+provides them.
+
+Proposal appends candidate metadata only. List is read-only metadata
+inspection. Review appends approval or rejection metadata only. Approval means
+approved for possible future execution; it does not execute the candidate, run
+a verifier, run a command, produce evidence, discharge proof, or grant support.
+Rejection is metadata only and is not global negative evidence.
+
+The CLI does not read or write `verifier_candidates/verifier_candidates.jsonl`
+directly. It does not infer proof/support from candidate prose, status, argv,
+or approval state. Rendering can explain authority; rendering cannot create
+authority.
+
+`--json` preserves raw engine stdout exactly. `--debug` writes diagnostics to
+stderr only.
+
 ### `ghost context autopsy`
 Run an explicit Context Autopsy GIP request using `ghost_gip`.
 
