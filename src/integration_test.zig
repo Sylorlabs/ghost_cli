@@ -4862,6 +4862,76 @@ test "autopsy human mode renders draft notice" {
     try testing.expect(std.mem.indexOf(u8, res.stdout, "DRAFT and NON-AUTHORIZING") != null);
 }
 
+test "autopsy human mode renders v1 operator summary without authority promotion" {
+    const mock_root = "/tmp/ghost-autopsy-v1-summary";
+    try std.fs.cwd().makePath(mock_root);
+    const mock_bin = mock_root ++ "/ghost_project_autopsy";
+    const raw_json =
+        \\{"autopsy_schema_version":"project_autopsy.v1","state":"draft","read_only":true,"commands_executed":false,"verifiers_executed":false,"mutates_state":false,"non_authorizing":true,"operator_summary":{"project_shape":"zig cli","primary_languages":["zig"],"build_systems":["zig build"],"source_root_count":2,"test_root_count":1,"ci_surface_count":1,"docs_surface_count":2,"config_surface_count":1,"safe_command_candidate_count":2,"risk_surface_count":1,"verifier_gap_count":1,"guidance_candidate_count":1,"top_unknowns":["release target unknown"],"suggested_next_actions":["review command candidates"]},"source_roots":["src"],"test_roots":["src/integration_test.zig"],"ci_surfaces":[".github/workflows/ci.yml"],"docs_surfaces":["docs/COMMANDS.md"],"config_surfaces":["build.zig"],"safe_command_candidates":[{"id":"zig-build","argv":["zig","build"],"reason":"detected build.zig"}],"risk_surfaces":[{"kind":"coverage","reason":"tests may be partial"}],"verifier_gaps":[{"kind":"missing_adapter","reason":"no release verifier"}],"guidance_candidates":[{"id":"pack-guidance","requires_review":true}],"unknowns":["unknown != false"]}
+    ;
+
+    try writeMockExecutable(mock_bin, "#!/bin/sh\nprintf '%s' '" ++ raw_json ++ "'\n");
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "autopsy",
+        "--engine-root=" ++ mock_root,
+        ".",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Operator Summary") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "project_autopsy.v1") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "READ-ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Commands:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "not executed") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Safe Command Candidates / CANDIDATE ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Verifier Gaps / MISSING EVIDENCE") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "missing evidence, not verifier failure") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Guidance Candidates / REVIEW REQUIRED") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "not applied by default") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Risk Surfaces / CANDIDATE ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "not proof of defects") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Verified") == null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "support promotion") == null);
+}
+
+test "autopsy human mode keeps unknown autopsy-shaped output non-authorizing" {
+    const mock_root = "/tmp/ghost-autopsy-unknown-shape";
+    try std.fs.cwd().makePath(mock_root);
+    const mock_bin = mock_root ++ "/ghost_project_autopsy";
+    const raw_json =
+        \\{"projectAutopsy":{"status":"verified","answerSupport":"claimed","safeCommandCandidates":[{"argv":["zig","build","test"]}],"verifierGaps":[{"reason":"not checked"}],"guidanceCandidates":[{"action":"apply guidance"}]}}
+    ;
+
+    try writeMockExecutable(mock_bin, "#!/bin/sh\nprintf '%s' '" ++ raw_json ++ "'\n");
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "autopsy",
+        "--engine-root=" ++ mock_root,
+        ".",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Authority:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "NON-AUTHORIZING") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "commands to review; CLI did not execute them") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "missing evidence, not verifier failure") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "not applied by default") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Verified") == null);
+}
+
 test "doctor and status do not run autopsy scans" {
     const mock_root = "/tmp/ghost-no-auto-scan";
     try std.fs.cwd().makePath(mock_root);

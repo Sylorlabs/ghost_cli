@@ -1,6 +1,5 @@
 const std = @import("std");
 const runner = @import("../engine/runner.zig");
-const json_contracts = @import("../engine/json_contracts.zig");
 const terminal = @import("../render/terminal.zig");
 
 pub const AutopsyOptions = struct {
@@ -33,7 +32,9 @@ pub fn execute(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: 
         return;
     }
 
-    const parsed = json_contracts.parseAutopsyJson(allocator, res.stdout) catch |err| {
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, res.stdout, .{
+        .ignore_unknown_fields = true,
+    }) catch |err| {
         if (options.debug) {
             std.debug.print("[DEBUG] JSON Parse: FAILED ({})\n", .{err});
         }
@@ -48,5 +49,5 @@ pub fn execute(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: 
     }
 
     const stdout = std.io.getStdOut().writer();
-    try terminal.printAutopsyResult(stdout, parsed.value);
+    try terminal.printProjectAutopsyValue(stdout, parsed.value);
 }

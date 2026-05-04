@@ -457,6 +457,97 @@ pub fn printAutopsyResult(writer: anytype, res: json_contracts.AutopsyResult) !v
     try writer.print("Project Autopsy candidates are proposals only and do not constitute evidence of correctness or support.\n", .{});
 }
 
+pub fn printProjectAutopsyValue(writer: anytype, value: std.json.Value) !void {
+    try writer.print("{s}Project Autopsy Result{s}\n", .{ bold, reset });
+    try writer.print("{s}State:{s} DRAFT\n", .{ bold, reset });
+    try writer.print("{s}Authority:{s} NON-AUTHORIZING\n", .{ bold, reset });
+    try writer.print("{s}Mode:{s} READ-ONLY\n", .{ bold, reset });
+    try writer.print("{s}Commands:{s} not executed\n", .{ bold, reset });
+    try writer.print("{s}Verifiers:{s} not executed\n", .{ bold, reset });
+    try writer.print("{s}Mutation:{s} none; packs/guidance not applied\n\n", .{ bold, reset });
+
+    const root_obj = switch (value) {
+        .object => |obj| obj,
+        else => {
+            try printJsonValue(writer, value, 2);
+            try writer.print("\n", .{});
+            try printProjectAutopsyNotice(writer);
+            return;
+        },
+    };
+    const autopsy_obj = getObjectField(root_obj, &.{ "projectAutopsy", "project_autopsy" }) orelse root_obj;
+
+    if (getStringField(autopsy_obj, "autopsy_schema_version") orelse getStringField(autopsy_obj, "autopsySchemaVersion")) |schema| {
+        try writer.print("{s}Schema:{s} {s}\n", .{ bold, reset, schema });
+    }
+    try printSafetyField(writer, autopsy_obj, root_obj, "read_only", "readOnly", "Read Only");
+    try printSafetyField(writer, autopsy_obj, root_obj, "commands_executed", "commandsExecuted", "Commands Executed");
+    try printSafetyField(writer, autopsy_obj, root_obj, "verifiers_executed", "verifiersExecuted", "Verifiers Executed");
+    try printSafetyField(writer, autopsy_obj, root_obj, "mutates_state", "mutatesState", "Mutates State");
+    try printSafetyField(writer, autopsy_obj, root_obj, "non_authorizing", "nonAuthorizing", "Non Authorizing");
+    try writer.print("\n", .{});
+
+    if (getObjectField(autopsy_obj, &.{ "operator_summary", "operatorSummary" })) |summary| {
+        try writer.print("{s}Operator Summary:{s}\n", .{ bold, reset });
+        try printOptionalJsonAlias(writer, summary, "Project Shape", &.{ "project_shape", "projectShape", "project_shape_summary", "projectShapeSummary", "shape" }, 2);
+        try printOptionalJsonAlias(writer, summary, "Primary Languages", &.{ "primary_languages", "primaryLanguages", "languages" }, 2);
+        try printOptionalJsonAlias(writer, summary, "Build Systems", &.{ "primary_build_systems", "primaryBuildSystems", "build_systems", "buildSystems" }, 2);
+        try printOptionalJsonAlias(writer, summary, "Source Roots", &.{ "source_root_count", "sourceRootCount", "source_roots", "sourceRoots" }, 2);
+        try printOptionalJsonAlias(writer, summary, "Test Roots", &.{ "test_root_count", "testRootCount", "test_roots", "testRoots" }, 2);
+        try printOptionalJsonAlias(writer, summary, "CI Surfaces", &.{ "ci_surface_count", "ciSurfaceCount", "ci_detected", "ciDetected", "ci_surfaces", "ciSurfaces" }, 2);
+        try printOptionalJsonAlias(writer, summary, "Docs Surfaces", &.{ "docs_surface_count", "docsSurfaceCount", "docs_detected", "docsDetected", "docs_surfaces", "docsSurfaces" }, 2);
+        try printOptionalJsonAlias(writer, summary, "Config Surfaces", &.{ "config_surface_count", "configSurfaceCount", "config_surfaces", "configSurfaces" }, 2);
+        try printOptionalJsonAlias(writer, summary, "Safe Command Candidates", &.{ "safe_command_candidate_count", "safeCommandCandidateCount", "safe_commands", "safeCommands" }, 2);
+        try printOptionalJsonAlias(writer, summary, "Risk Surfaces", &.{ "risk_surface_count", "riskSurfaceCount", "risk_surfaces", "riskSurfaces" }, 2);
+        try printOptionalJsonAlias(writer, summary, "Verifier Gaps", &.{ "verifier_gap_count", "verifierGapCount", "verifier_gaps", "verifierGaps" }, 2);
+        try printOptionalJsonAlias(writer, summary, "Guidance Candidates", &.{ "guidance_candidate_count", "guidanceCandidateCount", "guidance_candidates", "guidanceCandidates" }, 2);
+        try printOptionalJsonAlias(writer, summary, "Top Unknowns", &.{ "top_unknowns", "topUnknowns" }, 2);
+        try printOptionalJsonAlias(writer, summary, "Top Risks", &.{ "top_risks", "topRisks" }, 2);
+        try printOptionalJsonAlias(writer, summary, "Top Verifier Gaps", &.{ "top_verifier_gaps", "topVerifierGaps" }, 2);
+        try writer.print("\n", .{});
+    }
+
+    try printProjectAutopsyListSection(writer, autopsy_obj, "Source Roots", &.{ "source_roots", "sourceRoots" }, "read-only discovered roots");
+    try printProjectAutopsyListSection(writer, autopsy_obj, "Test Roots", &.{ "test_roots", "testRoots" }, "read-only discovered roots");
+    try printProjectAutopsyListSection(writer, autopsy_obj, "CI Surfaces", &.{ "ci_surfaces", "ciSurfaces" }, "read-only discovered surfaces");
+    try printProjectAutopsyListSection(writer, autopsy_obj, "Docs Surfaces", &.{ "docs_surfaces", "docsSurfaces" }, "read-only discovered surfaces");
+    try printProjectAutopsyListSection(writer, autopsy_obj, "Config Surfaces", &.{ "config_surfaces", "configSurfaces" }, "read-only discovered surfaces");
+    try printProjectAutopsyCommandCandidates(writer, autopsy_obj);
+    try printProjectAutopsyListSection(writer, autopsy_obj, "Risk Surfaces / CANDIDATE ONLY", &.{ "risk_surfaces", "riskSurfaces" }, "candidates, not proof of defects");
+    try printProjectAutopsyListSection(writer, autopsy_obj, "Verifier Gaps / MISSING EVIDENCE", &.{ "verifier_gaps", "verifierGaps" }, "missing evidence, not verifier failure");
+    try printProjectAutopsyListSection(writer, autopsy_obj, "Guidance Candidates / REVIEW REQUIRED", &.{ "guidance_candidates", "guidanceCandidates" }, "not applied by default");
+    try printProjectAutopsyListSection(writer, autopsy_obj, "Unknowns", &.{ "unknowns", "top_unknowns", "topUnknowns" }, "unknown is not false");
+
+    if (getObjectField(autopsy_obj, &.{ "project_profile", "projectProfile" })) |profile| {
+        try printProjectAutopsyListSection(writer, profile, "Source Roots", &.{ "source_roots", "sourceRoots" }, "read-only discovered roots");
+        try printProjectAutopsyListSection(writer, profile, "Test Roots", &.{ "test_roots", "testRoots" }, "read-only discovered roots");
+        try printProjectAutopsyListSection(writer, profile, "CI Surfaces", &.{ "ci_configs", "ciConfigs", "ci_surfaces", "ciSurfaces" }, "read-only discovered surfaces");
+        try printProjectAutopsyListSection(writer, profile, "Docs Surfaces", &.{ "docs", "docs_surfaces", "docsSurfaces" }, "read-only discovered surfaces");
+        try printProjectAutopsyListSection(writer, profile, "Config Surfaces", &.{ "config_files", "configFiles", "config_surfaces", "configSurfaces" }, "read-only discovered surfaces");
+        try printProjectAutopsyListSection(writer, profile, "Detected Languages", &.{ "detected_languages", "detectedLanguages" }, "read-only signals");
+        try printProjectAutopsyListSection(writer, profile, "Build Systems", &.{ "build_systems", "buildSystems" }, "read-only signals");
+        try printProjectAutopsyCommandCandidatesFromObject(writer, profile);
+        try printProjectAutopsyListSection(writer, profile, "Risk Surfaces / CANDIDATE ONLY", &.{ "risk_surfaces", "riskSurfaces" }, "candidates, not proof of defects");
+        try printProjectAutopsyListSection(writer, profile, "Verifier Gaps / MISSING EVIDENCE", &.{ "verifier_gap_summary", "verifierGapSummary" }, "missing evidence, not verifier failure");
+        try printProjectAutopsyListSection(writer, profile, "Guidance Candidates / REVIEW REQUIRED", &.{ "recommended_guidance_candidates", "recommendedGuidanceCandidates" }, "not applied by default");
+        try printProjectAutopsyListSection(writer, profile, "Unknowns", &.{"unknowns"}, "unknown is not false");
+    }
+
+    if (getObjectField(autopsy_obj, &.{ "project_gap_report", "projectGapReport" })) |gap_report| {
+        try writer.print("{s}Legacy Gap Report / MISSING EVIDENCE:{s}\n", .{ bold, reset });
+        try writer.print("  Semantics: missing evidence, not negative evidence.\n", .{});
+        try printJsonValue(writer, std.json.Value{ .object = gap_report }, 2);
+        try writer.print("\n", .{});
+    }
+
+    try printProjectAutopsyNotice(writer);
+}
+
+fn printProjectAutopsyNotice(writer: anytype) !void {
+    try writer.print("{s}Notice: This output is a DRAFT and NON-AUTHORIZING.{s}\n", .{ yellow, reset });
+    try writer.print("Project Autopsy is read-only display. Safe commands, risks, verifier gaps, and guidance are candidates only; the CLI did not execute commands, run verifiers, mutate state, or apply packs/guidance.\n", .{});
+}
+
 pub fn printContextAutopsyResult(writer: anytype, envelope: json_contracts.ContextAutopsyEnvelope) !void {
     try writer.print("{s}Context Autopsy Result{s}\n", .{ bold, reset });
     try writer.print("{s}State:{s} DRAFT\n", .{ bold, reset });
@@ -543,6 +634,63 @@ fn printContextSection(writer: anytype, obj: std.json.ObjectMap, camel: []const 
     const value = obj.get(camel) orelse obj.get(snake) orelse return;
     if (isEmptyJsonList(value)) return;
     try writer.print("{s}{s}:{s}\n", .{ bold, label, reset });
+    try printJsonValue(writer, value, 2);
+    try writer.print("\n", .{});
+}
+
+fn getObjectField(obj: std.json.ObjectMap, aliases: []const []const u8) ?std.json.ObjectMap {
+    for (aliases) |field| {
+        if (obj.get(field)) |value| {
+            if (value == .object) return value.object;
+        }
+    }
+    return null;
+}
+
+fn getJsonField(obj: std.json.ObjectMap, aliases: []const []const u8) ?std.json.Value {
+    for (aliases) |field| {
+        if (obj.get(field)) |value| return value;
+    }
+    return null;
+}
+
+fn printOptionalJsonAlias(writer: anytype, obj: std.json.ObjectMap, label: []const u8, aliases: []const []const u8, indent: usize) !void {
+    const value = getJsonField(obj, aliases) orelse return;
+    if (isEmptyJsonList(value)) return;
+    try printIndent(writer, indent);
+    try writer.print("{s}: ", .{label});
+    try printJsonValue(writer, value, indent + 2);
+    try writer.print("\n", .{});
+}
+
+fn printSafetyField(writer: anytype, autopsy_obj: std.json.ObjectMap, root_obj: std.json.ObjectMap, snake: []const u8, camel: []const u8, label: []const u8) !void {
+    const value = autopsy_obj.get(snake) orelse autopsy_obj.get(camel) orelse root_obj.get(snake) orelse root_obj.get(camel) orelse return;
+    try writer.print("{s}{s}:{s} ", .{ bold, label, reset });
+    try printJsonValue(writer, value, 2);
+    try writer.print("\n", .{});
+}
+
+fn printProjectAutopsyListSection(writer: anytype, obj: std.json.ObjectMap, label: []const u8, aliases: []const []const u8, semantics: []const u8) !void {
+    const value = getJsonField(obj, aliases) orelse return;
+    if (isEmptyJsonList(value)) return;
+    try writer.print("{s}{s}:{s}\n", .{ bold, label, reset });
+    try writer.print("  Semantics: {s}.\n", .{semantics});
+    try printJsonValue(writer, value, 2);
+    try writer.print("\n", .{});
+}
+
+fn printProjectAutopsyCommandCandidates(writer: anytype, obj: std.json.ObjectMap) !void {
+    try printProjectAutopsyCommandCandidatesFromObject(writer, obj);
+    if (getObjectField(obj, &.{ "operator_summary", "operatorSummary" })) |summary| {
+        try printProjectAutopsyListSection(writer, summary, "Suggested Next Actions / CANDIDATE ONLY", &.{ "suggested_next_actions", "suggestedNextActions", "next_actions", "nextActions" }, "review suggestions, not executed by CLI");
+    }
+}
+
+fn printProjectAutopsyCommandCandidatesFromObject(writer: anytype, obj: std.json.ObjectMap) !void {
+    const value = getJsonField(obj, &.{ "safe_command_candidates", "safeCommandCandidates" }) orelse return;
+    if (isEmptyJsonList(value)) return;
+    try writer.print("{s}Safe Command Candidates / CANDIDATE ONLY:{s}\n", .{ bold, reset });
+    try writer.print("  Semantics: commands to review; CLI did not execute them.\n", .{});
     try printJsonValue(writer, value, 2);
     try writer.print("\n", .{});
 }

@@ -926,7 +926,20 @@ Usage: `ghost autopsy [path]`
 Usage: `ghost autopsy --json [path]`
 Usage: `ghost autopsy --debug [path]`
 
-The human-readable output provides a concise summary of detected languages, build systems, safe command candidates, verifier plan candidates, and gaps/unknowns. All output is marked as **DRAFT** and **NON-AUTHORIZING**.
+The human-readable output provides a concise operator summary when the engine
+emits `project_autopsy.v1`: project shape, primary languages/build systems,
+source/test roots, CI/docs/config surfaces, safe command candidate counts, risk
+surface counts, verifier gap counts, guidance candidate counts, top
+unknowns/risks/gaps, and suggested next actions. Older project profile and gap
+fields are still displayed when present.
+
+All human output is marked **DRAFT**, **NON-AUTHORIZING**, and **READ-ONLY**.
+Safe command candidates are commands to review; the CLI does not execute them.
+Risk surfaces are candidates only, not proof of defects. Verifier gaps are
+missing-evidence indicators, not verifier failures or negative evidence.
+Guidance candidates require review and are not applied by default. The CLI does
+not run verifiers, mutate state, apply packs/guidance, or infer proof/support
+from autopsy prose.
 
 ### `ghost context autopsy`
 Run an explicit Context Autopsy request through `ghost_gip`.
