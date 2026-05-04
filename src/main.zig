@@ -301,7 +301,7 @@ fn parseArgs(args: *std.process.ArgIterator, parsed: *ParsedCli) !void {
             }
             continue;
         }
-        if (try parseFlag(arg, &parsed.options)) continue;
+        if (try parseFlag(args, arg, &parsed.options)) continue;
         if (parsed.command == null) {
             if (lookupCommand(arg)) |command| {
                 parsed.command = command.kind;
@@ -317,9 +317,14 @@ fn parseArgs(args: *std.process.ArgIterator, parsed: *ParsedCli) !void {
     }
 }
 
-fn parseFlag(arg: []const u8, options: *CliOptions) !bool {
+fn parseFlag(args: *std.process.ArgIterator, arg: []const u8, options: *CliOptions) !bool {
     if (std.mem.startsWith(u8, arg, "--engine-root=")) {
         options.explicit_engine_root = arg["--engine-root=".len..];
+    } else if (std.mem.eql(u8, arg, "--engine-root")) {
+        options.explicit_engine_root = args.next() orelse {
+            try std.io.getStdErr().writer().print("--engine-root requires a value\n", .{});
+            std.process.exit(1);
+        };
     } else if (std.mem.eql(u8, arg, "--json")) {
         options.json_out = true;
     } else if (std.mem.eql(u8, arg, "--debug")) {

@@ -2204,6 +2204,34 @@ test "artifact autopsy human renders file-backed recipe metadata and authority n
     try testing.expect(std.mem.indexOf(u8, res.stdout, "Proof Granted:") != null);
 }
 
+test "artifact autopsy accepts split engine root option after subcommand" {
+    const mock_root = "/tmp/ghost-cli-artifact-autopsy-split-engine-root";
+    const request_path = mock_root ++ "/request.json";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    {
+        const request = try std.fs.cwd().createFile(request_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"artifact.autopsy.inspect\"}");
+    }
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s' '{\"gipVersion\":\"gip.v0.1\",\"kind\":\"artifact.autopsy.inspect\",\"status\":\"ok\",\"result\":{\"artifactAutopsyInspect\":{\"fixture_backed\":true,\"file_backed\":false,\"read_only\":true,\"non_authorizing\":true,\"candidate_only\":true,\"support_granted\":false,\"proof_granted\":false}},\"readOnly\":true,\"commandsExecuted\":false,\"verifiersExecuted\":false,\"supportGranted\":false,\"proofGranted\":false,\"non_authorizing\":true}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "artifact", "autopsy", "inspect", "--engine-root", mock_root, "--file", request_path });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Artifact Autopsy Result / CANDIDATE ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Fixture Backed: true") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "Unexpected artifact autopsy inspect argument") == null);
+}
+
 test "policy shaped output cannot promote authority" {
     const mock_root = "/tmp/ghost-cli-policy-authority";
     const request_path = mock_root ++ "/request.json";
