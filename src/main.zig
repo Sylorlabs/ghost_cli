@@ -79,7 +79,7 @@ const command_registry = [_]CommandDef{
     .{ .name = "corpus", .kind = .corpus, .group = .knowledge, .help = "Ingest, apply, and ask from shard corpus", .usage = "ghost corpus <ingest|apply-staged|ask> [options]" },
     .{ .name = "correction", .kind = .correction, .group = .knowledge, .help = "Propose, review, and inspect correction records", .usage = "ghost correction <propose|review|reviewed> [options]" },
     .{ .name = "nk", .kind = .nk, .group = .knowledge, .help = "Review and inspect reviewed negative knowledge", .usage = "ghost nk <review|reviewed> [options]" },
-    .{ .name = "learn", .kind = .learn, .group = .knowledge, .help = "Feedback/distillation and read-only learning status", .usage = "ghost learn <candidates|show|export|status> [options]" },
+    .{ .name = "learn", .kind = .learn, .group = .knowledge, .help = "Feedback/distillation and read-only learning plans/status", .usage = "ghost learn <candidates|show|export|status|plan> [options]" },
     .{ .name = "rules", .kind = .rules, .group = .advanced, .help = "Evaluate bounded non-authorizing rules", .usage = "ghost rules evaluate --file <request.json> [--json] [--debug]" },
     .{ .name = "sigil", .kind = .sigil, .group = .advanced, .help = "Inspect Sigil bytecode read-only", .usage = "ghost sigil inspect --file <request.json> [--json] [--debug]" },
     .{ .name = "debug", .kind = .debug, .group = .advanced, .help = "Advanced raw engine diagnostics", .usage = "ghost debug raw <engine-binary> [args...]" },
@@ -408,10 +408,11 @@ fn runChatLike(allocator: std.mem.Allocator, root: ?[]const u8, parsed: *ParsedC
 
 fn runLearn(allocator: std.mem.Allocator, root: ?[]const u8, parsed: ParsedCli) !void {
     const sub = if (parsed.leftover_args.items.len > 0) parsed.leftover_args.items[0] else {
-        try std.io.getStdErr().writer().print("Usage: ghost learn <candidates|show|export|status>\n", .{});
+        try std.io.getStdErr().writer().print("Usage: ghost learn <candidates|show|export|status|plan>\n", .{});
         return;
     };
     var c_id: ?[]const u8 = null;
+    var file_path: ?[]const u8 = null;
     var include_records = false;
     var include_warnings = true;
     var include_warnings_explicit = false;
@@ -459,6 +460,28 @@ fn runLearn(allocator: std.mem.Allocator, root: ?[]const u8, parsed: ParsedCli) 
                 try std.io.getStdErr().writer().print("Unexpected learn status argument: {s}\n", .{arg});
                 std.process.exit(1);
             }
+        } else if (std.mem.eql(u8, sub, "plan")) {
+            if (std.mem.eql(u8, arg, "--file")) {
+                i += 1;
+                if (i >= parsed.leftover_args.items.len) {
+                    try std.io.getStdErr().writer().print("--file requires a value\n", .{});
+                    std.process.exit(1);
+                }
+                file_path = parsed.leftover_args.items[i];
+            } else if (std.mem.startsWith(u8, arg, "--file=")) {
+                const value = arg["--file=".len..];
+                if (value.len == 0) {
+                    try std.io.getStdErr().writer().print("--file requires a value\n", .{});
+                    std.process.exit(1);
+                }
+                file_path = value;
+            } else if (std.mem.startsWith(u8, arg, "--")) {
+                try std.io.getStdErr().writer().print("Unknown learn plan option: {s}\n", .{arg});
+                std.process.exit(1);
+            } else {
+                try std.io.getStdErr().writer().print("Unexpected learn plan argument: {s}\n", .{arg});
+                std.process.exit(1);
+            }
         } else if (c_id == null and !std.mem.startsWith(u8, arg, "--")) {
             c_id = arg;
         } else if (std.mem.startsWith(u8, arg, "--")) {
@@ -471,6 +494,7 @@ fn runLearn(allocator: std.mem.Allocator, root: ?[]const u8, parsed: ParsedCli) 
     }
     try learn.execute(allocator, root, .{
         .subcommand = sub,
+        .file_path = file_path,
         .project_shard = parsed.options.project_shard,
         .candidate_id = c_id,
         .pack_id = parsed.options.pack_id,
@@ -634,6 +658,7 @@ fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
             \\  show <candidate-id> --project-shard=<id>
             \\  export <candidate-id> --project-shard=<id> --pack-id=<id> --version=<v> --approve
             \\  status --project-shard=<id> [--include-records] [--limit=<n>] [--no-warnings]
+            \\  plan --file <request.json> [--json] [--debug]
             \\
         , .{}),
         .debug => try writer.print("\nAdvanced raw diagnostic command. Does not reinterpret engine output.\n", .{}),

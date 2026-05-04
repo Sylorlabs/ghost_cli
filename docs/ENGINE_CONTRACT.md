@@ -568,6 +568,44 @@ non-TTY fallback, `ghost doctor`, `ghost status`, `ghost correction propose`,
 list/get`, `ghost corpus ask`, `ghost rules evaluate`, `ghost context autopsy`,
 and `ghost packs validate-autopsy-guidance` do not run `learning.status`.
 
+## Learning Loop Plan
+
+`ghost learn plan --file <request.json>` routes explicitly to
+`ghost_gip --stdin` with GIP `kind: "learning.loop.plan"`. The request file
+must contain that top-level kind. The CLI validates the kind before invoking
+the engine, then sends the file bytes unchanged to `ghost_gip --stdin` with the
+current workspace passed as `--workspace`. The CLI does not implement learning
+loop planning logic; the engine owns Project Autopsy analysis and plan
+derivation.
+
+Human mode labels the result `LEARNING LOOP PLAN / READ-ONLY /
+NON-AUTHORIZING` and always prints `READ-ONLY`, `NON-AUTHORIZING`,
+`CANDIDATE ONLY`, `COMMANDS NOT EXECUTED`, `VERIFIERS NOT EXECUTED`,
+`PATCHES NOT APPLIED`, `CORRECTIONS NOT APPLIED`,
+`NEGATIVE KNOWLEDGE NOT PROMOTED`, `PACKS NOT MUTATED OR APPLIED`, and
+`NO PROOF OR SUPPORT GRANTED`. These labels are renderer-side authority
+explanations only; they do not create proof/support authority.
+
+Human mode renders the engine-provided plan id/source, schema version, autopsy
+schema version, state, next steps, verifier candidate refs, failure ingestion
+candidates, correction placeholders, negative-knowledge placeholders, procedure
+pack placeholders, and unknowns. Verifier candidate refs are approval-required
+references only, not verifier executions. Failure ingestion candidates are not
+ingested failures. Correction placeholders are not accepted corrections.
+Negative-knowledge placeholders are not accepted or promoted negative knowledge.
+Procedure pack placeholders are not mounted, applied, or mutated packs. Unknowns
+are not negative evidence.
+
+`learning.loop.plan` does not execute commands, run verifiers, apply patches,
+ingest failures, accept corrections, promote negative knowledge, mutate packs,
+mutate corpus, mutate trust state, mutate snapshots, mutate scratch state, grant
+proof, or grant support. The CLI must not infer proof/support from plan prose or
+from plan-shaped output.
+
+`--json` preserves raw engine stdout exactly. `--debug` writes diagnostics to
+stderr only: engine path, GIP kind, input file, workspace, request byte count,
+exit code, and parse status.
+
 ## Rule Evaluation
 
 `ghost rules evaluate --file <request.json>` routes explicitly to

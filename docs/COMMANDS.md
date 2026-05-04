@@ -23,7 +23,8 @@ This is a renderer/front-door path. No doctor/status diagnostic, context/project
 autopsy scan, correction proposal, verifier execution, pack mutation,
 negative-knowledge mutation, correction review, reviewed correction inspection,
 reviewed negative-knowledge review/list/get, or procedure pack candidate
-operation is started by launch or idle rendering. Explicit
+operation, learning-loop plan, or learning-loop status is started by launch or
+idle rendering. Explicit
 slash commands and submitted prompts may invoke engine binaries according to
 their command contract.
 
@@ -852,6 +853,45 @@ status.
 
 There is no semantic matching, model adapter, embedding, Transformer, ranking
 model, cloud, network, or black-box search behavior in this CLI command.
+
+#### `ghost learn plan`
+Render an explicit read-only learning loop plan from `learning.loop.plan`.
+
+Usage: `ghost learn plan --file request.json`
+Usage: `ghost learn plan --json --file request.json`
+Usage: `ghost learn plan --debug --file request.json`
+
+The request file must be GIP-compatible JSON with top-level
+`kind: "learning.loop.plan"`. The CLI reads the file, validates that kind, and
+sends the file bytes unchanged to `ghost_gip --stdin` with the current workspace
+passed as `--workspace`. The engine owns project autopsy analysis and plan
+derivation; the CLI only wraps and renders the result.
+
+Human output is headed **LEARNING LOOP PLAN / READ-ONLY / NON-AUTHORIZING** and
+labels the plan **READ-ONLY**, **NON-AUTHORIZING**, **CANDIDATE ONLY**,
+**COMMANDS NOT EXECUTED**, **VERIFIERS NOT EXECUTED**, **PATCHES NOT APPLIED**,
+**CORRECTIONS NOT APPLIED**, **NEGATIVE KNOWLEDGE NOT PROMOTED**,
+**PACKS NOT MUTATED OR APPLIED**, and **NO PROOF OR SUPPORT GRANTED**.
+
+The renderer shows plan id/source, schema version, autopsy schema version, state,
+next steps, approval-required verifier candidate refs, failure ingestion
+candidates, correction placeholders, negative-knowledge placeholders, procedure
+pack placeholders, and unknowns. Verifier refs are displayed as approval-required
+references only; the CLI does not execute commands or verifiers. Failure
+ingestion candidates are not ingested failures. Correction placeholders are not
+accepted corrections. Negative-knowledge placeholders are not accepted or
+promoted negative knowledge. Procedure pack placeholders are not mounted,
+applied, or mutated packs.
+
+`learning.loop.plan` does not execute commands, run verifiers, apply patches,
+ingest failures, accept corrections, promote negative knowledge, mutate packs,
+mutate corpus, mutate trust, mutate snapshots, mutate scratch state, grant proof,
+or grant support. Rendering can explain those authority boundaries, but cannot
+create proof/support authority from plan prose.
+
+`--json` preserves raw engine stdout exactly. `--debug` writes diagnostics to
+stderr only, including engine path, GIP kind, input file, workspace, request byte
+count, exit code, and parse status.
 
 #### `ghost learn candidates`
 List potential knowledge distillation candidates.
