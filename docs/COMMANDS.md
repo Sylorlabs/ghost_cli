@@ -1104,6 +1104,16 @@ Usage: `ghost artifact autopsy inspect --debug --file <request.json> [--workspac
 
 For file-backed recipe checks, pass `{"gipVersion":"gip.v0.1","kind":"artifact.autopsy.inspect","domain":"recipe_consistency","artifactPaths":["recipe.md"]}` with `--workspace <dir>`. Recipe detection is heuristic and candidate-only; human output renders schema/file-backed metadata when present.
 
+Local smoke verification is explicit-only:
+
+`zig build smoke-artifact-autopsy-cli`
+
+The smoke step builds/installs `ghost`, requires a built adjacent
+`../ghost_engine` or `GHOST_ENGINE_ROOT` with `ghost_gip`, creates only
+temporary fixtures, checks human rendering for fixture-backed and file-backed
+artifact autopsy cases, verifies path traversal rejection is not rendered as
+Verified, and compares CLI `--json` output with direct `ghost_gip --stdin`.
+
 **Safety:**
 - READ-ONLY
 - NON-AUTHORIZING

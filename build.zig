@@ -113,4 +113,13 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_lib_unit_tests.step);
     test_step.dependOn(&run_exe_unit_tests.step);
+
+    const smoke_artifact_autopsy_cli_cmd = b.addSystemCommand(&.{
+        "bash",
+        "scripts/smoke_artifact_autopsy_cli.sh",
+    });
+    smoke_artifact_autopsy_cli_cmd.step.dependOn(b.getInstallStep());
+
+    const smoke_artifact_autopsy_cli_step = b.step("smoke-artifact-autopsy-cli", "Run explicit Artifact Autopsy CLI smoke checks");
+    smoke_artifact_autopsy_cli_step.dependOn(&smoke_artifact_autopsy_cli_cmd.step);
 }

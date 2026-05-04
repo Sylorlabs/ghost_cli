@@ -165,6 +165,10 @@ The CLI contract for this command is renderer/wrapper only:
 - Never infer proof/support from artifact findings.
 
 Findings are candidates only and do not constitute proof or supported output.
+The explicit local verification step is `zig build smoke-artifact-autopsy-cli`.
+It is not part of plain `zig build`; it builds the CLI, uses temporary fixtures
+only, requires a built `ghost_gip`, and checks that rejected engine responses do
+not render as Verified.
 
 ## Verifier Execution Record Inspection
 
