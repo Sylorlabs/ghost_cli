@@ -580,6 +580,17 @@ pub fn printArtifactAutopsyResult(writer: anytype, envelope: json_contracts.Arti
 
     const artifact_obj = getObjectField(result_obj, &.{ "artifactAutopsyInspect", "artifact_autopsy_inspect", "artifact_autopsy" }) orelse result_obj;
 
+    if (hasAnyArtifactMetadata(artifact_obj, result_obj)) {
+        try writer.print("{s}Schema / File Metadata:{s}\n", .{ bold, reset });
+        try printArtifactMetadataField(writer, artifact_obj, result_obj, "autopsy_schema_version", "autopsySchemaVersion", "Autopsy Schema Version");
+        try printArtifactMetadataField(writer, artifact_obj, result_obj, "artifact_autopsy_contract", "artifactAutopsyContract", "Artifact Autopsy Contract");
+        try printArtifactMetadataField(writer, artifact_obj, result_obj, "route_kind", "routeKind", "Route Kind");
+        try printArtifactMetadataField(writer, artifact_obj, result_obj, "fixture_backed", "fixtureBacked", "Fixture Backed");
+        try printArtifactMetadataField(writer, artifact_obj, result_obj, "file_backed", "fileBacked", "File Backed");
+        try printArtifactMetadataField(writer, artifact_obj, result_obj, "product_ready", "productReady", "Product Ready");
+        try writer.print("\n", .{});
+    }
+
     if (getJsonField(artifact_obj, &.{ "artifact_domain", "artifactDomain", "domain" })) |domain| {
         try writer.print("{s}Artifact Domain:{s} ", .{ bold, reset });
         try printJsonValue(writer, domain, 0);
@@ -617,8 +628,38 @@ pub fn printArtifactAutopsyResult(writer: anytype, envelope: json_contracts.Arti
     try printArtifactSafetyField(writer, artifact_obj, "support_granted", "supportGranted", "Support Granted");
     try printArtifactSafetyField(writer, artifact_obj, "proof_granted", "proofGranted", "Proof Granted");
 
+    if (envelope.resultState orelse envelope.result_state) |state| {
+        if (state == .object) {
+            if (getJsonField(state.object, &.{ "nonAuthorizationNotice", "non_authorization_notice" })) |notice| {
+                try writer.print("{s}Engine Non-Authorization Notice:{s} ", .{ bold, reset });
+                try printJsonValue(writer, notice, 0);
+                try writer.print("\n", .{});
+            }
+        }
+    }
+
     try writer.print("\n{s}Notice: This output is a DRAFT and NON-AUTHORIZING.{s}\n", .{ yellow, reset });
     try writer.print("Artifact Autopsy findings are candidates only and do not constitute proof or supported output.\n", .{});
+}
+
+fn hasAnyArtifactMetadata(artifact_obj: std.json.ObjectMap, root_obj: std.json.ObjectMap) bool {
+    return getArtifactMetadataField(artifact_obj, root_obj, "autopsy_schema_version", "autopsySchemaVersion") != null or
+        getArtifactMetadataField(artifact_obj, root_obj, "artifact_autopsy_contract", "artifactAutopsyContract") != null or
+        getArtifactMetadataField(artifact_obj, root_obj, "route_kind", "routeKind") != null or
+        getArtifactMetadataField(artifact_obj, root_obj, "fixture_backed", "fixtureBacked") != null or
+        getArtifactMetadataField(artifact_obj, root_obj, "file_backed", "fileBacked") != null or
+        getArtifactMetadataField(artifact_obj, root_obj, "product_ready", "productReady") != null;
+}
+
+fn getArtifactMetadataField(artifact_obj: std.json.ObjectMap, root_obj: std.json.ObjectMap, snake: []const u8, camel: []const u8) ?std.json.Value {
+    return artifact_obj.get(snake) orelse artifact_obj.get(camel) orelse root_obj.get(snake) orelse root_obj.get(camel);
+}
+
+fn printArtifactMetadataField(writer: anytype, artifact_obj: std.json.ObjectMap, root_obj: std.json.ObjectMap, snake: []const u8, camel: []const u8, label: []const u8) !void {
+    const value = getArtifactMetadataField(artifact_obj, root_obj, snake, camel) orelse return;
+    try writer.print("  {s}: ", .{label});
+    try printJsonValue(writer, value, 4);
+    try writer.print("\n", .{});
 }
 
 fn printArtifactSection(writer: anytype, obj: std.json.ObjectMap, snake: []const u8, camel: []const u8, label: []const u8) !void {

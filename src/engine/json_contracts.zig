@@ -112,6 +112,8 @@ pub const ArtifactAutopsyEnvelope = struct {
     gipVersion: ?[]const u8 = null,
     kind: ?[]const u8 = null,
     status: ?[]const u8 = null,
+    resultState: ?std.json.Value = null,
+    result_state: ?std.json.Value = null,
     result: ?std.json.Value = null,
     @"error": ?std.json.Value = null,
 };

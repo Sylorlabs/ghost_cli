@@ -1102,6 +1102,8 @@ Usage: `ghost artifact autopsy inspect --file <request.json> [--workspace <path>
 Usage: `ghost artifact autopsy inspect --json --file <request.json> [--workspace <path>]`
 Usage: `ghost artifact autopsy inspect --debug --file <request.json> [--workspace <path>]`
 
+For file-backed recipe checks, pass `{"gipVersion":"gip.v0.1","kind":"artifact.autopsy.inspect","domain":"recipe_consistency","artifactPaths":["recipe.md"]}` with `--workspace <dir>`. Recipe detection is heuristic and candidate-only; human output renders schema/file-backed metadata when present.
+
 **Safety:**
 - READ-ONLY
 - NON-AUTHORIZING

@@ -2160,6 +2160,50 @@ test "policy describe rejects wrong kind before engine invocation" {
     try testing.expectError(error.FileNotFound, std.fs.cwd().access(marker, .{}));
 }
 
+test "artifact autopsy human renders file-backed recipe metadata and authority notice" {
+    const mock_root = "/tmp/ghost-cli-artifact-autopsy-recipe-human";
+    const request_path = mock_root ++ "/request.json";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    {
+        const request = try std.fs.cwd().createFile(request_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"artifact.autopsy.inspect\",\"domain\":\"recipe_consistency\",\"artifactPaths\":[\"recipe.md\"]}");
+    }
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s' '{\"gipVersion\":\"gip.v0.1\",\"kind\":\"artifact.autopsy.inspect\",\"status\":\"ok\",\"resultState\":{\"state\":\"draft\",\"nonAuthorizationNotice\":\"artifact.autopsy.inspect output is candidate-only and non-authorizing; no verifier was executed and no proof/support gate was discharged\"},\"result\":{\"artifactAutopsyInspect\":{\"autopsy_schema_version\":\"artifact_autopsy.v1\",\"artifact_autopsy_contract\":\"seed.file_bounded.v1\",\"route_kind\":\"artifact.autopsy.inspect\",\"fixture_backed\":false,\"file_backed\":true,\"product_ready\":false,\"artifact_domain\":\"recipe_consistency\",\"artifact_paths\":[\"recipe.md\"],\"inconsistencies\":[{\"id\":\"inconsistency.unused_ingredient.butter\",\"inconsistency_kind\":\"unused_ingredient\",\"description\":\"Ingredient butter is listed but never referenced in steps\",\"candidate_only\":true,\"non_authorizing\":true,\"proof_granted\":false}],\"unknowns\":[{\"name\":\"recipe_detection_heuristic\",\"importance\":\"medium\",\"reason\":\"recipe section detection is heuristic\"}],\"read_only\":true,\"non_authorizing\":true,\"candidate_only\":true,\"mutates_state\":false,\"commands_executed\":false,\"verifiers_executed\":false,\"support_granted\":false,\"proof_granted\":false}},\"readOnly\":true,\"commandsExecuted\":false,\"verifiersExecuted\":false,\"supportGranted\":false,\"proofGranted\":false,\"non_authorizing\":true}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "--no-color", "artifact", "autopsy", "inspect", "--engine-root=" ++ mock_root, "--workspace", mock_root, "--file", request_path });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Artifact Autopsy Result / CANDIDATE ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Schema / File Metadata:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Autopsy Schema Version: artifact_autopsy.v1") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Artifact Autopsy Contract: seed.file_bounded.v1") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "File Backed: true") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Fixture Backed: false") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Product Ready: false") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Artifact Domain:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "recipe_consistency") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Candidate Inconsistencies:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Unknowns:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "recipe_detection_heuristic") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Engine Non-Authorization Notice:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "no verifier was executed and no proof/support gate was discharged") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Commands:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "not executed") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Verifiers Executed:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Support Granted:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Proof Granted:") != null);
+}
+
 test "policy shaped output cannot promote authority" {
     const mock_root = "/tmp/ghost-cli-policy-authority";
     const request_path = mock_root ++ "/request.json";
