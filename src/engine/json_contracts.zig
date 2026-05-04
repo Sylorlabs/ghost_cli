@@ -108,6 +108,14 @@ pub const ContextAutopsyEnvelope = struct {
     @"error": ?std.json.Value = null,
 };
 
+pub const ArtifactAutopsyEnvelope = struct {
+    gipVersion: ?[]const u8 = null,
+    kind: ?[]const u8 = null,
+    status: ?[]const u8 = null,
+    result: ?std.json.Value = null,
+    @"error": ?std.json.Value = null,
+};
+
 // Unified response struct that handles multiple engine JSON shapes
 pub const EngineResponse = struct {
     // Top-level status/permission
@@ -459,4 +467,8 @@ pub fn parseAutopsyJson(allocator: std.mem.Allocator, json_str: []const u8) !std
 
 pub fn parseContextAutopsyJson(allocator: std.mem.Allocator, json_str: []const u8) !std.json.Parsed(ContextAutopsyEnvelope) {
     return try std.json.parseFromSlice(ContextAutopsyEnvelope, allocator, json_str, .{ .ignore_unknown_fields = true });
+}
+
+pub fn parseArtifactAutopsyJson(allocator: std.mem.Allocator, json_str: []const u8) !std.json.Parsed(ArtifactAutopsyEnvelope) {
+    return try std.json.parseFromSlice(ArtifactAutopsyEnvelope, allocator, json_str, .{ .ignore_unknown_fields = true });
 }

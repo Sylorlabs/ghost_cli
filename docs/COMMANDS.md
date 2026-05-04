@@ -1095,6 +1095,19 @@ Guidance candidates require review and are not applied by default. The CLI does
 not run verifiers, mutate state, apply packs/guidance, or infer proof/support
 from autopsy prose.
 
+### `ghost artifact autopsy inspect`
+Artifact Autopsy pass (explicit GIP request only). Renders a non-code artifact autopsy seed as read-only, non-authorizing, candidate-only artifact inspection.
+
+Usage: `ghost artifact autopsy inspect --file <request.json>`
+Usage: `ghost artifact autopsy inspect --json --file <request.json>`
+Usage: `ghost artifact autopsy inspect --debug --file <request.json>`
+
+**Safety:**
+- READ-ONLY
+- NON-AUTHORIZING
+- CANDIDATE ONLY
+- Does not run scans, execute verifiers, mutate state, or execute commands.
+
 ### `ghost context autopsy`
 Run an explicit Context Autopsy request through `ghost_gip`.
 

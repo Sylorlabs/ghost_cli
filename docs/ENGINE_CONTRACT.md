@@ -150,6 +150,22 @@ guidance, auto-promote guidance, or treat capability availability as proof.
 Unavailable or unparsable capabilities render a compatibility warning and an
 engine upgrade/rebuild suggestion.
 
+## Artifact Autopsy Inspection
+
+`ghost artifact autopsy inspect --file <request.json>` routes explicitly to `ghost_gip --stdin` with GIP `kind: "artifact.autopsy.inspect"`.
+
+The CLI contract for this command is renderer/wrapper only:
+
+- Validate the exact top-level request kind before invoking `ghost_gip`.
+- Send request bytes unchanged to `ghost_gip --stdin`.
+- Preserve raw engine stdout exactly under `--json`.
+- Render human output as read-only, non-authorizing, candidate-only artifact inspection.
+- Never execute commands or verifiers.
+- Never mutate state.
+- Never infer proof/support from artifact findings.
+
+Findings are candidates only and do not constitute proof or supported output.
+
 ## Verifier Execution Record Inspection
 
 `ghost verify executions list|get` routes explicitly to `ghost_gip --stdin`

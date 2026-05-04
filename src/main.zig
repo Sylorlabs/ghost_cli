@@ -14,6 +14,7 @@ const nk = @import("commands/nk.zig");
 const verify = @import("commands/verify.zig");
 const learn = @import("commands/learn.zig");
 const autopsy = @import("commands/autopsy.zig");
+const artifact = @import("commands/artifact.zig");
 const context_cmd = @import("commands/context.zig");
 const tui = @import("commands/tui.zig");
 const tui_state = @import("tui/state.zig");
@@ -39,6 +40,7 @@ const CommandKind = enum {
     doctor,
     debug,
     autopsy,
+    artifact,
     context,
 };
 
@@ -74,6 +76,7 @@ const command_registry = [_]CommandDef{
     .{ .name = "fix", .kind = .fix, .group = .core, .help = "Ask Ghost for a fix-oriented response", .usage = "ghost fix [options] <message>" },
     .{ .name = "verify", .kind = .verify, .group = .core, .help = "Ask the engine to verify current workspace state", .usage = "ghost verify [options]" },
     .{ .name = "autopsy", .kind = .autopsy, .group = .inspection, .help = "Project Autopsy pass (explicit scan only)", .usage = "ghost autopsy [--json] [--debug] [path]" },
+    .{ .name = "artifact", .kind = .artifact, .group = .inspection, .help = "Artifact Autopsy pass (explicit GIP request only)", .usage = "ghost artifact autopsy inspect --file <request.json> [--json] [--debug]" },
     .{ .name = "context", .kind = .context, .group = .inspection, .help = "Context Autopsy pass (explicit GIP request only)", .usage = "ghost context autopsy [--json] [--debug] [--input-file <path>] <description>" },
     .{ .name = "status", .kind = .status, .group = .inspection, .help = "Show engine availability/status", .usage = "ghost status [--debug]" },
     .{ .name = "doctor", .kind = .doctor, .group = .inspection, .help = "Run read-only environment diagnostics", .usage = "ghost doctor [--json|--report] [--debug] [--full] [--run-build-check]" },
@@ -283,6 +286,7 @@ pub fn main() !void {
             .json = parsed.options.json_out,
             .debug = parsed.options.debug_mode,
         }),
+        .artifact => try artifact.executeFromArgs(allocator, root, parsed.leftover_args.items, parsed.options.json_out, parsed.options.debug_mode),
         .context => try context_cmd.executeFromArgs(allocator, root, parsed.leftover_args.items, parsed.options.json_out, parsed.options.debug_mode),
     }
 }
@@ -587,6 +591,7 @@ fn printHelp(writer: anytype) !void {
 }
 
 fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
+    if (kind == .artifact) return artifact.printHelp(writer);
     if (kind == .context) return context_cmd.printHelp(writer);
     if (kind == .packs) return packs.printHelp(writer);
     if (kind == .corpus) return corpus.printHelp(writer);
@@ -667,7 +672,7 @@ fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
             \\  This scan runs only when this command is explicitly invoked.
             \\
         , .{}),
-        .context, .packs, .corpus, .policy, .rules, .sigil, .correction, .nk => unreachable,
+        .artifact, .context, .packs, .corpus, .policy, .rules, .sigil, .correction, .nk => unreachable,
         .learn => try writer.print(
             \\
             \\Subcommands:

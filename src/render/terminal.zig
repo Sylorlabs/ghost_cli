@@ -548,6 +548,85 @@ fn printProjectAutopsyNotice(writer: anytype) !void {
     try writer.print("Project Autopsy is read-only display. Safe commands, risks, verifier gaps, and guidance are candidates only; the CLI did not execute commands, run verifiers, mutate state, or apply packs/guidance.\n", .{});
 }
 
+pub fn printArtifactAutopsyResult(writer: anytype, envelope: json_contracts.ArtifactAutopsyEnvelope) !void {
+    try writer.print("{s}Artifact Autopsy Result / CANDIDATE ONLY{s}\n", .{ bold, reset });
+    try writer.print("{s}State:{s} READ-ONLY\n", .{ bold, reset });
+    try writer.print("{s}Authority:{s} NON-AUTHORIZING\n", .{ bold, reset });
+    try writer.print("{s}Type:{s} ARTIFACT AUTOPSY SEED\n", .{ bold, reset });
+    try writer.print("{s}Commands:{s} not executed\n", .{ bold, reset });
+    try writer.print("{s}Verifiers:{s} not executed\n", .{ bold, reset });
+    try writer.print("{s}Mutation:{s} none\n", .{ bold, reset });
+    try writer.print("{s}Proof/Support:{s} not granted\n\n", .{ bold, reset });
+
+    if (envelope.@"error") |err| {
+        try writer.print("{s}Engine Error:{s}\n", .{ bold, reset });
+        try printJsonValue(writer, err, 2);
+        try writer.print("\n", .{});
+        return;
+    }
+
+    const result = envelope.result orelse {
+        try writer.print("No artifact autopsy result payload was present.\n", .{});
+        return;
+    };
+    const result_obj = switch (result) {
+        .object => |obj| obj,
+        else => {
+            try printJsonValue(writer, result, 2);
+            try writer.print("\n", .{});
+            return;
+        },
+    };
+
+    const artifact_obj = getObjectField(result_obj, &.{ "artifactAutopsyInspect", "artifact_autopsy_inspect", "artifact_autopsy" }) orelse result_obj;
+
+    if (getJsonField(artifact_obj, &.{ "artifact_domain", "artifactDomain", "domain" })) |domain| {
+        try writer.print("{s}Artifact Domain:{s} ", .{ bold, reset });
+        try printJsonValue(writer, domain, 0);
+        try writer.print("\n", .{});
+    }
+
+    if (getJsonField(artifact_obj, &.{ "active_policy_profile", "activePolicyProfile", "policy_profile", "policyProfile" })) |policy| {
+        try writer.print("{s}Active Policy Profile:{s}\n", .{ bold, reset });
+        try printJsonValue(writer, policy, 2);
+        try writer.print("\n", .{});
+    }
+
+    try printArtifactSection(writer, artifact_obj, "detected_claims", "detectedClaims", "Detected Claims");
+    try printArtifactSection(writer, artifact_obj, "detected_obligations", "detectedObligations", "Detected Obligations");
+    try printArtifactSection(writer, artifact_obj, "inconsistencies", "inconsistencies", "Candidate Inconsistencies");
+    try printArtifactSection(writer, artifact_obj, "unknowns", "unknowns", "Unknowns");
+    try printArtifactSection(writer, artifact_obj, "evidence_paths", "evidencePaths", "Evidence Paths");
+
+    // Safety flags
+    try printArtifactSafetyField(writer, artifact_obj, "read_only", "readOnly", "Read Only");
+    try printArtifactSafetyField(writer, artifact_obj, "non_authorizing", "nonAuthorizing", "Non Authorizing");
+    try printArtifactSafetyField(writer, artifact_obj, "candidate_only", "candidateOnly", "Candidate Only");
+    try printArtifactSafetyField(writer, artifact_obj, "mutates_state", "mutatesState", "Mutates State");
+    try printArtifactSafetyField(writer, artifact_obj, "commands_executed", "commandsExecuted", "Commands Executed");
+    try printArtifactSafetyField(writer, artifact_obj, "verifiers_executed", "verifiersExecuted", "Verifiers Executed");
+    try printArtifactSafetyField(writer, artifact_obj, "support_granted", "supportGranted", "Support Granted");
+    try printArtifactSafetyField(writer, artifact_obj, "proof_granted", "proofGranted", "Proof Granted");
+
+    try writer.print("\n{s}Notice: This output is a DRAFT and NON-AUTHORIZING.{s}\n", .{ yellow, reset });
+    try writer.print("Artifact Autopsy findings are candidates only and do not constitute proof or supported output.\n", .{});
+}
+
+fn printArtifactSection(writer: anytype, obj: std.json.ObjectMap, snake: []const u8, camel: []const u8, label: []const u8) !void {
+    const value = obj.get(snake) orelse obj.get(camel) orelse return;
+    if (isEmptyJsonList(value)) return;
+    try writer.print("{s}{s}:{s}\n", .{ bold, label, reset });
+    try printJsonValue(writer, value, 2);
+    try writer.print("\n", .{});
+}
+
+fn printArtifactSafetyField(writer: anytype, obj: std.json.ObjectMap, snake: []const u8, camel: []const u8, label: []const u8) !void {
+    const value = obj.get(snake) orelse obj.get(camel) orelse return;
+    try writer.print("{s}{s}:{s} ", .{ bold, label, reset });
+    try printJsonValue(writer, value, 0);
+    try writer.print("\n", .{});
+}
+
 pub fn printContextAutopsyResult(writer: anytype, envelope: json_contracts.ContextAutopsyEnvelope) !void {
     try writer.print("{s}Context Autopsy Result{s}\n", .{ bold, reset });
     try writer.print("{s}State:{s} DRAFT\n", .{ bold, reset });
