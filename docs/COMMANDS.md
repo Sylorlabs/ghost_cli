@@ -1098,9 +1098,9 @@ from autopsy prose.
 ### `ghost artifact autopsy inspect`
 Artifact Autopsy pass (explicit GIP request only). Renders a non-code artifact autopsy seed as read-only, non-authorizing, candidate-only artifact inspection.
 
-Usage: `ghost artifact autopsy inspect --file <request.json>`
-Usage: `ghost artifact autopsy inspect --json --file <request.json>`
-Usage: `ghost artifact autopsy inspect --debug --file <request.json>`
+Usage: `ghost artifact autopsy inspect --file <request.json> [--workspace <path>]`
+Usage: `ghost artifact autopsy inspect --json --file <request.json> [--workspace <path>]`
+Usage: `ghost artifact autopsy inspect --debug --file <request.json> [--workspace <path>]`
 
 **Safety:**
 - READ-ONLY

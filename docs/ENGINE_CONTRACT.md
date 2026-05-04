@@ -152,7 +152,7 @@ engine upgrade/rebuild suggestion.
 
 ## Artifact Autopsy Inspection
 
-`ghost artifact autopsy inspect --file <request.json>` routes explicitly to `ghost_gip --stdin` with GIP `kind: "artifact.autopsy.inspect"`.
+`ghost artifact autopsy inspect --file <request.json> [--workspace <path>]` routes explicitly to `ghost_gip --stdin` with GIP `kind: "artifact.autopsy.inspect"`. If `--workspace` is provided, it is passed as `-w <path>` to `ghost_gip`.
 
 The CLI contract for this command is renderer/wrapper only:
 

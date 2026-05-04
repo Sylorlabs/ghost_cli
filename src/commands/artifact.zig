@@ -6,17 +6,18 @@ const terminal = @import("../render/terminal.zig");
 
 pub const ArtifactAutopsyOptions = struct {
     file: ?[]const u8 = null,
+    workspace: ?[]const u8 = null,
     json: bool = false,
     debug: bool = false,
 };
 
-const usage = "Usage: ghost artifact autopsy inspect --file <request.json> [--json] [--debug]\n";
+const usage = "Usage: ghost artifact autopsy inspect --file <request.json> [--workspace <path>] [--json] [--debug]\n";
 
 pub fn printHelp(writer: anytype) !void {
     try writer.print(
         \\artifact
         \\
-        \\Usage: ghost artifact autopsy inspect --file <request.json> [--json] [--debug]
+        \\Usage: ghost artifact autopsy inspect --file <request.json> [--workspace <path>] [--json] [--debug]
         \\
         \\Artifact Autopsy pass (explicit GIP request only)
         \\
@@ -25,6 +26,7 @@ pub fn printHelp(writer: anytype) !void {
         \\
         \\Options:
         \\  --file <path>          Path to the request JSON file
+        \\  --workspace <path>     Workspace root for bounded file autopsy
         \\  --json                 Preserve raw GIP stdout exactly
         \\  --debug                Diagnostics to stderr
         \\
@@ -35,7 +37,6 @@ pub fn printHelp(writer: anytype) !void {
         \\
     , .{});
 }
-
 
 pub fn printHelpForArgs(writer: anytype, args: []const []const u8) !void {
     if (args.len > 0 and std.mem.eql(u8, args[0], "autopsy")) {
@@ -68,6 +69,7 @@ pub fn executeFromArgs(
     }
 
     var file_path: ?[]const u8 = null;
+    var workspace: ?[]const u8 = null;
 
     var i: usize = 2;
     while (i < args.len) : (i += 1) {
@@ -78,6 +80,12 @@ pub fn executeFromArgs(
             file_path = args[i];
         } else if (std.mem.startsWith(u8, arg, "--file=")) {
             file_path = arg["--file=".len..];
+        } else if (std.mem.eql(u8, arg, "--workspace") or std.mem.eql(u8, arg, "-w")) {
+            i += 1;
+            if (i >= args.len) try failMissingValue("--workspace");
+            workspace = args[i];
+        } else if (std.mem.startsWith(u8, arg, "--workspace=")) {
+            workspace = arg["--workspace=".len..];
         } else {
             try std.io.getStdErr().writer().print("Unexpected artifact autopsy inspect argument: {s}\n", .{arg});
             std.process.exit(1);
@@ -91,6 +99,7 @@ pub fn executeFromArgs(
 
     try executeInspect(allocator, engine_root, .{
         .file = file_path,
+        .workspace = workspace,
         .json = json,
         .debug = debug,
     });
@@ -133,10 +142,16 @@ pub fn executeInspect(allocator: std.mem.Allocator, engine_root: ?[]const u8, op
     try argv_list.append(bin_path);
     try argv_list.append("--stdin");
 
+    if (options.workspace) |ws| {
+        try argv_list.append("--workspace");
+        try argv_list.append(ws);
+    }
+
     if (options.debug) {
         std.debug.print("[DEBUG] Engine Binary: {s}\n", .{bin_path});
         std.debug.print("[DEBUG] GIP Kind: artifact.autopsy.inspect\n", .{});
         std.debug.print("[DEBUG] Request File: {s}\n", .{file_path});
+        if (options.workspace) |ws| std.debug.print("[DEBUG] Workspace: {s}\n", .{ws});
         std.debug.print("[DEBUG] Stdin Payload Size: {d} bytes\n", .{request_bytes.len});
     }
 

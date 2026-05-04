@@ -598,6 +598,15 @@ pub fn printArtifactAutopsyResult(writer: anytype, envelope: json_contracts.Arti
     try printArtifactSection(writer, artifact_obj, "unknowns", "unknowns", "Unknowns");
     try printArtifactSection(writer, artifact_obj, "evidence_paths", "evidencePaths", "Evidence Paths");
 
+    // Explicit sections for file-backed documentation audit
+    if (getJsonField(artifact_obj, &.{ "artifact_paths", "artifactPaths" })) |paths| {
+        if (!isEmptyJsonList(paths)) {
+            try writer.print("{s}Inspected Artifact Paths:{s}\n", .{ bold, reset });
+            try printJsonValue(writer, paths, 2);
+            try writer.print("\n", .{});
+        }
+    }
+
     // Safety flags
     try printArtifactSafetyField(writer, artifact_obj, "read_only", "readOnly", "Read Only");
     try printArtifactSafetyField(writer, artifact_obj, "non_authorizing", "nonAuthorizing", "Non Authorizing");
@@ -616,8 +625,95 @@ fn printArtifactSection(writer: anytype, obj: std.json.ObjectMap, snake: []const
     const value = obj.get(snake) orelse obj.get(camel) orelse return;
     if (isEmptyJsonList(value)) return;
     try writer.print("{s}{s}:{s}\n", .{ bold, label, reset });
-    try printJsonValue(writer, value, 2);
+
+    switch (value) {
+        .array => |arr| {
+            for (arr.items) |item| {
+                try writer.print("  - ", .{});
+                if (item == .object) {
+                    try printArtifactItem(writer, item.object, snake);
+                } else {
+                    try printJsonValue(writer, item, 4);
+                }
+                try writer.print("\n", .{});
+            }
+        },
+        else => {
+            try printJsonValue(writer, value, 2);
+            try writer.print("\n", .{});
+        },
+    }
     try writer.print("\n", .{});
+}
+
+fn printArtifactItem(writer: anytype, obj: std.json.ObjectMap, section_kind: []const u8) !void {
+    if (std.mem.eql(u8, section_kind, "detected_claims") or std.mem.eql(u8, section_kind, "detectedClaims")) {
+        if (getStringField(obj, "claim_text") orelse getStringField(obj, "text")) |text| {
+            try writer.print("{s}{s}{s}\n", .{ bold, text, reset });
+        }
+        if (getStringField(obj, "source_path") orelse getStringField(obj, "path")) |path| {
+            try writer.print("    Source: {s}\n", .{path});
+        }
+        if (getStringField(obj, "claim_kind") orelse getStringField(obj, "kind")) |kind| {
+            try writer.print("    Kind:   {s}\n", .{kind});
+        }
+        if (getStringField(obj, "confidence")) |conf| {
+            try writer.print("    Conf:   {s}\n", .{conf});
+        }
+        if (getStringField(obj, "reason")) |reason| {
+            try writer.print("    Reason: {s}\n", .{reason});
+        }
+    } else if (std.mem.eql(u8, section_kind, "detected_obligations") or std.mem.eql(u8, section_kind, "detectedObligations")) {
+        if (getStringField(obj, "obligation_text") orelse getStringField(obj, "text")) |text| {
+            try writer.print("{s}{s}{s}\n", .{ bold, text, reset });
+        }
+        if (getStringField(obj, "source_path") orelse getStringField(obj, "path")) |path| {
+            try writer.print("    Source: {s}\n", .{path});
+        }
+        if (getStringField(obj, "obligation_kind") orelse getStringField(obj, "kind")) |kind| {
+            try writer.print("    Kind:   {s}\n", .{kind});
+        }
+        if (getStringField(obj, "confidence")) |conf| {
+            try writer.print("    Conf:   {s}\n", .{conf});
+        }
+        if (getStringField(obj, "reason")) |reason| {
+            try writer.print("    Reason: {s}\n", .{reason});
+        }
+    } else if (std.mem.eql(u8, section_kind, "inconsistencies")) {
+        if (getStringField(obj, "id")) |id| {
+            try writer.print("{s}{s}{s}\n", .{ bold, id, reset });
+        }
+        if (getStringField(obj, "description")) |desc| {
+            try writer.print("    Desc:   {s}\n", .{desc});
+        }
+        if (getStringField(obj, "inconsistency_kind") orelse getStringField(obj, "kind")) |kind| {
+            try writer.print("    Kind:   {s}\n", .{kind});
+        }
+        if (obj.get("evidence_paths") orelse obj.get("evidencePaths")) |paths| {
+            try writer.print("    Evidence: ", .{});
+            try printJsonValue(writer, paths, 0);
+            try writer.print("\n", .{});
+        }
+    } else if (std.mem.eql(u8, section_kind, "unknowns")) {
+        if (getStringField(obj, "name")) |name| {
+            try writer.print("{s}{s}{s}\n", .{ bold, name, reset });
+        }
+        if (getStringField(obj, "importance")) |imp| {
+            try writer.print("    Importance: {s}\n", .{imp});
+        }
+        if (getStringField(obj, "reason")) |reason| {
+            try writer.print("    Reason:     {s}\n", .{reason});
+        }
+    } else {
+        var it = obj.iterator();
+        var first = true;
+        while (it.next()) |entry| {
+            if (!first) try writer.print("\n    ", .{});
+            try writer.print("{s}: ", .{entry.key_ptr.*});
+            try printJsonValue(writer, entry.value_ptr.*, 6);
+            first = false;
+        }
+    }
 }
 
 fn printArtifactSafetyField(writer: anytype, obj: std.json.ObjectMap, snake: []const u8, camel: []const u8, label: []const u8) !void {
