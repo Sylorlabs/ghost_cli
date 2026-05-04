@@ -170,6 +170,36 @@ It is not part of plain `zig build`; it builds the CLI, uses temporary fixtures
 only, requires a built `ghost_gip`, and checks that rejected engine responses do
 not render as Verified.
 
+### Local Verification Checkpoint
+
+Build and verify the adjacent engine first, then run the CLI checks:
+
+```bash
+zig build
+zig build test
+./zig-out/bin/ghost --version
+./zig-out/bin/ghost doctor
+./zig-out/bin/ghost --help
+zig build smoke-artifact-autopsy-cli
+git diff --check
+```
+
+For cross-repo artifact autopsy smokes, `ghost_cli` can resolve the adjacent
+engine with either `--engine-root ../ghost_engine` or
+`--engine-root=../ghost_engine`. File-backed artifact autopsy requests should
+pass `--workspace <path>` so `ghost_gip` can enforce bounded workspace reads.
+When testing compatibility, compare `ghost artifact autopsy inspect --json`
+against direct `ghost_gip --stdin` output for the same request and workspace.
+
+Jules PRs are implementation candidates. Local machine verification decides
+merge readiness; do not claim full verification from Jules-only checks. If the
+remote environment lacks Zig, Vulkan, shader tooling, or a built adjacent
+engine, report the blocker instead of claiming verified or product-ready.
+
+The safety split remains unchanged: no hidden writes, no hidden command
+execution, no proof/support promotion, and artifact/policy/correction/NK
+findings remain non-authorizing unless existing support gates prove otherwise.
+
 ## Verifier Execution Record Inspection
 
 `ghost verify executions list|get` routes explicitly to `ghost_gip --stdin`
