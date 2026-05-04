@@ -21,19 +21,28 @@ pub fn printHelp(writer: anytype) !void {
         \\
         \\Usage: ghost verify [options]
         \\Usage: ghost verify candidates <propose|list|review> --file <request.json> [--json] [--debug]
+        \\Usage: ghost verify executions <list|get> --file <request.json> [--json] [--debug]
         \\
         \\Subcommands:
         \\  candidates propose --file <request.json>
         \\  candidates list --file <request.json>
         \\  candidates review --file <request.json>
+        \\  executions list --file <request.json>
+        \\  executions get --file <request.json>
         \\
         \\Safety:
         \\  Verifier candidates are candidate metadata only.
+        \\  Verifier execution records are evidence candidates only.
+        \\  Execution inspection is READ-ONLY and NON-AUTHORIZING.
         \\  CANDIDATE ONLY. NON-AUTHORIZING.
         \\  Approval is metadata only and does not execute anything.
+        \\  Passing execution records do not grant support.
+        \\  Failing execution records do not create correction or negative knowledge.
         \\  Rejection is metadata only and is not global negative evidence.
         \\  COMMANDS NOT EXECUTED. VERIFIERS NOT EXECUTED.
-        \\  NO EVIDENCE PRODUCED. NO PROOF/SUPPORT GRANTED.
+        \\  NO PROOF/SUPPORT GRANTED.
+        \\  NO CORRECTION APPLIED. NO NEGATIVE KNOWLEDGE PROMOTED.
+        \\  NO PATCH/CORPUS/PACK MUTATION.
         \\  `--json` preserves raw engine stdout exactly.
         \\  `--debug` writes diagnostics to stderr only.
         \\
@@ -47,6 +56,11 @@ pub fn printHelpForArgs(writer: anytype, args: []const []const u8) !void {
         if (args.len >= 2 and std.mem.eql(u8, args[1], "list")) return printCandidateListHelp(writer);
         if (args.len >= 2 and std.mem.eql(u8, args[1], "review")) return printCandidateReviewHelp(writer);
         return printCandidatesHelp(writer);
+    }
+    if (std.mem.eql(u8, args[0], "executions")) {
+        if (args.len >= 2 and std.mem.eql(u8, args[1], "list")) return printExecutionListHelp(writer);
+        if (args.len >= 2 and std.mem.eql(u8, args[1], "get")) return printExecutionGetHelp(writer);
+        return printExecutionsHelp(writer);
     }
     return printHelp(writer);
 }
@@ -124,6 +138,70 @@ fn printCandidateReviewHelp(writer: anytype) !void {
     , .{});
 }
 
+fn printExecutionsHelp(writer: anytype) !void {
+    try writer.print(
+        \\verify executions
+        \\
+        \\Usage: ghost verify executions <list|get> --file <request.json> [--json] [--debug]
+        \\
+        \\Explicit verifier execution record inspection commands. Requests are
+        \\full GIP JSON files sent unchanged to ghost_gip --stdin after
+        \\top-level kind validation.
+        \\
+        \\Safety:
+        \\  READ-ONLY INSPECTION.
+        \\  NON-AUTHORIZING.
+        \\  EVIDENCE CANDIDATE ONLY.
+        \\  COMMANDS NOT EXECUTED BY INSPECTION.
+        \\  VERIFIERS NOT EXECUTED BY INSPECTION.
+        \\  NO PROOF/SUPPORT GRANTED.
+        \\  NO CORRECTION APPLIED.
+        \\  NO NEGATIVE KNOWLEDGE PROMOTED.
+        \\  NO PATCH/CORPUS/PACK MUTATION.
+        \\
+    , .{});
+}
+
+fn printExecutionListHelp(writer: anytype) !void {
+    try writer.print(
+        \\verify executions list
+        \\
+        \\Usage: ghost verify executions list --file <request.json> [--json] [--debug]
+        \\
+        \\Reads a GIP-compatible request file and sends the bytes unchanged to
+        \\ghost_gip --stdin. The request must include kind
+        \\"verifier.candidate.execution.list".
+        \\
+        \\Safety:
+        \\  READ-ONLY INSPECTION. NON-AUTHORIZING.
+        \\  EVIDENCE CANDIDATE ONLY.
+        \\  Listing records does not execute commands or verifiers.
+        \\  Passing records do not grant support; failing records do not create
+        \\  correction or negative knowledge.
+        \\
+    , .{});
+}
+
+fn printExecutionGetHelp(writer: anytype) !void {
+    try writer.print(
+        \\verify executions get
+        \\
+        \\Usage: ghost verify executions get --file <request.json> [--json] [--debug]
+        \\
+        \\Reads a GIP-compatible request file and sends the bytes unchanged to
+        \\ghost_gip --stdin. The request must include kind
+        \\"verifier.candidate.execution.get".
+        \\
+        \\Safety:
+        \\  READ-ONLY INSPECTION. NON-AUTHORIZING.
+        \\  EVIDENCE CANDIDATE ONLY.
+        \\  Getting a record does not execute commands or verifiers.
+        \\  Passing records do not grant support; failing records do not create
+        \\  correction or negative knowledge.
+        \\
+    , .{});
+}
+
 pub fn executeFromArgs(
     allocator: std.mem.Allocator,
     engine_root: ?[]const u8,
@@ -132,6 +210,10 @@ pub fn executeFromArgs(
 ) !void {
     if (args.len == 0) return execute(allocator, engine_root, base);
     if (!std.mem.eql(u8, args[0], "candidates")) {
+        if (std.mem.eql(u8, args[0], "executions")) {
+            try executeExecutionsFromArgs(allocator, engine_root, args[1..], base);
+            return;
+        }
         try std.io.getStdErr().writer().print("Unknown verify command: {s}\n", .{args[0]});
         try printHelp(std.io.getStdErr().writer());
         std.process.exit(1);
@@ -165,6 +247,31 @@ fn executeCandidatesFromArgs(
     }
     try std.io.getStdErr().writer().print("Unknown verify candidates command: {s}\n", .{action});
     try printCandidatesHelp(std.io.getStdErr().writer());
+    std.process.exit(1);
+}
+
+fn executeExecutionsFromArgs(
+    allocator: std.mem.Allocator,
+    engine_root: ?[]const u8,
+    args: []const []const u8,
+    base: VerifyOptions,
+) !void {
+    const action = if (args.len > 0) args[0] else {
+        try printExecutionsHelp(std.io.getStdErr().writer());
+        std.process.exit(1);
+    };
+    var options = base;
+    try parseCandidateFileArgs(args[1..], &options, action);
+    if (std.mem.eql(u8, action, "list")) {
+        try executeCandidateFileGip(allocator, engine_root, options, "verifier.candidate.execution.list", printVerifierExecutionListResult);
+        return;
+    }
+    if (std.mem.eql(u8, action, "get")) {
+        try executeCandidateFileGip(allocator, engine_root, options, "verifier.candidate.execution.get", printVerifierExecutionGetResult);
+        return;
+    }
+    try std.io.getStdErr().writer().print("Unknown verify executions command: {s}\n", .{action});
+    try printExecutionsHelp(std.io.getStdErr().writer());
     std.process.exit(1);
 }
 
@@ -408,6 +515,107 @@ fn printVerifierCandidateReviewResult(writer: anytype, value: std.json.Value) !v
     try printVerifierCandidateRecordSummary(writer, review, 0);
 }
 
+fn printVerifierExecutionListResult(writer: anytype, value: std.json.Value) !void {
+    try printVerifierExecutionInspectionHeader(writer, "VERIFIER EXECUTION RECORDS / READ-ONLY INSPECTION / NON-AUTHORIZING");
+    if (findError(value)) |err_value| return printEngineRejected(writer, err_value);
+    const list = findVerifierExecutionPayload(value) orelse {
+        try writer.print("No verifier execution list payload was present.\n", .{});
+        return;
+    };
+    if (list != .object) return printJsonValue(writer, list, 2);
+    const obj = list.object;
+    try printField(writer, obj, "totalRead", "Total Read");
+    try printField(writer, obj, "returnedCount", "Returned Count");
+    try printField(writer, obj, "malformedLines", "Malformed Lines");
+    try printField(writer, obj, "missingFile", "Missing File");
+    try printField(writer, obj, "truncated", "Truncated");
+    try printField(writer, obj, "readOnly", "Read Only");
+    try printFieldAliases(writer, obj, &.{ "evidenceCandidate", "evidence_candidate" }, "Evidence Candidate");
+    try printFieldAliases(writer, obj, &.{ "nonAuthorizing", "non_authorizing" }, "Non-Authorizing");
+    try printFalseAuthorityFieldAliases(writer, obj, &.{ "supportGranted", "support_granted" }, "Support Granted");
+    try printFalseAuthorityFieldAliases(writer, obj, &.{ "proofGranted", "proof_granted" }, "Proof Granted");
+    try printFalseAuthorityFieldAliases(writer, obj, &.{ "proofDischarged", "proof_discharged" }, "Proof Discharged");
+    try printField(writer, obj, "commandsExecuted", "Commands Executed");
+    try printField(writer, obj, "verifiersExecuted", "Verifiers Executed");
+    try printSectionIfPresent(writer, obj, "warnings", "Warnings", 0);
+    try printSectionIfPresent(writer, obj, "capacityTelemetry", "Capacity Telemetry", 0);
+    if (firstObjectField(obj, &.{ "records", "executions", "executionRecords", "verifierExecutionRecords", "verifier_execution_records" })) |records| {
+        try writer.print("\nExecution Records:\n", .{});
+        if (records == .array) {
+            for (records.array.items, 0..) |record, index| {
+                try writer.print("- Execution {d}:\n", .{index + 1});
+                try printVerifierExecutionRecordSummary(writer, record, 4);
+            }
+        } else {
+            try printJsonValue(writer, records, 2);
+        }
+    }
+}
+
+fn printVerifierExecutionGetResult(writer: anytype, value: std.json.Value) !void {
+    try printVerifierExecutionInspectionHeader(writer, "VERIFIER EXECUTION RECORD / READ-ONLY INSPECTION / NON-AUTHORIZING");
+    if (findError(value)) |err_value| return printEngineRejected(writer, err_value);
+    const payload = findVerifierExecutionPayload(value) orelse {
+        try writer.print("No verifier execution get payload was present.\n", .{});
+        return;
+    };
+    if (payload != .object) return printJsonValue(writer, payload, 2);
+    const obj = payload.object;
+    try printField(writer, obj, "status", "Status");
+    try printField(writer, obj, "id", "Execution ID");
+    try printField(writer, obj, "executionId", "Execution ID");
+    try printField(writer, obj, "execution_id", "Execution ID");
+    try printField(writer, obj, "readOnly", "Read Only");
+    try printSectionIfPresent(writer, obj, "warnings", "Warnings", 0);
+    if (firstObjectField(obj, &.{ "record", "executionRecord", "execution_record", "verifierExecutionRecord", "verifier_execution_record" })) |record| {
+        try writer.print("\nExecution Record:\n", .{});
+        try printVerifierExecutionRecordSummary(writer, record, 2);
+    } else {
+        try printVerifierExecutionRecordSummary(writer, payload, 0);
+    }
+}
+
+fn printVerifierExecutionInspectionHeader(writer: anytype, title: []const u8) !void {
+    try writer.print("{s}\n", .{title});
+    try writer.print("READ-ONLY INSPECTION\n", .{});
+    try writer.print("NON-AUTHORIZING\n", .{});
+    try writer.print("EVIDENCE CANDIDATE ONLY\n", .{});
+    try writer.print("COMMANDS NOT EXECUTED BY INSPECTION\n", .{});
+    try writer.print("VERIFIERS NOT EXECUTED BY INSPECTION\n", .{});
+    try writer.print("NO PROOF/SUPPORT GRANTED\n", .{});
+    try writer.print("NO CORRECTION APPLIED\n", .{});
+    try writer.print("NO NEGATIVE KNOWLEDGE PROMOTED\n", .{});
+    try writer.print("NO PATCH/CORPUS/PACK MUTATION\n", .{});
+    try writer.print("Passing execution records remain evidence candidates only.\n", .{});
+    try writer.print("Failing execution records are not correction or negative-knowledge records.\n", .{});
+    try writer.print("Support Granted: false\n", .{});
+    try writer.print("Proof Granted: false\n\n", .{});
+}
+
+fn printVerifierExecutionRecordSummary(writer: anytype, record: std.json.Value, indent: usize) !void {
+    const obj = switch (record) {
+        .object => |o| o,
+        else => return printJsonValue(writer, record, indent),
+    };
+    try printIndentedFieldAliases(writer, obj, &.{ "id", "executionId", "execution_id" }, "Execution ID", indent);
+    try printIndentedFieldAliases(writer, obj, &.{ "candidateId", "candidate_id", "verifierCandidateId", "verifier_candidate_id" }, "Candidate ID", indent);
+    try printIndentedFieldAliases(writer, obj, &.{"status"}, "Status", indent);
+    try printIndentedSectionAliases(writer, obj, &.{ "argv", "argvTokens", "argv_tokens" }, "Argv Tokens", indent);
+    try printIndentedFieldAliases(writer, obj, &.{ "workspaceRef", "workspace_ref" }, "Workspace Ref", indent);
+    try printIndentedFieldAliases(writer, obj, &.{ "workspaceRoot", "workspace_root" }, "Workspace Root", indent);
+    try printIndentedFieldAliases(writer, obj, &.{ "exitCode", "exit_code" }, "Exit Code", indent);
+    try printIndentedFieldAliases(writer, obj, &.{ "failureSignal", "failure_signal" }, "Failure Signal", indent);
+    try printIndentedFieldAliases(writer, obj, &.{ "stdoutSnippet", "stdout_snippet" }, "Stdout Snippet", indent);
+    try printIndentedFieldAliases(writer, obj, &.{ "stderrSnippet", "stderr_snippet" }, "Stderr Snippet", indent);
+    try printIndentedFieldAliases(writer, obj, &.{ "evidenceCandidate", "evidence_candidate" }, "Evidence Candidate", indent);
+    try printIndentedFieldAliases(writer, obj, &.{ "nonAuthorizing", "non_authorizing" }, "Non-Authorizing", indent);
+    try printIndentedFalseAuthorityFieldAliases(writer, obj, &.{ "supportGranted", "support_granted" }, "Support Granted", indent);
+    try printIndentedFalseAuthorityFieldAliases(writer, obj, &.{ "proofGranted", "proof_granted" }, "Proof Granted", indent);
+    try printIndentedFalseAuthorityFieldAliases(writer, obj, &.{ "proofDischarged", "proof_discharged" }, "Proof Discharged", indent);
+    try printIndentedSectionAliases(writer, obj, &.{ "authority", "authorityFlags", "authority_flags" }, "Authority Flags", indent);
+    try printIndentedSectionAliases(writer, obj, &.{ "mutationFlags", "mutation_flags" }, "Mutation Flags", indent);
+}
+
 fn printVerifierCandidateRecordSummary(writer: anytype, record: std.json.Value, indent: usize) !void {
     const obj = switch (record) {
         .object => |o| o,
@@ -463,6 +671,41 @@ fn findVerifierCandidatePayload(value: std.json.Value) ?std.json.Value {
             else => return result,
         };
         inline for (.{ "verifierCandidateProposal", "verifierCandidateList", "verifierCandidateReview", "verifier_candidate_proposal", "verifier_candidate_list", "verifier_candidate_review" }) |key| {
+            if (result_obj.get(key)) |payload| return payload;
+        }
+        return result;
+    }
+    return null;
+}
+
+fn findVerifierExecutionPayload(value: std.json.Value) ?std.json.Value {
+    const obj = switch (value) {
+        .object => |o| o,
+        else => return null,
+    };
+    const keys = .{
+        "verifierExecutionList",
+        "verifierExecutionGet",
+        "verifierExecutionRecordList",
+        "verifierExecutionRecordGet",
+        "verifierCandidateExecutionList",
+        "verifierCandidateExecutionGet",
+        "verifier_execution_list",
+        "verifier_execution_get",
+        "verifier_execution_record_list",
+        "verifier_execution_record_get",
+        "verifier_candidate_execution_list",
+        "verifier_candidate_execution_get",
+    };
+    inline for (keys) |key| {
+        if (obj.get(key)) |payload| return payload;
+    }
+    if (obj.get("result")) |result| {
+        const result_obj = switch (result) {
+            .object => |o| o,
+            else => return result,
+        };
+        inline for (keys) |key| {
             if (result_obj.get(key)) |payload| return payload;
         }
         return result;
@@ -529,12 +772,67 @@ fn printIndentedField(writer: anytype, obj: std.json.ObjectMap, field: []const u
     try writer.print("\n", .{});
 }
 
+fn printFieldAliases(writer: anytype, obj: std.json.ObjectMap, fields: []const []const u8, label: []const u8) !void {
+    const value = firstObjectField(obj, fields) orelse return;
+    try writer.print("{s}: ", .{label});
+    try printInlineJsonValue(writer, value);
+    try writer.print("\n", .{});
+}
+
+fn printFalseAuthorityFieldAliases(writer: anytype, obj: std.json.ObjectMap, fields: []const []const u8, label: []const u8) !void {
+    const value = firstObjectField(obj, fields) orelse return;
+    if (value == .bool and value.bool) return;
+    try writer.print("{s}: ", .{label});
+    try printInlineJsonValue(writer, value);
+    try writer.print("\n", .{});
+}
+
+fn printIndentedFieldAliases(writer: anytype, obj: std.json.ObjectMap, fields: []const []const u8, label: []const u8, indent: usize) !void {
+    const value = firstObjectField(obj, fields) orelse return;
+    try writer.writeByteNTimes(' ', indent);
+    try writer.print("{s}: ", .{label});
+    try printInlineJsonValue(writer, value);
+    try writer.print("\n", .{});
+}
+
+fn printIndentedFalseAuthorityFieldAliases(writer: anytype, obj: std.json.ObjectMap, fields: []const []const u8, label: []const u8, indent: usize) !void {
+    const value = firstObjectField(obj, fields) orelse return;
+    if (value == .bool and value.bool) return;
+    try writer.writeByteNTimes(' ', indent);
+    try writer.print("{s}: ", .{label});
+    try printInlineJsonValue(writer, value);
+    try writer.print("\n", .{});
+}
+
 fn printIndentedSection(writer: anytype, obj: std.json.ObjectMap, field: []const u8, label: []const u8, indent: usize) !void {
     const value = obj.get(field) orelse return;
     if (isEmptyJsonList(value)) return;
     try writer.writeByteNTimes(' ', indent);
     try writer.print("{s}:\n", .{label});
     try printJsonValue(writer, value, indent + 2);
+}
+
+fn printIndentedSectionAliases(writer: anytype, obj: std.json.ObjectMap, fields: []const []const u8, label: []const u8, indent: usize) !void {
+    const value = firstObjectField(obj, fields) orelse return;
+    if (isEmptyJsonList(value)) return;
+    try writer.writeByteNTimes(' ', indent);
+    try writer.print("{s}:\n", .{label});
+    try printJsonValue(writer, value, indent + 2);
+}
+
+fn printSectionIfPresent(writer: anytype, obj: std.json.ObjectMap, field: []const u8, label: []const u8, indent: usize) !void {
+    const value = obj.get(field) orelse return;
+    if (isEmptyJsonList(value)) return;
+    try writer.writeByteNTimes(' ', indent);
+    try writer.print("{s}:\n", .{label});
+    try printJsonValue(writer, value, indent + 2);
+}
+
+fn firstObjectField(obj: std.json.ObjectMap, fields: []const []const u8) ?std.json.Value {
+    for (fields) |field| {
+        if (obj.get(field)) |value| return value;
+    }
+    return null;
 }
 
 fn printInlineJsonValue(writer: anytype, value: std.json.Value) !void {

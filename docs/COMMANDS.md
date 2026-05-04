@@ -583,6 +583,45 @@ authority.
 `--json` preserves raw engine stdout exactly. `--debug` writes diagnostics to
 stderr only.
 
+#### `ghost verify executions`
+Explicit verifier execution record inspection wrapper.
+
+Usage: `ghost verify executions list --file request.json`
+Usage: `ghost verify executions get --file request.json`
+Usage: `ghost verify executions list --json --file request.json`
+Usage: `ghost verify executions get --debug --file request.json`
+
+The request file must be full GIP JSON. The CLI validates the top-level kind
+before invoking the engine, then sends the file bytes unchanged to
+`ghost_gip --stdin`.
+
+Expected kinds:
+
+- `list`: `verifier.candidate.execution.list`
+- `get`: `verifier.candidate.execution.get`
+
+Human output labels verifier execution records as **READ-ONLY INSPECTION**,
+**NON-AUTHORIZING**, and **EVIDENCE CANDIDATE ONLY**. It renders execution id,
+candidate id, status (`passed`, `failed`, `timed_out`, `rejected`, or
+`disallowed` when present), argv tokens, workspace ref/root, exit code, failure
+signal, stdout/stderr snippets, evidence-candidate flags, non-authorizing flags,
+and explicit false proof/support flags when the engine provides them.
+
+List/get are inspection only. They read records exposed by the engine from
+`verifier_executions/verifier_execution_records.jsonl`; the CLI does not read
+or write that file directly. Inspection does not execute commands, run
+verifiers, apply corrections, promote negative knowledge, apply patches, mutate
+corpus, mutate packs, mutate trust, snapshot, or scratch state.
+
+Passing execution records do not automatically grant support or discharge proof.
+Failing execution records do not automatically create correction or negative
+knowledge. The CLI does not infer proof/support from status, prose, argv,
+snippets, or output shape. Rendering can explain authority; rendering cannot
+create authority.
+
+`--json` preserves raw engine stdout exactly. `--debug` writes diagnostics to
+stderr only.
+
 ### `ghost context autopsy`
 Run an explicit Context Autopsy GIP request using `ghost_gip`.
 

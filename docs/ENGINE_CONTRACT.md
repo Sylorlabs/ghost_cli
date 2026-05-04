@@ -150,6 +150,29 @@ guidance, auto-promote guidance, or treat capability availability as proof.
 Unavailable or unparsable capabilities render a compatibility warning and an
 engine upgrade/rebuild suggestion.
 
+## Verifier Execution Record Inspection
+
+`ghost verify executions list|get` routes explicitly to `ghost_gip --stdin`
+with GIP kinds `verifier.candidate.execution.list` and
+`verifier.candidate.execution.get`.
+
+The CLI contract for these commands is renderer/wrapper only:
+
+- Validate the exact top-level request kind before invoking `ghost_gip`.
+- Send request bytes unchanged to `ghost_gip --stdin`.
+- Preserve raw engine stdout exactly under `--json`.
+- Render human output as read-only, non-authorizing, evidence-candidate-only
+  inspection.
+- Never execute candidate commands or verifiers as part of list/get.
+- Never infer proof/support from execution status, argv, snippets, prose, or
+  record shape.
+- Never turn failed execution records into correction or negative-knowledge
+  records.
+- Never mutate patch/corpus/pack/trust/snapshot/scratch state.
+
+Passing execution records remain evidence candidates only. Failing execution
+records are not negative knowledge and do not imply correction application.
+
 ## Procedure Pack Candidate Lifecycle
 
 `ghost packs candidates propose --file <request.json>` routes explicitly to
