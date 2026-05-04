@@ -7,6 +7,7 @@ const status = @import("commands/status.zig");
 const packs = @import("commands/packs.zig");
 const corpus = @import("commands/corpus.zig");
 const rules = @import("commands/rules.zig");
+const policy = @import("commands/policy.zig");
 const sigil = @import("commands/sigil.zig");
 const correction = @import("commands/correction.zig");
 const nk = @import("commands/nk.zig");
@@ -27,6 +28,7 @@ const CommandKind = enum {
     verify,
     packs,
     corpus,
+    policy,
     rules,
     sigil,
     correction,
@@ -77,6 +79,7 @@ const command_registry = [_]CommandDef{
     .{ .name = "doctor", .kind = .doctor, .group = .inspection, .help = "Run read-only environment diagnostics", .usage = "ghost doctor [--json|--report] [--debug] [--full] [--run-build-check]" },
     .{ .name = "packs", .kind = .packs, .group = .knowledge, .help = "Manage knowledge packs", .usage = "ghost packs <list|inspect|mount|unmount|validate-autopsy-guidance> [options]" },
     .{ .name = "corpus", .kind = .corpus, .group = .knowledge, .help = "Ingest, apply, and ask from shard corpus", .usage = "ghost corpus <ingest|apply-staged|ask> [options]" },
+    .{ .name = "policy", .kind = .policy, .group = .knowledge, .help = "Describe artifact/domain policy metadata", .usage = "ghost policy describe --file <request.json> [--json] [--debug]" },
     .{ .name = "correction", .kind = .correction, .group = .knowledge, .help = "Propose, review, and inspect correction records", .usage = "ghost correction <propose|review|reviewed> [options]" },
     .{ .name = "nk", .kind = .nk, .group = .knowledge, .help = "Review and inspect reviewed negative knowledge", .usage = "ghost nk <review|reviewed> [options]" },
     .{ .name = "learn", .kind = .learn, .group = .knowledge, .help = "Feedback/distillation and read-only learning plans/status", .usage = "ghost learn <candidates|show|export|status|plan> [options]" },
@@ -166,6 +169,10 @@ pub fn main() !void {
             try rules.printHelpForArgs(std.io.getStdErr().writer(), parsed.leftover_args.items);
             return;
         }
+        if (parsed.command.? == .policy) {
+            try policy.printHelpForArgs(std.io.getStdErr().writer(), parsed.leftover_args.items);
+            return;
+        }
         if (parsed.command.? == .sigil) {
             try sigil.printHelpForArgs(std.io.getStdErr().writer(), parsed.leftover_args.items);
             return;
@@ -228,6 +235,10 @@ pub fn main() !void {
             .debug = parsed.options.debug_mode,
         }),
         .rules => try rules.executeFromArgs(allocator, root, parsed.leftover_args.items, .{
+            .json = parsed.options.json_out,
+            .debug = parsed.options.debug_mode,
+        }),
+        .policy => try policy.executeFromArgs(allocator, root, parsed.leftover_args.items, .{
             .json = parsed.options.json_out,
             .debug = parsed.options.debug_mode,
         }),
@@ -579,6 +590,7 @@ fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
     if (kind == .context) return context_cmd.printHelp(writer);
     if (kind == .packs) return packs.printHelp(writer);
     if (kind == .corpus) return corpus.printHelp(writer);
+    if (kind == .policy) return policy.printHelp(writer);
     if (kind == .rules) return rules.printHelp(writer);
     if (kind == .sigil) return sigil.printHelp(writer);
     if (kind == .correction) return correction.printHelp(writer);
@@ -655,7 +667,7 @@ fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
             \\  This scan runs only when this command is explicitly invoked.
             \\
         , .{}),
-        .context, .packs, .corpus, .rules, .sigil, .correction, .nk => unreachable,
+        .context, .packs, .corpus, .policy, .rules, .sigil, .correction, .nk => unreachable,
         .learn => try writer.print(
             \\
             \\Subcommands:

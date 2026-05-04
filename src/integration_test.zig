@@ -73,6 +73,7 @@ test "help text lists all top-level commands" {
     try testing.expect(std.mem.indexOf(u8, res.stderr, "verify") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "packs") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "corpus") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "policy") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "correction") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "nk") != null);
     try testing.expect(std.mem.indexOf(u8, res.stderr, "learn") != null);
@@ -184,6 +185,25 @@ test "subcommand help works without resolving engine" {
     try testing.expectEqual(@as(u32, 0), corpus_ask_res.term.Exited);
     try testing.expect(std.mem.indexOf(u8, corpus_ask_res.stderr, "Usage: ghost corpus ask") != null);
     try testing.expect(std.mem.indexOf(u8, corpus_ask_res.stderr, "mounted pack corpus is not included") != null);
+
+    const policy_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "policy", "--help", "--engine-root=/tmp/ghost-help-missing" });
+    defer {
+        testing.allocator.free(policy_res.stdout);
+        testing.allocator.free(policy_res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), policy_res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, policy_res.stderr, "Usage: ghost policy describe --file <request.json>") != null);
+    try testing.expect(std.mem.indexOf(u8, policy_res.stderr, "POLICY METADATA ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, policy_res.stderr, "routing/scoring hints") != null);
+
+    const policy_describe_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "policy", "describe", "--help", "--engine-root=/tmp/ghost-help-missing" });
+    defer {
+        testing.allocator.free(policy_describe_res.stdout);
+        testing.allocator.free(policy_describe_res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), policy_describe_res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, policy_describe_res.stderr, "\"artifact.policy.describe\"") != null);
+    try testing.expect(std.mem.indexOf(u8, policy_describe_res.stderr, "not universal truth") != null);
 
     const correction_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "correction", "--help", "--engine-root=/tmp/ghost-help-missing" });
     defer {
@@ -1964,6 +1984,7 @@ test "doctor status and no-arg TUI do not run autopsy guidance validation" {
     const corpus_marker = mock_root ++ "/corpus-ask-marker";
     const corpus_ingest_marker = mock_root ++ "/corpus-ingest-marker";
     const learning_marker = mock_root ++ "/learning-status-marker";
+    const policy_marker = mock_root ++ "/policy-describe-marker";
     try std.fs.cwd().makePath(mock_root);
     defer std.fs.cwd().deleteTree(mock_root) catch {};
 
@@ -1982,6 +2003,7 @@ test "doctor status and no-arg TUI do not run autopsy guidance validation" {
             "payload=$(cat 2>/dev/null || true)\n" ++
             "case \"$payload $*\" in *corpus.ask*) touch '" ++ corpus_marker ++ "';; esac\n" ++
             "case \"$payload $*\" in *learning.status*) touch '" ++ learning_marker ++ "';; esac\n" ++
+            "case \"$payload $*\" in *artifact.policy.describe*) touch '" ++ policy_marker ++ "';; esac\n" ++
             "printf '{\"status\":\"ok\"}'\n",
     );
     try writeMockExecutable(mock_root ++ "/ghost_corpus_ingest", "#!/bin/sh\ntouch '" ++ corpus_ingest_marker ++ "'\nprintf '{}'\n");
@@ -2007,6 +2029,163 @@ test "doctor status and no-arg TUI do not run autopsy guidance validation" {
     try testing.expectError(error.FileNotFound, std.fs.cwd().access(corpus_marker, .{}));
     try testing.expectError(error.FileNotFound, std.fs.cwd().access(corpus_ingest_marker, .{}));
     try testing.expectError(error.FileNotFound, std.fs.cwd().access(learning_marker, .{}));
+    try testing.expectError(error.FileNotFound, std.fs.cwd().access(policy_marker, .{}));
+}
+
+test "policy describe routes file payload to ghost_gip" {
+    const mock_root = "/tmp/ghost-cli-policy-payload";
+    const payload_path = mock_root ++ "/payload.json";
+    const request_path = mock_root ++ "/request.json";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    {
+        const request = try std.fs.cwd().createFile(request_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"artifact.policy.describe\",\"artifactRef\":{\"path\":\"src/main.zig\"}}");
+    }
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\n" ++
+            "cat > '" ++ payload_path ++ "'\n" ++
+            "printf '%s' '{\"gipVersion\":\"gip.v0.1\",\"kind\":\"artifact.policy.describe\",\"status\":\"ok\",\"readOnly\":true,\"nonAuthorizing\":true,\"mutatesState\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false,\"supportGranted\":false,\"proofGranted\":false,\"result\":{\"artifactPolicy\":{\"activeProfile\":\"code\",\"policyName\":\"code-default\",\"interventionPolicy\":{\"manualReview\":\"routing_hint\"},\"evidenceFamilyPolicy\":{\"tests\":\"score_hint\"},\"hypothesisPriorPolicy\":{\"runtimeRisk\":\"medium\"},\"trustDecayPolicy\":{\"staleDays\":30},\"authority\":{\"supportGranted\":false,\"proofGranted\":false}}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "policy", "describe", "--engine-root=" ++ mock_root, "--file", request_path });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Artifact Policy Metadata") != null);
+
+    const payload = try std.fs.cwd().readFileAlloc(testing.allocator, payload_path, 1024 * 1024);
+    defer testing.allocator.free(payload);
+    try testing.expect(std.mem.indexOf(u8, payload, "\"kind\":\"artifact.policy.describe\"") != null);
+    try testing.expect(std.mem.indexOf(u8, payload, "\"artifactRef\"") != null);
+}
+
+test "policy describe human renders metadata as non-authorizing" {
+    const mock_root = "/tmp/ghost-cli-policy-human";
+    const request_path = mock_root ++ "/request.json";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    {
+        const request = try std.fs.cwd().createFile(request_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"artifact.policy.describe\"}");
+    }
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s' '{\"gipVersion\":\"gip.v0.1\",\"kind\":\"artifact.policy.describe\",\"status\":\"ok\",\"readOnly\":true,\"nonAuthorizing\":true,\"mutatesState\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false,\"supportGranted\":false,\"proofGranted\":false,\"result\":{\"artifactPolicy\":{\"activeProfile\":\"code\",\"defaultProfile\":\"generic\",\"policyName\":\"code-artifact-policy\",\"domainFamily\":\"code\",\"interventionPolicy\":{\"manualReviewWeight\":3},\"evidenceFamilyPolicy\":{\"testOutput\":\"high_score_hint\"},\"hypothesisPriorPolicy\":{\"refactorRisk\":\"medium_prior\"},\"trustDecayPolicy\":{\"staleAfterDays\":30},\"domainProfiles\":{\"code\":{\"description\":\"code profile\"},\"docs\":{\"description\":\"docs profile\"}},\"safetyFlags\":{\"readOnly\":true,\"nonAuthorizing\":true,\"supportGranted\":false,\"proofGranted\":false}}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "policy", "describe", "--engine-root=" ++ mock_root, "--file=" ++ request_path });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "State: READ-ONLY / NON-AUTHORIZING / POLICY METADATA ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Policies are routing/scoring hints, not proof or support.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Code-specific policy is one domain profile, not the universal kernel.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "COMMANDS NOT EXECUTED") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "VERIFIERS NOT EXECUTED") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "NO MUTATION") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Active Profile: code") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Intervention Policy Metadata:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Evidence Family Policy Metadata:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Hypothesis Prior Policy Metadata:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Trust Decay Policy Metadata:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "GIP Safety Metadata:") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Verified") == null);
+}
+
+test "policy describe json byte matches direct ghost gip output and debug stays stderr" {
+    const mock_root = "/tmp/ghost-cli-policy-json";
+    const request_path = mock_root ++ "/request.json";
+    const raw_json = "{\"gipVersion\":\"gip.v0.1\",\"kind\":\"artifact.policy.describe\",\"status\":\"ok\",\"result\":{\"artifactPolicy\":{\"activeProfile\":\"code\",\"readOnly\":true,\"nonAuthorizing\":true}}}";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    {
+        const request = try std.fs.cwd().createFile(request_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"artifact.policy.describe\"}");
+    }
+    try writeMockExecutable(mock_root ++ "/ghost_gip", "#!/bin/sh\ncat >/dev/null\nprintf '%s' '" ++ raw_json ++ "'\n");
+
+    const cli_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "policy", "describe", "--engine-root=" ++ mock_root, "--json", "--debug", "--file", request_path });
+    defer {
+        testing.allocator.free(cli_res.stdout);
+        testing.allocator.free(cli_res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), cli_res.term.Exited);
+    try testing.expectEqualStrings(raw_json, cli_res.stdout);
+    try testing.expect(std.mem.indexOf(u8, cli_res.stderr, "[DEBUG] GIP Kind: artifact.policy.describe") != null);
+
+    const payload = try std.fs.cwd().readFileAlloc(testing.allocator, request_path, 1024 * 1024);
+    defer testing.allocator.free(payload);
+    const direct_res = try runCmdWithInput(testing.allocator, &[_][]const u8{ mock_root ++ "/ghost_gip", "--stdin" }, payload);
+    defer {
+        testing.allocator.free(direct_res.stdout);
+        testing.allocator.free(direct_res.stderr);
+    }
+    try testing.expectEqualStrings(direct_res.stdout, cli_res.stdout);
+}
+
+test "policy describe rejects wrong kind before engine invocation" {
+    const mock_root = "/tmp/ghost-cli-policy-wrong-kind";
+    const request_path = mock_root ++ "/request.json";
+    const marker = mock_root ++ "/engine-called";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    {
+        const request = try std.fs.cwd().createFile(request_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"rule.evaluate\"}");
+    }
+    try writeMockExecutable(mock_root ++ "/ghost_gip", "#!/bin/sh\ntouch '" ++ marker ++ "'\nprintf '{}'\n");
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "policy", "describe", "--engine-root=" ++ mock_root, "--file", request_path });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 1), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "top-level kind \"artifact.policy.describe\"") != null);
+    try testing.expectError(error.FileNotFound, std.fs.cwd().access(marker, .{}));
+}
+
+test "policy shaped output cannot promote authority" {
+    const mock_root = "/tmp/ghost-cli-policy-authority";
+    const request_path = mock_root ++ "/request.json";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    {
+        const request = try std.fs.cwd().createFile(request_path, .{});
+        defer request.close();
+        try request.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"artifact.policy.describe\"}");
+    }
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\ncat >/dev/null\nprintf '%s' '{\"gipVersion\":\"gip.v0.1\",\"kind\":\"artifact.policy.describe\",\"status\":\"ok\",\"permission\":\"supported\",\"readOnly\":true,\"nonAuthorizing\":true,\"result\":{\"artifactPolicy\":{\"activeProfile\":\"code\",\"policyName\":\"code\",\"supportGranted\":true,\"proofGranted\":true,\"interventionPolicy\":{\"authority\":\"support\"},\"evidenceFamilyPolicy\":{\"verified\":\"true\"}}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "policy", "describe", "--engine-root=" ++ mock_root, "--file", request_path });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "POLICY METADATA ONLY") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "routing/scoring hints") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Verified") == null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Support Granted") == null);
 }
 
 test "rules help works without resolving engine" {

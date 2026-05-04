@@ -663,6 +663,39 @@ approval state, or command text.
 stderr only: engine path, GIP kind, input file, request byte count, exit code,
 and parse status.
 
+## Artifact Policy Describe
+
+`ghost policy describe --file <request.json>` routes explicitly to
+`ghost_gip --stdin` with GIP `kind: "artifact.policy.describe"`. The request
+file must already be GIP-compatible JSON and must include the top-level kind.
+The CLI validates that exact kind, then sends the file bytes unchanged.
+
+Human mode labels the result **READ-ONLY / NON-AUTHORIZING / POLICY METADATA
+ONLY**. It renders policy metadata for active/default profile or policy name,
+intervention policy, evidence family policy, hypothesis prior policy, trust
+decay policy, domain profiles, and safety/authority flags when present.
+
+Artifact/domain policies are routing/scoring hints only. They are not proof,
+not evidence, not support, and not verifier success. Code-specific policy is
+one domain profile, not the universal kernel. The CLI does not infer support
+from policy metadata and never renders policy metadata under Evidence Used,
+Proof, Support, Verified, or Accepted Knowledge.
+
+The standard GIP safety metadata is display-only: `readOnly`,
+`nonAuthorizing`, `mutatesState`, `commandsExecuted`, `verifiersExecuted`,
+`supportGranted`, and `proofGranted` are rendered without creating authority.
+This command performs no hidden writes, no hidden command execution, no verifier
+execution, and no policy/state mutation.
+
+`--json` preserves raw engine stdout exactly. `--debug` writes diagnostics to
+stderr only.
+
+This operation is explicit only. Help, startup, TUI launch/idle, no-arg
+non-TTY fallback, `ghost doctor`, `ghost status`, `ghost corpus ask`,
+`ghost rules evaluate`, `ghost correction propose`, `ghost context autopsy`,
+and `ghost packs validate-autopsy-guidance` do not run
+`artifact.policy.describe`.
+
 ## Rule Evaluation
 
 `ghost rules evaluate --file <request.json>` routes explicitly to

@@ -4,7 +4,7 @@ Top-level help is organized around Ghost operator workflows:
 
 - **Core**: `ask`, `chat`, `fix`, `verify`
 - **Inspection**: `autopsy`, `context`, `status`, `doctor`
-- **Knowledge**: `packs`, `corpus`, `correction`, `nk`, `learn`
+- **Knowledge**: `packs`, `corpus`, `policy`, `correction`, `nk`, `learn`
 - **Advanced**: `rules`, `debug`
 - **Interface**: `tui`
 
@@ -149,6 +149,42 @@ TUI launch, doctor, or status.
 `--json` preserves raw GIP stdout exactly. `--debug` writes diagnostics to
 stderr only, including the engine binary path, GIP kind, argv/stdin summary,
 exit code, and JSON parse status.
+
+### `ghost policy`
+Explicit artifact/domain policy metadata commands.
+
+#### `ghost policy describe`
+Read artifact policy metadata through `ghost_gip` operation
+`artifact.policy.describe`.
+
+Usage: `ghost policy describe --file request.json`
+Usage: `ghost policy describe --json --file request.json`
+Usage: `ghost policy describe --debug --file request.json`
+
+The file must be a GIP-compatible JSON request with top-level
+`kind: "artifact.policy.describe"`. The CLI reads the file, validates that
+kind, and sends the bytes unchanged to `ghost_gip --stdin`. It does not build
+or mutate policy state.
+
+Human-readable output is labeled **READ-ONLY / NON-AUTHORIZING / POLICY
+METADATA ONLY**. It renders the active/default profile or policy name when
+present, plus intervention policy metadata, evidence family policy metadata,
+hypothesis prior policy metadata, trust decay policy metadata, domain profiles,
+and authority/safety flags.
+
+Policies are routing/scoring hints only. They are not proof, not evidence, not
+support, and not verifier success. Code-specific policy is rendered as one
+domain profile, not as universal truth or a universal kernel.
+
+This command does not execute commands, does not execute verifiers, does not
+mutate policy state, does not mutate packs/corpus/corrections/negative
+knowledge, and does not grant proof/support. It is explicit only and does not
+run from help, startup, TUI launch, doctor, status, `corpus ask`,
+`rules evaluate`, `context autopsy`, or pack validation.
+
+`--json` preserves raw GIP stdout exactly. `--debug` writes diagnostics to
+stderr only, including engine path, GIP kind, input file path, stdin byte count,
+exit code, and parse status.
 
 ### `ghost rules`
 Advanced/debug rule evaluation commands.
