@@ -103,10 +103,11 @@ pub fn renderWithSize(writer: anytype, s: *state.SessionState, style: Style, siz
         style.reset(),
     });
 
-    try writer.print("\x1b[{d};1H{s}\x1b[K status={s} | corr={d} nk={d}/{d} verifier_req={d} suppress={d} route={d} | debug={s} json={s} read_only={s}{s}", .{
+    try writer.print("\x1b[{d};1H{s}\x1b[K status={s} | packs={d} | corr={d} nk={d}/{d} verifier_req={d} suppress={d} route={d} | debug={s} json={s} read_only={s}{s}", .{
         status_row,
         style.status(),
         s.last_command_status,
+        s.last_counters.mounted_packs,
         s.last_counters.corrections,
         s.last_counters.nk_applied,
         s.last_counters.nk_candidates,
@@ -153,11 +154,12 @@ pub fn renderCompactWithSize(writer: anytype, s: *state.SessionState, style: Sty
     try prepareFrame(writer, s, size, suggestion_height, suggestion_panel_bottom, 2, style);
 
     try writer.print("\x1b[2;{d}r", .{historyBottomRow(size, suggestion_height)});
-    try writer.print("\x1b[{d};1H{s}\x1b[K Ghost {s} | {s} | retained={d}/{d} pruned={d} draft={d} verified={d} unresolved={d} | debug={s} read_only={s} | context={s}{s}", .{
+    try writer.print("\x1b[{d};1H{s}\x1b[K Ghost {s} | {s} | packs={d} | retained={d}/{d} pruned={d} draft={d} verified={d} unresolved={d} | debug={s} read_only={s} | context={s}{s}", .{
         status_row,
         style.status(),
         s.version,
         s.reasoning.toStr(),
+        s.last_counters.mounted_packs,
         s.history.items.len,
         s.total_turns,
         s.pruned_turns,
@@ -233,6 +235,7 @@ pub fn renderStatus(writer: anytype, s: *state.SessionState, style: Style) !void
         \\  total_turns={d}
         \\  pruned_turns={d}
         \\  reasoning={s}
+        \\  mounted_packs={d}
         \\  debug={s}
         \\  json={s}
         \\  read_only={s}
@@ -247,6 +250,7 @@ pub fn renderStatus(writer: anytype, s: *state.SessionState, style: Style) !void
         s.total_turns,
         s.pruned_turns,
         s.reasoning.toStr(),
+        s.last_counters.mounted_packs,
         if (s.debug) "on" else "off",
         if (s.json_mode) "on" else "off",
         if (s.read_only) "on" else "off",

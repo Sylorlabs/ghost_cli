@@ -89,12 +89,15 @@ pub fn printEngineOutput(writer: anytype, response: json_contracts.EngineRespons
 
 pub fn printDebugFieldDetection(writer: anytype, response: json_contracts.EngineResponse) !void {
     const counters = json_contracts.renderCounters(response);
+    const packs_considered = response.mounted_packs_considered orelse response.mountedPacksConsidered orelse 0;
     try writer.print("[DEBUG] Field Detection: corrections={s} negative_knowledge={s} epistemic_render={s}\n", .{
         if (response.getCorrections() != null) "yes" else "no",
         if (response.getNegativeKnowledge() != null) "yes" else "no",
         if (response.getEpistemicRender() != null) "yes" else "no",
     });
-    try writer.print("[DEBUG] Render Counts: corrections={d} nk_applied={d} nk_candidates={d} verifier_requirements={d} suppressions={d} routing_warnings={d} trust_decay_candidates={d}\n", .{
+    try writer.print("[DEBUG] Render Counts: packs={d} packs_considered={d} corrections={d} nk_applied={d} nk_candidates={d} verifier_requirements={d} suppressions={d} routing_warnings={d} trust_decay_candidates={d}\n", .{
+        counters.mounted_packs,
+        packs_considered,
         counters.corrections,
         counters.nk_applied,
         counters.nk_candidates,

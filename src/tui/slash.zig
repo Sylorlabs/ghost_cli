@@ -12,6 +12,7 @@ pub const SlashKind = enum {
     doctor,
     autopsy,
     context,
+    mount,
     unknown,
 };
 
@@ -38,6 +39,7 @@ pub const commands = [_]SlashCommandSpec{
     .{ .name = "/doctor", .kind = .doctor, .help = "Run explicit read-only diagnostics" },
     .{ .name = "/autopsy", .kind = .autopsy, .args = " <path>", .help = "Run explicit Project Autopsy scan" },
     .{ .name = "/context", .kind = .context, .args = " <path>", .help = "Set context artifact path" },
+    .{ .name = "/mount", .kind = .mount, .args = " <pack>", .help = "Mount knowledge pack" },
 };
 
 pub fn parse(text: []const u8) SlashCommand {

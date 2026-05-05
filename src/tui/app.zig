@@ -10,6 +10,7 @@ const json_contracts = @import("../engine/json_contracts.zig");
 const terminal_render = @import("../render/terminal.zig");
 const doctor = @import("../commands/doctor.zig");
 const autopsy = @import("../commands/autopsy.zig");
+const packs = @import("../commands/packs.zig");
 
 pub const SlashKind = slash.SlashKind;
 pub const SlashCommand = slash.SlashCommand;
@@ -46,7 +47,7 @@ pub fn shouldSubmitToEngineInMode(text: []const u8, read_only: bool) bool {
 
 pub fn isReadOnlyBlockedCommand(command: SlashCommand) bool {
     return switch (command.kind) {
-        .doctor, .autopsy => true,
+        .doctor, .autopsy, .mount => true,
         else => false,
     };
 }
@@ -285,6 +286,24 @@ pub fn handleSlash(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *s
                 s.context_artifact = try allocator.dupe(u8, path);
                 s.last_command_status = "context changed";
                 try render.renderCommandMessage(writer, style, "context={s}", .{path});
+            }
+        },
+        .mount => {
+            const pack = command.arg orelse "";
+            if (pack.len == 0) {
+                s.last_command_status = "mount pack required";
+                try render.renderErrorMessage(writer, style, "/mount requires a pack id", .{});
+            } else {
+                s.last_command_status = "mount requested";
+                try render.renderCommandMessage(writer, style, "mount: {s}", .{pack});
+                // We use standard executeMount which handles runner.run
+                packs.execute(allocator, engine_root, .{
+                    .subcommand = "mount",
+                    .pack_id = pack,
+                    .debug = s.debug,
+                }) catch |err| {
+                    try render.renderErrorMessage(writer, style, "Mount failed: {}", .{err});
+                };
             }
         },
         .unknown => {

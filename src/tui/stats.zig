@@ -35,3 +35,7 @@ pub fn formatBytes(allocator: std.mem.Allocator, bytes: usize) ![]u8 {
     if (bytes < 1024 * 1024) return std.fmt.allocPrint(allocator, "{d}KB", .{bytes / 1024});
     return std.fmt.allocPrint(allocator, "{d}MB", .{bytes / (1024 * 1024)});
 }
+
+pub fn formatPacks(allocator: std.mem.Allocator, count: usize) ![]u8 {
+    return std.fmt.allocPrint(allocator, "{d}", .{count});
+}

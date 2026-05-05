@@ -182,6 +182,12 @@ pub const EngineResponse = struct {
     partial_findings: ?std.json.Value = null,
     verifier_summaries: ?std.json.Value = null,
 
+    // Telemetry
+    mountedPacksConsidered: ?usize = null,
+    mounted_packs_considered: ?usize = null,
+    mountedPacks: ?usize = null,
+    mounted_packs: ?usize = null,
+
     // Correction / negative-knowledge / epistemic renderer fields.
     // Keep these as raw JSON values: the CLI renders labels only and does not
     // reinterpret engine proof, support, verifier, or mutation semantics.
@@ -362,10 +368,12 @@ pub const RenderCounters = struct {
     suppressions: usize = 0,
     routing_warnings: usize = 0,
     trust_decay_candidates: usize = 0,
+    mounted_packs: usize = 0,
 };
 
 pub fn renderCounters(response: EngineResponse) RenderCounters {
     var counters = RenderCounters{};
+    counters.mounted_packs = response.mounted_packs orelse response.mountedPacks orelse 0;
     if (response.getCorrections()) |corrections| {
         counters.corrections = countItems(corrections);
     }

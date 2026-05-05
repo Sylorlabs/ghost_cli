@@ -27,17 +27,19 @@ pub fn printHelp(writer: anytype) !void {
     try writer.print(
         \\learn
         \\
-        \\Usage: ghost learn <candidates|show|export|status|plan> [options]
+        \\Usage: ghost learn <candidates|show|export|status|review|plan> [options]
         \\
         \\Subcommands:
         \\  candidates --project-shard=<id>
         \\  show <candidate-id> --project-shard=<id>
         \\  export <candidate-id> --project-shard=<id> --pack-id=<id> --version=<v> --approve
         \\  status --project-shard=<id> [--include-records] [--limit=<n>] [--no-warnings]
+        \\  review --file <request.json> [--json] [--debug]
         \\  plan --file <request.json> [--json] [--debug]
         \\
         \\Safety:
         \\  learning.status is explicit and read-only.
+        \\  learning.review is explicit, append-only, and non-authorizing.
         \\  learning.loop.plan is explicit, read-only, candidate-only, and non-authorizing.
         \\  Scoreboard counts are diagnostics only, not proof or evidence.
         \\  Learning loop plans do not execute commands or verifiers, apply patches,
@@ -55,8 +57,37 @@ pub fn printHelp(writer: anytype) !void {
 pub fn printHelpForArgs(writer: anytype, args: []const []const u8) !void {
     if (args.len == 0) return printHelp(writer);
     if (std.mem.eql(u8, args[0], "status")) return printStatusHelp(writer);
+    if (std.mem.eql(u8, args[0], "review")) return printReviewHelp(writer);
     if (std.mem.eql(u8, args[0], "plan")) return printPlanHelp(writer);
     return printHelp(writer);
+}
+
+fn printReviewHelp(writer: anytype) !void {
+    try writer.print(
+        \\learn review
+        \\
+        \\Usage: ghost learn review --file <request.json> [--json] [--debug]
+        \\
+        \\Reads a GIP-compatible learning review request from a file and sends
+        \\the file bytes unchanged to ghost_gip --stdin. The request must include
+        \\kind "learning.review".
+        \\
+        \\Options:
+        \\  --file <request.json>     learning.review GIP request file
+        \\  --json                    Preserve raw GIP stdout exactly
+        \\  --debug                   Diagnostics to stderr only
+        \\
+        \\Safety:
+        \\  APPEND-ONLY.
+        \\  NON-AUTHORIZING.
+        \\  NOT PROOF.
+        \\  NOT EVIDENCE.
+        \\  NO GLOBAL PROMOTION.
+        \\  NO CORPUS / PACK / NEGATIVE-KNOWLEDGE MUTATION.
+        \\  COMMANDS NOT EXECUTED.
+        \\  VERIFIERS NOT EXECUTED.
+        \\
+    , .{});
 }
 
 fn printStatusHelp(writer: anytype) !void {
@@ -130,6 +161,8 @@ pub fn execute(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: 
         try executeExport(allocator, engine_root, options);
     } else if (std.mem.eql(u8, options.subcommand, "status")) {
         try executeStatus(allocator, engine_root, options);
+    } else if (std.mem.eql(u8, options.subcommand, "review")) {
+        try executeReview(allocator, engine_root, options);
     } else if (std.mem.eql(u8, options.subcommand, "plan")) {
         try executePlan(allocator, engine_root, options);
     } else if (std.mem.eql(u8, options.subcommand, "feedback")) {
@@ -387,6 +420,93 @@ fn executePlan(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: 
     try printLearningLoopPlanResult(std.io.getStdOut().writer(), out_parsed.value);
 }
 
+fn executeReview(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: LearnOptions) !void {
+    const file_path = options.file_path orelse {
+        try std.io.getStdErr().writer().print("Usage: ghost learn review --file <request.json> [--json] [--debug]\n", .{});
+        std.process.exit(1);
+    };
+    if (std.mem.trim(u8, file_path, " \r\n\t").len == 0) {
+        try std.io.getStdErr().writer().print("learn review --file must be non-empty\n", .{});
+        std.process.exit(1);
+    }
+
+    const request = std.fs.cwd().readFileAlloc(allocator, file_path, max_request_bytes) catch |err| {
+        try std.io.getStdErr().writer().print("Error: failed to read learning.review request file '{s}': {s}\n", .{ file_path, @errorName(err) });
+        std.process.exit(1);
+    };
+    defer allocator.free(request);
+
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, request, .{}) catch |err| {
+        if (options.debug) try std.io.getStdErr().writer().print("[DEBUG] Parse Status: FAILED ({s})\n", .{@errorName(err)});
+        try std.io.getStdErr().writer().print("Error: learning.review request file is not valid JSON: {s}\n", .{@errorName(err)});
+        std.process.exit(1);
+    };
+    defer parsed.deinit();
+
+    if (!hasKind(parsed.value, "learning.review")) {
+        if (options.debug) try std.io.getStdErr().writer().print("[DEBUG] Parse Status: FAILED (kind mismatch)\n", .{});
+        try std.io.getStdErr().writer().print("Error: request file must contain top-level kind \"learning.review\".\n", .{});
+        std.process.exit(1);
+    }
+
+    const bin_path = locator.findEngineBinary(allocator, engine_root, .ghost_gip) catch |err| {
+        try locator.printLocatorError(std.io.getStdErr().writer(), .ghost_gip, engine_root, err);
+        std.process.exit(1);
+    };
+    defer allocator.free(bin_path);
+
+    const argv = &[_][]const u8{ bin_path, "--stdin" };
+    if (options.debug) {
+        try std.io.getStdErr().writer().print("[DEBUG] Engine Binary: {s}\n", .{bin_path});
+        try std.io.getStdErr().writer().print("[DEBUG] GIP Kind: learning.review\n", .{});
+        try std.io.getStdErr().writer().print("[DEBUG] Input File: {s}\n", .{file_path});
+        try std.io.getStdErr().writer().print("[DEBUG] Stdin Byte Count: {d}\n", .{request.len});
+    }
+
+    const result = process.runEngineCommandWithInput(allocator, argv, request) catch |err| {
+        try std.io.getStdErr().writer().print("\x1b[31m[!] Error:\x1b[0m Failed to execute learning.review: {}\n", .{err});
+        try std.io.getStdErr().writer().print("\x1b[33mHint:\x1b[0m Run `ghost status` to verify your environment.\n", .{});
+        std.process.exit(1);
+    };
+    defer {
+        allocator.free(result.stdout);
+        allocator.free(result.stderr);
+    }
+
+    if (options.debug) try std.io.getStdErr().writer().print("[DEBUG] Exit Code: {d}\n", .{result.exit_code});
+
+    if (options.json) {
+        if (options.debug) try std.io.getStdErr().writer().print("[DEBUG] Parse Status: SKIPPED (raw passthrough)\n", .{});
+        try std.io.getStdOut().writer().writeAll(result.stdout);
+        if (result.stderr.len > 0) try std.io.getStdErr().writer().writeAll(result.stderr);
+        if (result.exit_code != 0) std.process.exit(result.exit_code);
+        return;
+    }
+
+    if (result.exit_code != 0) {
+        try std.io.getStdErr().writer().print("\x1b[31m[!] Engine Error (Exit Code {d}):\x1b[0m\n", .{result.exit_code});
+        if (result.stderr.len > 0) {
+            try std.io.getStdErr().writer().writeAll(result.stderr);
+            if (result.stderr[result.stderr.len - 1] != '\n') try std.io.getStdErr().writer().writeByte('\n');
+        } else if (result.stdout.len > 0) {
+            try std.io.getStdErr().writer().writeAll(result.stdout);
+            if (result.stdout[result.stdout.len - 1] != '\n') try std.io.getStdErr().writer().writeByte('\n');
+        }
+        std.process.exit(result.exit_code);
+    }
+
+    var out_parsed = std.json.parseFromSlice(std.json.Value, allocator, result.stdout, .{}) catch |err| {
+        if (options.debug) try std.io.getStdErr().writer().print("[DEBUG] Parse Status: FAILED ({s})\n", .{@errorName(err)});
+        try std.io.getStdErr().writer().print("Error: Failed to parse engine output as learning.review JSON.\n", .{});
+        try std.io.getStdErr().writer().print("Raw output:\n{s}\n", .{result.stdout});
+        return;
+    };
+    defer out_parsed.deinit();
+
+    if (options.debug) try std.io.getStdErr().writer().print("[DEBUG] Parse Status: ok\n", .{});
+    try printLearningReviewResult(std.io.getStdOut().writer(), out_parsed.value);
+}
+
 fn executeStatus(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: LearnOptions) !void {
     const shard = options.project_shard orelse {
         std.debug.print("\x1b[31m[!] Error:\x1b[0m --project-shard is required for learn status\n", .{});
@@ -543,6 +663,60 @@ fn printLearningLoopPlanResult(writer: anytype, value: std.json.Value) !void {
     try writer.print("\nNotice: learning.loop.plan is a read-only candidate plan derived by the engine. Rendering it does not execute commands, run verifier refs, apply patches, ingest failures, accept corrections, promote negative knowledge, mutate packs/corpus/trust/snapshots/scratch, or grant proof/support.\n", .{});
 }
 
+fn printLearningReviewResult(writer: anytype, value: std.json.Value) !void {
+    try writer.print("REVIEWED LEARNING RECORD / APPEND-ONLY / NON-AUTHORIZING\n", .{});
+    try writer.print("APPEND-ONLY\n", .{});
+    try writer.print("NON-AUTHORIZING\n", .{});
+    try writer.print("NOT PROOF\n", .{});
+    try writer.print("NOT EVIDENCE\n", .{});
+    try writer.print("NO GLOBAL PROMOTION\n", .{});
+    try writer.print("NO CORPUS / PACK / NEGATIVE-KNOWLEDGE MUTATION\n", .{});
+    try writer.print("COMMANDS NOT EXECUTED\n", .{});
+    try writer.print("VERIFIERS NOT EXECUTED\n\n", .{});
+
+    if (findError(value)) |err_value| {
+        if (isConflictError(err_value) or isConflictReview(findLearningReview(value))) {
+            try writer.print("\x1b[33mCONFLICT WARNING\x1b[0m\n", .{});
+            try writer.print("Accepted learning was refused because it overlaps contradictory same-shard learning.\n", .{});
+            if (findLearningReview(value)) |review_value| {
+                if (review_value == .object) {
+                    try printField(writer, review_value.object, "status", "Status");
+                    try printField(writer, review_value.object, "appendRefused", "Append Refused");
+                    try printSection(writer, review_value.object, "conflictsWithRecordIds", "Conflicts With Record IDs");
+                    try printSection(writer, review_value.object, "conflicts_with_record_ids", "Conflicts With Record IDs");
+                    try printField(writer, review_value.object, "reason", "Reason");
+                    try writer.print("\n", .{});
+                }
+            }
+        }
+        try writer.print("Engine Rejected Request:\n", .{});
+        try printJsonValue(writer, err_value, 2);
+        try writer.print("\n", .{});
+        return;
+    }
+
+    const review_value = findLearningReview(value) orelse {
+        try writer.print("No learningReview result payload was present.\n", .{});
+        return;
+    };
+    const review = switch (review_value) {
+        .object => |obj| obj,
+        else => {
+            try printJsonValue(writer, review_value, 2);
+            try writer.print("\n", .{});
+            return;
+        },
+    };
+
+    try printField(writer, review, "status", "Status");
+    try printSection(writer, review, "reviewedLearningRecord", "Reviewed Learning Record");
+    try printSection(writer, review, "reviewed_learning_record", "Reviewed Learning Record");
+    try printSection(writer, review, "storage", "Storage Metadata");
+    try printSection(writer, review, "mutationFlags", "Mutation Flags");
+    try printSection(writer, review, "mutation_flags", "Mutation Flags");
+    try printSection(writer, review, "authority", "Authority Flags");
+}
+
 fn printLearningStatusResult(writer: anytype, value: std.json.Value) !void {
     try writer.print("LEARNING LOOP STATUS / READ-ONLY\n", .{});
     try writer.print("READ-ONLY\n", .{});
@@ -583,6 +757,8 @@ fn printLearningStatusResult(writer: anytype, value: std.json.Value) !void {
     try printSection(writer, status, "correction_summary", "Correction Summary");
     try printSection(writer, status, "negativeKnowledgeSummary", "Negative Knowledge Summary");
     try printSection(writer, status, "negative_knowledge_summary", "Negative Knowledge Summary");
+    try printSection(writer, status, "reviewedLearningSummary", "Reviewed Learning Summary");
+    try printSection(writer, status, "reviewed_learning_summary", "Reviewed Learning Summary");
     try printSection(writer, status, "influenceSummary", "Influence Summary");
     try printSection(writer, status, "influence_summary", "Influence Summary");
     try printSection(writer, status, "warningSummary", "Warning Summary");
@@ -617,6 +793,44 @@ fn findLearningLoopPlan(value: std.json.Value) ?std.json.Value {
         return result;
     }
     return null;
+}
+
+fn findLearningReview(value: std.json.Value) ?std.json.Value {
+    const obj = switch (value) {
+        .object => |o| o,
+        else => return null,
+    };
+    if (obj.get("learningReview")) |review| return review;
+    if (obj.get("learning_review")) |review| return review;
+    if (obj.get("result")) |result| {
+        const result_obj = switch (result) {
+            .object => |o| o,
+            else => return result,
+        };
+        if (result_obj.get("learningReview")) |review| return review;
+        if (result_obj.get("learning_review")) |review| return review;
+        return result;
+    }
+    return null;
+}
+
+fn isConflictReview(maybe_review: ?std.json.Value) bool {
+    const review_value = maybe_review orelse return false;
+    const obj = switch (review_value) {
+        .object => |o| o,
+        else => return false,
+    };
+    const status = obj.get("status") orelse return false;
+    return status == .string and std.mem.eql(u8, status.string, "ConflictDetected");
+}
+
+fn isConflictError(value: std.json.Value) bool {
+    const obj = switch (value) {
+        .object => |o| o,
+        else => return false,
+    };
+    const code = obj.get("code") orelse return false;
+    return code == .string and (std.mem.eql(u8, code.string, "conflict_detected") or std.mem.eql(u8, code.string, "ConflictDetected"));
 }
 
 fn findLearningStatus(value: std.json.Value) ?std.json.Value {

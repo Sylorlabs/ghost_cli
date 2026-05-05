@@ -432,7 +432,7 @@ fn runChatLike(allocator: std.mem.Allocator, root: ?[]const u8, parsed: *ParsedC
 
 fn runLearn(allocator: std.mem.Allocator, root: ?[]const u8, parsed: ParsedCli) !void {
     const sub = if (parsed.leftover_args.items.len > 0) parsed.leftover_args.items[0] else {
-        try std.io.getStdErr().writer().print("Usage: ghost learn <candidates|show|export|status|plan>\n", .{});
+        try std.io.getStdErr().writer().print("Usage: ghost learn <candidates|show|export|status|review|plan>\n", .{});
         return;
     };
     var c_id: ?[]const u8 = null;
@@ -484,7 +484,7 @@ fn runLearn(allocator: std.mem.Allocator, root: ?[]const u8, parsed: ParsedCli) 
                 try std.io.getStdErr().writer().print("Unexpected learn status argument: {s}\n", .{arg});
                 std.process.exit(1);
             }
-        } else if (std.mem.eql(u8, sub, "plan")) {
+        } else if (std.mem.eql(u8, sub, "plan") or std.mem.eql(u8, sub, "review")) {
             if (std.mem.eql(u8, arg, "--file")) {
                 i += 1;
                 if (i >= parsed.leftover_args.items.len) {
@@ -500,10 +500,10 @@ fn runLearn(allocator: std.mem.Allocator, root: ?[]const u8, parsed: ParsedCli) 
                 }
                 file_path = value;
             } else if (std.mem.startsWith(u8, arg, "--")) {
-                try std.io.getStdErr().writer().print("Unknown learn plan option: {s}\n", .{arg});
+                try std.io.getStdErr().writer().print("Unknown learn {s} option: {s}\n", .{ sub, arg });
                 std.process.exit(1);
             } else {
-                try std.io.getStdErr().writer().print("Unexpected learn plan argument: {s}\n", .{arg});
+                try std.io.getStdErr().writer().print("Unexpected learn {s} argument: {s}\n", .{ sub, arg });
                 std.process.exit(1);
             }
         } else if (c_id == null and !std.mem.startsWith(u8, arg, "--")) {

@@ -839,8 +839,8 @@ test "TUI slash command suggestions use prefix and fuzzy matching" {
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "+-- slash commands ") != null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "/help") != null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "/context") != null);
-    try testing.expectEqual(@as(u16, 12), session.previous_suggestion_height);
-    try testing.expectEqual(@as(u16, 12), tui_render.suggestionHeight("/", .{ .rows = 24, .cols = 80 }, false));
+    try testing.expectEqual(@as(u16, 13), session.previous_suggestion_height);
+    try testing.expectEqual(@as(u16, 13), tui_render.suggestionHeight("/", .{ .rows = 24, .cols = 80 }, false));
     try testing.expectEqual(@as(u16, 3), tui_render.suggestionHeight("/r", .{ .rows = 24, .cols = 80 }, false));
     try testing.expectEqual(@as(u16, 3), tui_render.suggestionHeight("/notreal", .{ .rows = 24, .cols = 80 }, false));
     try testing.expectEqual(@as(u16, 0), tui_render.suggestionHeight("normal prompt", .{ .rows = 24, .cols = 80 }, false));
