@@ -565,15 +565,9 @@ fn printCorpusAskResult(writer: anytype, value: std.json.Value) !void {
         nk_telemetry,
     );
     const answer_suppressed_by_correction = !has_answer and hasCorrectionSuppression(
-        accepted_correction_warnings,
-        correction_influences,
-        future_behavior_candidates,
         influence_telemetry,
     );
     const answer_suppressed_by_nk = !has_answer and hasReviewedNegativeKnowledgeSuppression(
-        accepted_nk_warnings,
-        nk_influences,
-        future_behavior_candidates,
         nk_telemetry,
     );
     if ((if (capacity_telemetry) |telemetry| hasCapacityPressure(telemetry) else false) or hasUnknownKind(unknowns, "capacity_limited")) {
@@ -668,6 +662,7 @@ fn printCorpusAskResult(writer: anytype, value: std.json.Value) !void {
         try printOptionalTraceField(writer, trace, "maxResults");
         try printOptionalTraceField(writer, trace, "maxSnippetBytes");
         try printOptionalTraceField(writer, trace, "requireCitations");
+        try printOptionalTraceField(writer, trace, "mountedPacksConsidered");
     }
 
     try writer.print("\nNotice: This output is a DRAFT and NON-AUTHORIZING.\n", .{});
@@ -726,28 +721,12 @@ fn hasReviewedNegativeKnowledgeInfluence(
         (if (telemetry) |v| hasNegativeKnowledgeTelemetrySignal(v) else false);
 }
 
-fn hasCorrectionSuppression(
-    warnings: ?std.json.Value,
-    influences: ?std.json.Value,
-    future_candidates: ?std.json.Value,
-    telemetry: ?std.json.Value,
-) bool {
-    return (if (warnings) |v| jsonContainsAny(v, &.{ "wrong_answer", "suppress", "suppressed", "repeated" }) else false) or
-        (if (influences) |v| jsonContainsAny(v, &.{ "wrong_answer", "suppress", "suppressed", "repeated" }) else false) or
-        (if (future_candidates) |v| jsonContainsAny(v, &.{ "wrong_answer", "suppress", "suppressed", "repeated" }) else false) or
-        (if (telemetry) |v| jsonContainsAny(v, &.{ "wrong_answer", "suppress", "suppressed", "repeated" }) else false);
+fn hasCorrectionSuppression(telemetry: ?std.json.Value) bool {
+    return if (telemetry) |v| hasBoolOrPressureField(v, "answerSuppressed") else false;
 }
 
-fn hasReviewedNegativeKnowledgeSuppression(
-    warnings: ?std.json.Value,
-    influences: ?std.json.Value,
-    future_candidates: ?std.json.Value,
-    telemetry: ?std.json.Value,
-) bool {
-    return (if (warnings) |v| jsonContainsAny(v, &.{ "known-bad", "suppress", "suppressed", "repeated" }) else false) or
-        (if (influences) |v| jsonContainsAny(v, &.{ "known-bad", "suppress", "suppressed", "repeated", "suppress_exact_repeat" }) else false) or
-        (if (future_candidates) |v| jsonContainsAny(v, &.{ "known-bad", "suppress", "suppressed", "repeated" }) else false) or
-        (if (telemetry) |v| hasBoolOrPressureField(v, "answerSuppressed") else false);
+fn hasReviewedNegativeKnowledgeSuppression(telemetry: ?std.json.Value) bool {
+    return if (telemetry) |v| hasBoolOrPressureField(v, "answerSuppressed") else false;
 }
 
 fn printAcceptedCorrectionInfluence(
@@ -810,7 +789,7 @@ fn printReviewedNegativeKnowledgeInfluence(
     try writer.print("- This is not evidence.\n", .{});
     try writer.print("- No corpus, pack, correction, or negative-knowledge mutation occurred.\n", .{});
     try writer.print("- Future behavior remains candidate-only unless separately reviewed/applied.\n", .{});
-    if (hasReviewedNegativeKnowledgeSuppression(warnings, influences, future_candidates, telemetry)) {
+    if (hasReviewedNegativeKnowledgeSuppression(telemetry)) {
         try writer.print("- The output was suppressed by reviewed negative knowledge influence and is not rendered as active.\n", .{});
     }
     if (warnings) |value| {
