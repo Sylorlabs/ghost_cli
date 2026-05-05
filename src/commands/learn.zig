@@ -449,6 +449,31 @@ fn executeReview(allocator: std.mem.Allocator, engine_root: ?[]const u8, options
         std.process.exit(1);
     }
 
+    if (parsed.value == .object) {
+        if (parsed.value.object.get("learningCandidate")) |cand_val| {
+            if (cand_val == .object) {
+                if (cand_val.object.get("selfReview")) |sr_val| {
+                    if (sr_val == .object) {
+                        if (sr_val.object.get("status")) |status_val| {
+                            if (status_val == .string and std.mem.eql(u8, status_val.string, "failed")) {
+                                try std.io.getStdErr().writer().print("\x1b[31mENGINE AUTO-REJECT SUGGESTION\x1b[0m\n", .{});
+                                if (sr_val.object.get("matchingRules")) |rules_val| {
+                                    if (rules_val == .array) {
+                                        for (rules_val.array.items) |rule_item| {
+                                            if (rule_item == .string) {
+                                                try std.io.getStdErr().writer().print("\x1b[31mConflicting rule: {s}\x1b[0m\n", .{rule_item.string});
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     const bin_path = locator.findEngineBinary(allocator, engine_root, .ghost_gip) catch |err| {
         try locator.printLocatorError(std.io.getStdErr().writer(), .ghost_gip, engine_root, err);
         std.process.exit(1);
@@ -759,6 +784,7 @@ fn printLearningStatusResult(writer: anytype, value: std.json.Value) !void {
     try printSection(writer, status, "negative_knowledge_summary", "Negative Knowledge Summary");
     try printSection(writer, status, "reviewedLearningSummary", "Reviewed Learning Summary");
     try printSection(writer, status, "reviewed_learning_summary", "Reviewed Learning Summary");
+    try printSection(writer, status, "selfVerificationScoreboard", "Self-Verification Scoreboard");
     try printSection(writer, status, "influenceSummary", "Influence Summary");
     try printSection(writer, status, "influence_summary", "Influence Summary");
     try printSection(writer, status, "warningSummary", "Warning Summary");
