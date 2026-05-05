@@ -641,11 +641,15 @@ fn executeMount(allocator: std.mem.Allocator, engine_root: ?[]const u8, options:
     defer argv.deinit();
 
     try argv.append("mount");
-    try argv.append(pack_id);
+    const pack_id_arg = try std.fmt.allocPrint(allocator, "--pack-id={s}", .{pack_id});
+    defer allocator.free(pack_id_arg);
+    try argv.append(pack_id_arg);
 
+    var version_arg: ?[]u8 = null;
+    defer if (version_arg) |arg| allocator.free(arg);
     if (options.version) |v| {
-        try argv.append("--version");
-        try argv.append(v);
+        version_arg = try std.fmt.allocPrint(allocator, "--version={s}", .{v});
+        try argv.append(version_arg.?);
     }
 
     const res = try runner.run(allocator, .{
@@ -674,11 +678,15 @@ fn executeUnmount(allocator: std.mem.Allocator, engine_root: ?[]const u8, option
     defer argv.deinit();
 
     try argv.append("unmount");
-    try argv.append(pack_id);
+    const pack_id_arg = try std.fmt.allocPrint(allocator, "--pack-id={s}", .{pack_id});
+    defer allocator.free(pack_id_arg);
+    try argv.append(pack_id_arg);
 
+    var version_arg: ?[]u8 = null;
+    defer if (version_arg) |arg| allocator.free(arg);
     if (options.version) |v| {
-        try argv.append("--version");
-        try argv.append(v);
+        version_arg = try std.fmt.allocPrint(allocator, "--version={s}", .{v});
+        try argv.append(version_arg.?);
     }
 
     const res = try runner.run(allocator, .{

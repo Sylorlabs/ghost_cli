@@ -20,12 +20,18 @@ pub const Turn = struct {
     json_ok: bool,
 };
 
+pub const ActiveSessionMount = struct {
+    pack_id: []const u8,
+    pack_version: []const u8,
+};
+
 pub const SessionState = struct {
     allocator: std.mem.Allocator,
     history: std.ArrayList(Turn),
     current_input: std.ArrayList(u8),
     reasoning: json_contracts.ReasoningLevel,
     context_artifact: ?[]const u8,
+    project_shard: ?[]const u8,
     debug: bool,
     json_mode: bool,
     compact: bool,
@@ -55,6 +61,7 @@ pub const SessionState = struct {
     previous_render_rows: u16,
     previous_render_cols: u16,
     suggestion_index: usize,
+    active_session_mounts: std.ArrayList(ActiveSessionMount),
 
     pub fn init(allocator: std.mem.Allocator, version: []const u8, engine_root_label: ?[]const u8, compact: bool) SessionState {
         return initWithLimit(allocator, version, engine_root_label, compact, default_max_history_turns);
@@ -67,6 +74,7 @@ pub const SessionState = struct {
             .current_input = std.ArrayList(u8).init(allocator),
             .reasoning = .balanced,
             .context_artifact = null,
+            .project_shard = null,
             .debug = false,
             .json_mode = false,
             .compact = compact,
@@ -96,6 +104,7 @@ pub const SessionState = struct {
             .previous_render_rows = 0,
             .previous_render_cols = 0,
             .suggestion_index = 0,
+            .active_session_mounts = std.ArrayList(ActiveSessionMount).init(allocator),
         };
     }
 
@@ -106,7 +115,23 @@ pub const SessionState = struct {
         self.history.deinit();
         self.current_input.deinit();
         self.warnings.deinit();
+        for (self.active_session_mounts.items) |mount| {
+            self.allocator.free(mount.pack_id);
+            self.allocator.free(mount.pack_version);
+        }
+        self.active_session_mounts.deinit();
         if (self.context_artifact) |ca| self.allocator.free(ca);
+        if (self.project_shard) |project_shard| self.allocator.free(project_shard);
+    }
+
+    pub fn addActiveSessionMount(self: *SessionState, pack_id: []const u8, pack_version: []const u8) !void {
+        for (self.active_session_mounts.items) |mount| {
+            if (std.mem.eql(u8, mount.pack_id, pack_id) and std.mem.eql(u8, mount.pack_version, pack_version)) return;
+        }
+        try self.active_session_mounts.append(.{
+            .pack_id = try self.allocator.dupe(u8, pack_id),
+            .pack_version = try self.allocator.dupe(u8, pack_version),
+        });
     }
 
     pub fn cycleReasoning(self: *SessionState) void {

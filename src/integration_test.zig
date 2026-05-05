@@ -184,7 +184,7 @@ test "subcommand help works without resolving engine" {
     }
     try testing.expectEqual(@as(u32, 0), corpus_ask_res.term.Exited);
     try testing.expect(std.mem.indexOf(u8, corpus_ask_res.stderr, "Usage: ghost corpus ask") != null);
-    try testing.expect(std.mem.indexOf(u8, corpus_ask_res.stderr, "mounted pack corpus is not included") != null);
+    try testing.expect(std.mem.indexOf(u8, corpus_ask_res.stderr, "explicit --mounted-pack") != null);
 
     const policy_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "policy", "--help", "--engine-root=/tmp/ghost-help-missing" });
     defer {
@@ -363,7 +363,7 @@ test "version flag works" {
         testing.allocator.free(res.stdout);
         testing.allocator.free(res.stderr);
     }
-    try testing.expect(std.mem.indexOf(u8, res.stderr, "ghost_cli v0.1.0-hardened") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "ghost_cli v1.2.1-stable") != null);
 }
 
 test "engine root resolution - repo root case" {
@@ -518,7 +518,7 @@ test "doctor report includes version path and engine root fields" {
     }
 
     try testing.expect(std.mem.indexOf(u8, res.stdout, "Ghost Tester Report") != null);
-    try testing.expect(std.mem.indexOf(u8, res.stdout, "Ghost version: v0.1.0-hardened") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Ghost version: v1.2.1-stable") != null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "CLI path:") != null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "Engine root: /tmp/ghost-doctor-report") != null);
 }
@@ -5442,7 +5442,7 @@ test "version flag still prints version after no-arg change" {
         testing.allocator.free(res.stdout);
         testing.allocator.free(res.stderr);
     }
-    try testing.expect(std.mem.indexOf(u8, res.stderr, "ghost_cli v0.1.0-hardened") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "ghost_cli v1.2.1-stable") != null);
     try testing.expectEqual(@as(u32, 0), res.term.Exited);
 }
 

@@ -19,6 +19,7 @@ pub const TuiOptions = struct {
     max_history_turns: usize = state.default_max_history_turns,
     version: []const u8,
     engine_root_label: ?[]const u8 = null,
+    project_shard: ?[]const u8 = null,
 };
 
 pub fn execute(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: TuiOptions) !void {
@@ -36,5 +37,6 @@ pub fn execute(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: 
         .max_history_turns = options.max_history_turns,
         .version = options.version,
         .engine_root_label = options.engine_root_label,
+        .project_shard = options.project_shard,
     });
 }

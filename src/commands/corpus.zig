@@ -10,9 +10,15 @@ pub const CorpusOptions = struct {
     source_label: ?[]const u8 = null,
     max_results: ?u64 = null,
     max_snippet_bytes: ?u64 = null,
+    mounted_packs: []const MountedPackRef = &.{},
     require_citations: bool = false,
     json: bool = false,
     debug: bool = false,
+};
+
+pub const MountedPackRef = struct {
+    pack_id: []const u8,
+    pack_version: []const u8 = "v1",
 };
 
 const usage =
@@ -110,7 +116,7 @@ fn printAskHelp(writer: anytype) !void {
     try writer.print(
         \\corpus ask
         \\
-        \\Usage: ghost corpus ask [--json] [--debug] [--project-shard <id>] [--max-results <n>] [--max-snippet-bytes <n>] [--require-citations] <question>
+        \\Usage: ghost corpus ask [--json] [--debug] [--project-shard <id>] [--mounted-pack <id[@version]>] [--max-results <n>] [--max-snippet-bytes <n>] [--require-citations] <question>
         \\
         \\Ask a draft-only question from explicitly applied live shard corpus evidence.
         \\
@@ -118,6 +124,7 @@ fn printAskHelp(writer: anytype) !void {
         \\  --project-shard <id>       Target shard id
         \\  --max-results <n>          Bound evidence result count
         \\  --max-snippet-bytes <n>    Bound snippet bytes per evidence item
+        \\  --mounted-pack <id[@v]>    Include explicit mounted Knowledge Pack corpus
         \\  --require-citations        Require cited evidence for answer drafts
         \\  --json                     Preserve raw GIP stdout exactly
         \\  --debug                    Diagnostics to stderr
@@ -126,8 +133,9 @@ fn printAskHelp(writer: anytype) !void {
         \\  This request runs only when this command is explicitly invoked.
         \\  It routes to ghost_gip --stdin with kind corpus.ask.
         \\  Output is DRAFT / NON-AUTHORIZING; corpus evidence is not proof.
-        \\  It reads live shard corpus only; staged corpus is invisible until apply-staged.
-        \\  Retrieval is bounded local matching over live shard corpus excerpts.
+        \\  It reads live shard corpus and explicitly supplied mounted pack corpus only;
+        \\  staged corpus is invisible until apply-staged.
+        \\  Retrieval is bounded local matching over live corpus excerpts.
         \\  Exact evidence is required for answer drafts. Similarity hints may
         \\  appear as NON-AUTHORIZING routing hints only, never as evidence.
         \\  Capacity warnings mean partial coverage: skipped, dropped,
@@ -137,7 +145,8 @@ fn printAskHelp(writer: anytype) !void {
         \\  behavior candidates. They are not proof, not evidence, and may
         \\  suppress exact repeated bad answer patterns without globally
         \\  promoting anything.
-        \\  It is not semantic search, and mounted pack corpus is not included.
+        \\  It is not semantic search; mounted pack corpus is included only through
+        \\  explicit --mounted-pack / mountedPacks request fields.
         \\  It does not use Transformers, embeddings, or model adapters.
         \\  It does not mutate corpus, mutate packs, mutate negative knowledge,
         \\  run commands, run verifiers, or persist learning candidates.
@@ -221,6 +230,8 @@ pub fn executeFromArgs(
     }
 
     var options = base;
+    var mounted_packs = std.ArrayList(MountedPackRef).init(allocator);
+    defer mounted_packs.deinit();
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
@@ -242,6 +253,12 @@ pub fn executeFromArgs(
             options.max_snippet_bytes = try parsePositiveU64("--max-snippet-bytes", args[i]);
         } else if (std.mem.startsWith(u8, arg, "--max-snippet-bytes=")) {
             options.max_snippet_bytes = try parsePositiveU64("--max-snippet-bytes", arg["--max-snippet-bytes=".len..]);
+        } else if (std.mem.eql(u8, arg, "--mounted-pack")) {
+            i += 1;
+            if (i >= args.len) try failMissingValue("--mounted-pack");
+            try mounted_packs.append(parseMountedPackArg(args[i]));
+        } else if (std.mem.startsWith(u8, arg, "--mounted-pack=")) {
+            try mounted_packs.append(parseMountedPackArg(arg["--mounted-pack=".len..]));
         } else if (std.mem.eql(u8, arg, "--require-citations")) {
             options.require_citations = true;
         } else if (std.mem.startsWith(u8, arg, "--")) {
@@ -255,6 +272,7 @@ pub fn executeFromArgs(
         }
     }
 
+    options.mounted_packs = mounted_packs.items;
     try executeAsk(allocator, engine_root, options);
 }
 
@@ -459,8 +477,30 @@ fn writeCorpusAskRequest(writer: anytype, question: []const u8, options: CorpusO
     }
     if (options.max_results) |max_results| try writer.print(",\"maxResults\":{d}", .{max_results});
     if (options.max_snippet_bytes) |max_snippet_bytes| try writer.print(",\"maxSnippetBytes\":{d}", .{max_snippet_bytes});
+    if (options.mounted_packs.len != 0) {
+        try writer.writeAll(",\"mountedPacks\":[");
+        for (options.mounted_packs, 0..) |mounted_pack, idx| {
+            if (idx != 0) try writer.writeByte(',');
+            try writer.writeAll("{\"packId\":");
+            try std.json.stringify(mounted_pack.pack_id, .{}, writer);
+            try writer.writeAll(",\"packVersion\":");
+            try std.json.stringify(mounted_pack.pack_version, .{}, writer);
+            try writer.writeByte('}');
+        }
+        try writer.writeByte(']');
+    }
     if (options.require_citations) try writer.writeAll(",\"requireCitations\":true");
     try writer.writeAll("}");
+}
+
+fn parseMountedPackArg(raw: []const u8) MountedPackRef {
+    const trimmed = std.mem.trim(u8, raw, " \r\n\t");
+    if (std.mem.indexOfScalar(u8, trimmed, '@')) |idx| {
+        const pack_id = std.mem.trim(u8, trimmed[0..idx], " \r\n\t");
+        const pack_version = std.mem.trim(u8, trimmed[(idx + 1)..], " \r\n\t");
+        if (pack_id.len != 0 and pack_version.len != 0) return .{ .pack_id = pack_id, .pack_version = pack_version };
+    }
+    return .{ .pack_id = trimmed, .pack_version = "v1" };
 }
 
 fn printCorpusIngestResult(writer: anytype, value: std.json.Value) !void {
@@ -666,7 +706,7 @@ fn printCorpusAskResult(writer: anytype, value: std.json.Value) !void {
     }
 
     try writer.print("\nNotice: This output is a DRAFT and NON-AUTHORIZING.\n", .{});
-    try writer.print("Corpus ask uses bounded local matching over live corpus excerpts only; similarity hints are not evidence, it is not semantic search, and it does not include mounted pack corpus yet.\n", .{});
+    try writer.print("Corpus ask uses bounded local matching over live corpus excerpts plus explicitly supplied mounted pack corpus; similarity hints are not evidence and it is not semantic search.\n", .{});
 }
 
 fn printCorpusCapacityWarning(writer: anytype, telemetry: ?std.json.Value) !void {

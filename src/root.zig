@@ -802,6 +802,43 @@ test "TUI read-only mode blocks engine-invoking slash commands and prompts" {
     try testing.expectError(error.FileNotFound, std.fs.cwd().access(prompt_marker, .{}));
 }
 
+test "TUI mounted session prompt routes corpus ask with project shard and mounted packs" {
+    var s = state.SessionState.init(testing.allocator, "test", null, false);
+    defer s.deinit();
+    s.terminal_size = .{ .rows = 24, .cols = 80 };
+    s.project_shard = try testing.allocator.dupe(u8, "sovereign-project-shard");
+    try s.addActiveSessionMount("sensor-data-pack", "1.0.0");
+
+    var out_buf = std.ArrayList(u8).init(testing.allocator);
+    defer out_buf.deinit();
+
+    const mock_root = "/tmp/ghost-tui-mounted-corpus-ask";
+    const payload_path = mock_root ++ "/payload.json";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+    {
+        const file = try std.fs.cwd().createFile(mock_root ++ "/ghost_gip", .{ .mode = 0o755 });
+        defer file.close();
+        try file.writeAll(
+            "#!/bin/sh\n" ++
+                "cat > '" ++ payload_path ++ "'\n" ++
+                "printf '%s' '{\"corpusAsk\":{\"status\":\"unknown\",\"state\":\"unresolved\",\"permission\":\"unresolved\",\"unknowns\":[{\"kind\":\"conflicting_evidence\",\"reason\":\"stable status conflicts with over-limit telemetry\"}],\"evidenceUsed\":[],\"candidateFollowups\":[],\"learningCandidates\":[],\"trace\":{\"mountedPacksConsidered\":1,\"mountedPackEntriesConsidered\":1,\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false}}}'\n",
+        );
+    }
+
+    try tui_app.handleSubmit(testing.allocator, mock_root, &s, "Is Entity-Delta operating within authorized safety parameters?", out_buf.writer(), .{ .color = false });
+
+    const payload = try std.fs.cwd().readFileAlloc(testing.allocator, payload_path, 4096);
+    defer testing.allocator.free(payload);
+    try testing.expect(std.mem.indexOf(u8, payload, "\"kind\":\"corpus.ask\"") != null);
+    try testing.expect(std.mem.indexOf(u8, payload, "\"projectShard\":\"sovereign-project-shard\"") != null);
+    try testing.expect(std.mem.indexOf(u8, payload, "\"mountedPacks\":[{\"packId\":\"sensor-data-pack\",\"packVersion\":\"1.0.0\"}]") != null);
+    try testing.expect(std.mem.indexOf(u8, payload, "\"requireCitations\":true") != null);
+    try testing.expectEqual(@as(usize, 1), s.history.items.len);
+    try testing.expect(std.mem.indexOf(u8, s.history.items[0].raw_output, "conflicting_evidence") != null);
+}
+
 test "TUI read-only mode allows local session commands" {
     var s = state.SessionState.init(testing.allocator, "test", null, false);
     defer s.deinit();

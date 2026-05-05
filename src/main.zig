@@ -20,7 +20,7 @@ const tui = @import("commands/tui.zig");
 const tui_state = @import("tui/state.zig");
 const json_contracts = @import("engine/json_contracts.zig");
 
-const build_version = "v0.1.0-hardened";
+const build_version = "v1.2.1-stable";
 
 const CommandKind = enum {
     chat,
@@ -270,6 +270,7 @@ pub fn main() !void {
             .max_history_turns = parsed.options.max_history_turns,
             .version = build_version,
             .engine_root_label = root,
+            .project_shard = parsed.options.project_shard,
         }),
         .status => try status.execute(allocator, root, parsed.options.debug_mode, build_version),
         .doctor => try doctor.execute(allocator, root, .{
@@ -414,6 +415,7 @@ fn runDefaultTui(allocator: std.mem.Allocator, options: CliOptions) !void {
         .max_history_turns = options.max_history_turns,
         .version = build_version,
         .engine_root_label = root_tui,
+        .project_shard = options.project_shard,
     });
 }
 
@@ -642,11 +644,12 @@ fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
             \\  --color=<mode>         auto|always|never
             \\  --compact              Tighter layout
             \\  --read-only            Block engine-invoking TUI commands/prompts
+            \\  --project-shard=<id>   Project shard for mounted-pack corpus.ask prompts
             \\  --max-history-turns=<n> Bound retained TUI turns (default 500)
             \\
             \\Slash commands:
             \\  /help, /quit, /status, /reasoning <level>, /debug on|off, /json on|off
-            \\  /clear, /doctor, /autopsy <path>, /context <path>
+            \\  /clear, /doctor, /autopsy <path>, /context <path>, /mount <pack[@version]>
             \\  Typing / shows prefix-first fuzzy suggestions. Invalid slash commands are rejected locally.
             \\  In --read-only mode, /doctor, /autopsy, and submitted prompts are blocked locally.
             \\

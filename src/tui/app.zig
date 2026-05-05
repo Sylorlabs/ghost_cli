@@ -11,6 +11,8 @@ const terminal_render = @import("../render/terminal.zig");
 const doctor = @import("../commands/doctor.zig");
 const autopsy = @import("../commands/autopsy.zig");
 const packs = @import("../commands/packs.zig");
+const locator = @import("../engine/locator.zig");
+const process = @import("../engine/process.zig");
 
 pub const SlashKind = slash.SlashKind;
 pub const SlashCommand = slash.SlashCommand;
@@ -31,6 +33,7 @@ pub const RunOptions = struct {
     max_history_turns: usize = state.default_max_history_turns,
     version: []const u8,
     engine_root_label: ?[]const u8 = null,
+    project_shard: ?[]const u8 = null,
 };
 
 pub fn parseSlashCommand(text: []const u8) SlashCommand {
@@ -68,6 +71,7 @@ pub fn run(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: RunO
 
     if (options.reasoning) |r| s.reasoning = r;
     if (options.context_artifact) |c| s.context_artifact = try allocator.dupe(u8, c);
+    if (options.project_shard) |project_shard| s.project_shard = try allocator.dupe(u8, project_shard);
     s.debug = options.debug;
     s.read_only = options.read_only;
 
@@ -294,16 +298,22 @@ pub fn handleSlash(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *s
                 s.last_command_status = "mount pack required";
                 try render.renderErrorMessage(writer, style, "/mount requires a pack id", .{});
             } else {
+                const parsed_mount = parseMountArg(pack);
                 s.last_command_status = "mount requested";
-                try render.renderCommandMessage(writer, style, "mount: {s}", .{pack});
+                try render.renderCommandMessage(writer, style, "mount: {s}@{s}", .{ parsed_mount.pack_id, parsed_mount.pack_version });
                 // We use standard executeMount which handles runner.run
                 packs.execute(allocator, engine_root, .{
                     .subcommand = "mount",
-                    .pack_id = pack,
+                    .pack_id = parsed_mount.pack_id,
+                    .version = parsed_mount.pack_version,
                     .debug = s.debug,
                 }) catch |err| {
                     try render.renderErrorMessage(writer, style, "Mount failed: {}", .{err});
+                    return false;
                 };
+                try s.addActiveSessionMount(parsed_mount.pack_id, parsed_mount.pack_version);
+                s.last_counters.mounted_packs = s.active_session_mounts.items.len;
+                s.last_command_status = "mount active";
             }
         },
         .unknown => {
@@ -312,6 +322,21 @@ pub fn handleSlash(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *s
         },
     }
     return false;
+}
+
+const ParsedMountArg = struct {
+    pack_id: []const u8,
+    pack_version: []const u8,
+};
+
+fn parseMountArg(raw: []const u8) ParsedMountArg {
+    const trimmed = std.mem.trim(u8, raw, " \r\n\t");
+    if (std.mem.indexOfScalar(u8, trimmed, '@')) |idx| {
+        const pack_id = std.mem.trim(u8, trimmed[0..idx], " \r\n\t");
+        const pack_version = std.mem.trim(u8, trimmed[(idx + 1)..], " \r\n\t");
+        if (pack_id.len != 0 and pack_version.len != 0) return .{ .pack_id = pack_id, .pack_version = pack_version };
+    }
+    return .{ .pack_id = trimmed, .pack_version = "v1" };
 }
 
 pub fn handleSubmit(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *state.SessionState, cmd_text: []const u8, writer: anytype, style: render.Style) !void {
@@ -328,30 +353,53 @@ pub fn handleSubmit(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *
     const aa = arena.allocator();
 
     var argv = std.ArrayList([]const u8).init(aa);
-    try argv.append("chat");
-    try argv.append("--message");
-    try argv.append(cmd_text);
+    const res = if (s.active_session_mounts.items.len != 0) blk: {
+        const bin_path = locator.findEngineBinary(allocator, engine_root, .ghost_gip) catch |err| {
+            try render.renderErrorMessage(writer, style, "Failed to resolve ghost_gip: {}", .{err});
+            return;
+        };
+        defer allocator.free(bin_path);
 
-    var buf: [64]u8 = undefined;
-    const reasoning_arg = try std.fmt.bufPrint(&buf, "--reasoning={s}", .{s.reasoning.toStr()});
-    try argv.append(try aa.dupe(u8, reasoning_arg));
+        var request = std.ArrayList(u8).init(aa);
+        try writeMountedCorpusAskRequest(request.writer(), cmd_text, s);
 
-    if (s.context_artifact) |art| {
-        try argv.append("--context-artifact");
-        try argv.append(art);
-    }
+        const gip_argv = &[_][]const u8{ bin_path, "--stdin" };
+        const result = process.runEngineCommandWithInput(allocator, gip_argv, request.items) catch |err| {
+            try render.renderErrorMessage(writer, style, "Failed to run mounted corpus.ask: {}", .{err});
+            return;
+        };
+        break :blk runner.RunResult{
+            .stdout = result.stdout,
+            .stderr = result.stderr,
+            .exit_code = result.exit_code,
+            .allocator = allocator,
+        };
+    } else blk: {
+        try argv.append("chat");
+        try argv.append("--message");
+        try argv.append(cmd_text);
 
-    try argv.append("--render=json");
+        var buf: [64]u8 = undefined;
+        const reasoning_arg = try std.fmt.bufPrint(&buf, "--reasoning={s}", .{s.reasoning.toStr()});
+        try argv.append(try aa.dupe(u8, reasoning_arg));
 
-    const res = runner.run(allocator, .{
-        .engine_root = engine_root,
-        .binary = .ghost_task_operator,
-        .argv = argv.items,
-        .json = true,
-        .debug = s.debug,
-    }) catch |err| {
-        try render.renderErrorMessage(writer, style, "Failed to run engine: {}", .{err});
-        return;
+        if (s.context_artifact) |art| {
+            try argv.append("--context-artifact");
+            try argv.append(art);
+        }
+
+        try argv.append("--render=json");
+
+        break :blk runner.run(allocator, .{
+            .engine_root = engine_root,
+            .binary = .ghost_task_operator,
+            .argv = argv.items,
+            .json = true,
+            .debug = s.debug,
+        }) catch |err| {
+            try render.renderErrorMessage(writer, style, "Failed to run engine: {}", .{err});
+            return;
+        };
     };
     defer res.deinit();
 
@@ -400,4 +448,23 @@ pub fn handleSubmit(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *
     s.refreshRam(std.time.milliTimestamp(), stats.getCliRamRss);
     s.last_command_status = if (res.exit_code == 0) "engine response" else "engine error";
     try render.renderTurnWithSize(writer, turn, style, s.terminal_size);
+}
+
+fn writeMountedCorpusAskRequest(writer: anytype, question: []const u8, s: *const state.SessionState) !void {
+    try writer.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"corpus.ask\",\"question\":");
+    try std.json.stringify(question, .{}, writer);
+    if (s.project_shard) |project_shard| {
+        try writer.writeAll(",\"projectShard\":");
+        try std.json.stringify(project_shard, .{}, writer);
+    }
+    try writer.writeAll(",\"mountedPacks\":[");
+    for (s.active_session_mounts.items, 0..) |mount, idx| {
+        if (idx != 0) try writer.writeByte(',');
+        try writer.writeAll("{\"packId\":");
+        try std.json.stringify(mount.pack_id, .{}, writer);
+        try writer.writeAll(",\"packVersion\":");
+        try std.json.stringify(mount.pack_version, .{}, writer);
+        try writer.writeByte('}');
+    }
+    try writer.writeAll("],\"requireCitations\":true}");
 }
