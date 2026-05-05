@@ -862,10 +862,7 @@ fn hasInfluenceTelemetrySignal(value: std.json.Value) bool {
         .object => |obj| obj,
         else => return !isEmptyJsonList(value),
     };
-    return hasPressureField(obj, "reviewedRecordsRead") or
-        hasPressureField(obj, "acceptedRecordsRead") or
-        hasPressureField(obj, "rejectedRecordsRead") or
-        hasPressureField(obj, "malformedLines") or
+    return hasPressureField(obj, "malformedLines") or
         hasPressureField(obj, "warnings") or
         hasPressureField(obj, "matchedInfluences") or
         hasPressureField(obj, "answerSuppressed") or
