@@ -37,6 +37,14 @@ pub const Style = struct {
         return self.code("\x1b[37m");
     }
 
+    pub fn userText(self: Style) []const u8 {
+        return self.code("\x1b[38;2;255;255;255m");
+    }
+
+    pub fn ghostText(self: Style) []const u8 {
+        return self.code("\x1b[38;2;93;169;255m");
+    }
+
     pub fn yellow(self: Style) []const u8 {
         return self.code("\x1b[33m");
     }
@@ -82,55 +90,23 @@ pub fn renderWithSize(writer: anytype, s: *state.SessionState, style: Style, siz
         return;
     }
     const input_row = size.rows;
-    const footer_row = size.rows - 1;
-    const status_row = size.rows - 2;
+    const status_row = size.rows - 1;
     const suggestion_panel_bottom = status_row - 1;
     const suggestion_height = suggestionHeight(s.current_input.items, size, false);
-    try prepareFrame(writer, s, size, suggestion_height, suggestion_panel_bottom, 3, style);
+    try prepareFrame(writer, s, size, suggestion_height, suggestion_panel_bottom, 2, style);
 
     try writer.print("\x1b[2;{d}r", .{historyBottomRow(size, suggestion_height)});
 
-    try writer.print("\x1b[1;1H{s}\x1b[K GHOST {s} | engine={s} | mode=session | reasoning={s} | retained={d}/{d} | draft={d} verified={d} unresolved={d}{s}", .{
+    try writer.print("\x1b[1;1H{s}\x1b[K Ghost{s}", .{
         style.header(),
-        s.version,
-        s.engine_root_label orelse "deferred",
-        s.reasoning.toStr(),
-        s.history.items.len,
-        s.total_turns,
-        s.draft_count,
-        s.verified_count,
-        s.unresolved_count,
         style.reset(),
     });
 
-    try writer.print("\x1b[{d};1H{s}\x1b[K status={s} | packs={d} | corr={d} nk={d}/{d} verifier_req={d} suppress={d} route={d} | debug={s} json={s} read_only={s}{s}", .{
+    try writer.print("\x1b[{d};1H{s}\x1b[K shard={s} | {s}{s}", .{
         status_row,
         style.status(),
-        s.last_command_status,
-        s.last_counters.mounted_packs,
-        s.last_counters.corrections,
-        s.last_counters.nk_applied,
-        s.last_counters.nk_candidates,
-        s.last_counters.verifier_requirements,
-        s.last_counters.suppressions,
-        s.last_counters.routing_warnings,
-        if (s.debug) "on" else "off",
-        if (s.json_mode) "on" else "off",
-        if (s.read_only) "on" else "off",
-        style.reset(),
-    });
-
-    const ram_str = if (s.last_ram_bytes) |b| try stats.formatBytes(s.allocator, b) else try s.allocator.dupe(u8, "n/a");
-    defer s.allocator.free(ram_str);
-    try writer.print("\x1b[{d};1H{s}\x1b[K context={s} | engine_root={s} | ram={s} | retained={d} total={d} pruned={d} | keys=Ctrl+R Ctrl+D Ctrl+L Ctrl+C | /help{s}", .{
-        footer_row,
-        style.dim(),
-        s.context_artifact orelse "none",
-        s.engine_root_label orelse "auto",
-        ram_str,
-        s.history.items.len,
-        s.total_turns,
-        s.pruned_turns,
+        s.project_shard orelse "zenith_root",
+        systemIndicator(s),
         style.reset(),
     });
 
@@ -154,21 +130,11 @@ pub fn renderCompactWithSize(writer: anytype, s: *state.SessionState, style: Sty
     try prepareFrame(writer, s, size, suggestion_height, suggestion_panel_bottom, 2, style);
 
     try writer.print("\x1b[2;{d}r", .{historyBottomRow(size, suggestion_height)});
-    try writer.print("\x1b[{d};1H{s}\x1b[K Ghost {s} | {s} | packs={d} | retained={d}/{d} pruned={d} draft={d} verified={d} unresolved={d} | debug={s} read_only={s} | context={s}{s}", .{
+    try writer.print("\x1b[{d};1H{s}\x1b[K shard={s} | {s}{s}", .{
         status_row,
         style.status(),
-        s.version,
-        s.reasoning.toStr(),
-        s.last_counters.mounted_packs,
-        s.history.items.len,
-        s.total_turns,
-        s.pruned_turns,
-        s.draft_count,
-        s.verified_count,
-        s.unresolved_count,
-        if (s.debug) "on" else "off",
-        if (s.read_only) "on" else "off",
-        s.context_artifact orelse "none",
+        s.project_shard orelse "zenith_root",
+        systemIndicator(s),
         style.reset(),
     });
     try renderSlashSuggestionsWithSize(writer, s, suggestion_panel_bottom, style, size);
@@ -290,11 +256,10 @@ pub fn renderTurnWithSize(writer: anytype, turn: state.Turn, style: Style, size:
 }
 
 fn writeTurn(writer: anytype, turn: state.Turn, style: Style) !void {
-    try writer.print("{s}+-- TURN {d} | {s} | {d}ms | json={s} --+{s}\n", .{ style.dim(), turn.index, turn.reasoning.toStr(), turn.elapsed_ms, if (turn.json_ok) "ok" else "raw", style.reset() });
-    try writer.print("{s}[YOU]  {s}{s}\n", .{ style.cyan(), style.reset(), turn.input });
-    try writer.print("{s}[GHOST]{s}\n", .{ style.cyan(), style.reset() });
+    try writer.print("{s}YOU{s}\n{s}{s}{s}\n", .{ style.userText(), style.reset(), style.userText(), turn.input, style.reset() });
+    try writer.print("\n{s}GHOST\n", .{style.ghostText()});
     try writer.writeAll(turn.rendered_output);
-    try writer.writeAll("\n");
+    try writer.print("{s}\n", .{style.reset()});
 }
 
 pub fn renderCommandMessage(writer: anytype, style: Style, comptime fmt: []const u8, args: anytype) !void {
@@ -397,7 +362,8 @@ pub fn renderSlashSuggestionsWithSize(writer: anytype, s: *state.SessionState, p
 }
 
 pub fn suggestionHeight(input_text: []const u8, size: TerminalSize, compact: bool) u16 {
-    const fixed_rows: u16 = if (compact) 2 else 3;
+    _ = compact;
+    const fixed_rows: u16 = 2;
     if (size.rows <= fixed_rows + 2) return 0;
     const panel_bottom = size.rows - fixed_rows;
     return suggestionHeightForPanel(input_text, panel_bottom);
@@ -442,10 +408,10 @@ pub fn layoutFor(size: TerminalSize, input_text: []const u8, compact: bool) Layo
             .suggestion_height = 0,
         };
     }
-    const fixed_rows: u16 = if (compact) 2 else 3;
+    const fixed_rows: u16 = 2;
     const input_row = size.rows;
-    const footer_row = if (compact) size.rows - 1 else size.rows - 1;
-    const status_row = if (compact) size.rows - 1 else size.rows - 2;
+    const footer_row = size.rows - 1;
+    const status_row = size.rows - 1;
     const suggestion_panel_bottom = status_row - 1;
     const height = suggestionHeight(input_text, size, compact);
     return .{
@@ -535,7 +501,7 @@ fn repaintFrame(writer: anytype, s: *state.SessionState, size: TerminalSize, sug
 }
 
 fn historyBottomRow(size: TerminalSize, suggestion_height: u16) u16 {
-    const base_bottom: u16 = if (size.rows > 5) size.rows - 4 else 1;
+    const base_bottom: u16 = if (size.rows > 4) size.rows - 3 else 1;
     if (suggestion_height == 0) return base_bottom;
     if (base_bottom <= suggestion_height) return 1;
     return base_bottom - suggestion_height;
@@ -545,11 +511,17 @@ fn commandDisplay(command: slash.SlashCommandSpec) []const u8 {
     return switch (command.kind) {
         .reasoning => "/reasoning <level>",
         .debug => "/debug on|off",
+        .details => "/details on|off",
         .json => "/json on|off",
         .autopsy => "/autopsy <path>",
         .context => "/context <path>",
         else => command.name,
     };
+}
+
+fn systemIndicator(s: *const state.SessionState) []const u8 {
+    if (std.mem.eql(u8, s.last_command_status, "thinking")) return "Thinking...";
+    return "System Ready";
 }
 
 fn panelWidth(size: TerminalSize) u16 {
@@ -627,8 +599,10 @@ test "resize repaint clears screen and replays stored turns" {
     try prepareFrame(out.writer(), &session, .{ .rows = 36, .cols = 100 }, 0, 33, 3, .{ .color = false });
 
     try testing.expect(std.mem.indexOf(u8, out.items, "\x1b[r\x1b[2J\x1b[H") != null);
-    try testing.expect(std.mem.indexOf(u8, out.items, "+-- TURN 1") != null);
-    try testing.expect(std.mem.indexOf(u8, out.items, "[YOU]  hello") != null);
+    try testing.expect(std.mem.indexOf(u8, out.items, "+-- TURN 1") == null);
+    try testing.expect(std.mem.indexOf(u8, out.items, "YOU") != null);
+    try testing.expect(std.mem.indexOf(u8, out.items, "hello") != null);
+    try testing.expect(std.mem.indexOf(u8, out.items, "GHOST") != null);
     try testing.expect(std.mem.indexOf(u8, out.items, "world") != null);
     try testing.expectEqual(@as(u16, 36), session.previous_render_rows);
     try testing.expectEqual(@as(u16, 100), session.previous_render_cols);

@@ -7,13 +7,15 @@ const green = "\x1b[32m";
 const yellow = "\x1b[33m";
 const red = "\x1b[31m";
 const blue = "\x1b[34m";
+const white_rgb = "\x1b[38;2;255;255;255m";
+const ghost_blue_rgb = "\x1b[38;2;93;169;255m";
 
 pub fn printEngineOutput(writer: anytype, response: json_contracts.EngineResponse) !void {
     // 1. Status Line
     try writer.print("{s}Status:{s} ", .{ bold, reset });
     switch (response.getVisualAuthorityState()) {
         .draft => try writer.print("{s}Draft / unverified{s}\n", .{ yellow, reset }),
-        .verified => try writer.print("{s}Verified{s}\n", .{ green, reset }),
+        .verified => try writer.print("{s}Resolved{s}\n", .{ green, reset }),
         .unresolved => try writer.print("{s}Unresolved{s}\n", .{ yellow, reset }),
         .failed => try writer.print("{s}Failed{s}\n", .{ red, reset }),
         .other => |state| try writer.print("{s}{s}{s}\n", .{ blue, state, reset }),
@@ -85,6 +87,38 @@ pub fn printEngineOutput(writer: anytype, response: json_contracts.EngineRespons
     if (response.isDraftStatus()) {
         try writer.print("\n{s}Note:{s} This is an unverified draft. Run with {s}--reasoning=deep{s} or ask to {s}verify{s} to confirm.\n", .{ yellow, reset, bold, reset, bold, reset });
     }
+}
+
+pub fn printBasicExchange(writer: anytype, user_text: ?[]const u8, response: json_contracts.EngineResponse, color: bool) !void {
+    if (user_text) |text| {
+        try writer.print("{s}YOU{s}\n{s}\n\n", .{
+            if (color) white_rgb else "",
+            if (color) reset else "",
+            text,
+        });
+    }
+    try writer.print("{s}GHOST{s}\n", .{
+        if (color) ghost_blue_rgb else "",
+        if (color) reset else "",
+    });
+    try printBasicEngineOutput(writer, response);
+}
+
+pub fn printBasicEngineOutput(writer: anytype, response: json_contracts.EngineResponse) !void {
+    var wrote = false;
+    if (response.getSummary()) |summary| {
+        try writer.writeAll(summary);
+        wrote = true;
+    }
+    if (response.getDetail()) |detail| {
+        if (wrote) try writer.writeAll("\n\n");
+        try writer.writeAll(detail);
+        wrote = true;
+    }
+    if (!wrote) {
+        try writer.writeAll("I do not have a conversational response for that yet.");
+    }
+    try writer.writeAll("\n");
 }
 
 pub fn printDebugFieldDetection(writer: anytype, response: json_contracts.EngineResponse) !void {

@@ -13,6 +13,7 @@ pub const TuiOptions = struct {
     reasoning: ?json_contracts.ReasoningLevel = null,
     context_artifact: ?[]const u8 = null,
     debug: bool = false,
+    details: bool = false,
     color: ColorMode = .auto,
     compact: bool = false,
     read_only: bool = false,
@@ -27,6 +28,7 @@ pub fn execute(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: 
         .reasoning = options.reasoning,
         .context_artifact = options.context_artifact,
         .debug = options.debug,
+        .details = options.details,
         .color = switch (options.color) {
             .auto => .auto,
             .always => .always,

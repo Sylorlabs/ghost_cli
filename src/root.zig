@@ -70,7 +70,7 @@ test "draft rendering is labeled unverified" {
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "Draft / unverified") != null);
 }
 
-test "verified rendering is labeled verified" {
+test "verified rendering is labeled resolved" {
     const json =
         \\{
         \\  "verification_state": "verified"
@@ -85,7 +85,7 @@ test "verified rendering is labeled verified" {
     defer out_buf.deinit();
 
     try terminal.printEngineOutput(out_buf.writer(), val);
-    try testing.expect(std.mem.indexOf(u8, out_buf.items, "Verified") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "Resolved") != null);
 }
 
 test "unresolved rendering includes missing obligations" {
@@ -387,9 +387,9 @@ test "TUI render helper handles correction NK sections" {
         .json_ok = true,
     };
     try tui_render.renderTurn(out_buf.writer(), turn, .{ .color = false });
-    try testing.expect(std.mem.indexOf(u8, out_buf.items, "[YOU]") != null);
-    try testing.expect(std.mem.indexOf(u8, out_buf.items, "[GHOST]") != null);
-    try testing.expect(std.mem.indexOf(u8, out_buf.items, "+-- TURN 1") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "YOU") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "GHOST") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "+-- TURN 1") == null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "Correction Recorded:") != null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "Negative Knowledge Candidate Proposed:") != null);
 }
@@ -697,9 +697,9 @@ test "TUI resize repaint works after history pruning" {
     defer out_buf.deinit();
     try tui_render.renderFrameWithSize(out_buf.writer(), &s, .{ .color = false }, .{ .rows = 36, .cols = 100 });
 
-    try testing.expect(std.mem.indexOf(u8, out_buf.items, "+-- TURN 2") != null);
-    try testing.expect(std.mem.indexOf(u8, out_buf.items, "[YOU]  new") != null);
-    try testing.expect(std.mem.indexOf(u8, out_buf.items, "[YOU]  old") == null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "+-- TURN 2") == null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "new") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "old") == null);
 }
 
 var fake_terminal_refreshes: usize = 0;
@@ -741,14 +741,21 @@ test "TUI slash command parser covers operator commands" {
     try testing.expectEqual(tui_app.SlashKind.help, tui_app.parseSlashCommand("/help").kind);
     try testing.expectEqual(tui_app.SlashKind.quit, tui_app.parseSlashCommand("/quit").kind);
     try testing.expectEqual(tui_app.SlashKind.status, tui_app.parseSlashCommand("/status").kind);
+    try testing.expectEqual(tui_app.SlashKind.status, tui_app.parseSlashCommand("/status\r\n").kind);
+    try testing.expectEqual(tui_app.SlashKind.status, tui_app.parseSlashCommand("  /status  ").kind);
     try testing.expectEqual(tui_app.SlashKind.clear, tui_app.parseSlashCommand("/clear").kind);
     try testing.expectEqual(tui_app.SlashKind.doctor, tui_app.parseSlashCommand("/doctor").kind);
     try testing.expectEqual(tui_app.SlashKind.debug, tui_app.parseSlashCommand("/debug").kind);
+    try testing.expectEqual(tui_app.SlashKind.details, tui_app.parseSlashCommand("/details").kind);
     try testing.expectEqual(tui_app.SlashKind.json, tui_app.parseSlashCommand("/json").kind);
 
     const reasoning = tui_app.parseSlashCommand("/reasoning deep");
     try testing.expectEqual(tui_app.SlashKind.reasoning, reasoning.kind);
     try testing.expectEqualStrings("deep", reasoning.arg.?);
+
+    const reasoning_crlf = tui_app.parseSlashCommand("/reasoning deep\r\n");
+    try testing.expectEqual(tui_app.SlashKind.reasoning, reasoning_crlf.kind);
+    try testing.expectEqualStrings("deep", reasoning_crlf.arg.?);
 
     const autopsy_cmd = tui_app.parseSlashCommand("/autopsy .");
     try testing.expectEqual(tui_app.SlashKind.autopsy, autopsy_cmd.kind);
@@ -853,17 +860,67 @@ test "TUI read-only mode allows local session commands" {
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "context=README.md") != null);
 }
 
+test "TUI slash status handles terminal newline" {
+    var s = state.SessionState.init(testing.allocator, "test", null, false);
+    defer s.deinit();
+    s.terminal_size = .{ .rows = 24, .cols = 80 };
+
+    var out_buf = std.ArrayList(u8).init(testing.allocator);
+    defer out_buf.deinit();
+
+    _ = try tui_app.handleSlash(testing.allocator, null, &s, "/status\r\n", out_buf.writer(), .{ .color = false });
+
+    try testing.expectEqualStrings("status", s.last_command_status);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "TUI Session Status") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "Not a valid command") == null);
+}
+
+test "TUI details are explicit and quiet by default" {
+    var s = state.SessionState.init(testing.allocator, "test", null, false);
+    defer s.deinit();
+    s.terminal_size = .{ .rows = 24, .cols = 80 };
+
+    var out_buf = std.ArrayList(u8).init(testing.allocator);
+    defer out_buf.deinit();
+
+    const mock_root = "/tmp/ghost-tui-details-toggle";
+    std.fs.cwd().deleteTree(mock_root) catch {};
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+    {
+        const file = try std.fs.cwd().createFile(mock_root ++ "/ghost_task_operator", .{ .mode = 0o755 });
+        defer file.close();
+        try file.writeAll("#!/bin/sh\nprintf '%s' '{\"verification_state\":\"unresolved\",\"summary\":\"quiet reply\",\"unresolved_reason\":\"missing retained evidence\",\"pending_obligations\":[{\"id\":\"evidence\"}]}'\n");
+    }
+
+    try tui_app.handleSubmit(testing.allocator, mock_root, &s, "hello", out_buf.writer(), .{ .color = false });
+    try testing.expectEqual(@as(usize, 1), s.history.items.len);
+    try testing.expect(std.mem.indexOf(u8, s.history.items[0].rendered_output, "quiet reply") != null);
+    try testing.expect(std.mem.indexOf(u8, s.history.items[0].rendered_output, "Pending Obligations:") == null);
+    try testing.expect(std.mem.indexOf(u8, s.history.items[0].rendered_output, "missing retained evidence") == null);
+
+    out_buf.clearRetainingCapacity();
+    _ = try tui_app.handleSlash(testing.allocator, mock_root, &s, "/details on", out_buf.writer(), .{ .color = false });
+    try testing.expect(s.details);
+
+    out_buf.clearRetainingCapacity();
+    try tui_app.handleSubmit(testing.allocator, mock_root, &s, "hello", out_buf.writer(), .{ .color = false });
+    try testing.expectEqual(@as(usize, 2), s.history.items.len);
+    try testing.expect(std.mem.indexOf(u8, s.history.items[1].rendered_output, "Pending Obligations:") != null);
+    try testing.expect(std.mem.indexOf(u8, s.history.items[1].rendered_output, "missing retained evidence") != null);
+}
+
 test "TUI slash command suggestions use prefix and fuzzy matching" {
     try testing.expectEqual(@as(usize, tui_slash.commands.len), tui_slash.matchingCount("/"));
     try testing.expectEqual(@as(usize, 1), tui_slash.matchingCount("/r"));
-    try testing.expectEqual(@as(usize, 2), tui_slash.matchingCount("/d"));
+    try testing.expectEqual(@as(usize, 3), tui_slash.matchingCount("/d"));
     try testing.expectEqualStrings("/reasoning", tui_slash.findFirstMatch("/r").?);
     try testing.expectEqualStrings("/reasoning", tui_slash.findFirstMatch("/rsn").?);
     try testing.expectEqualStrings("/debug", tui_slash.findFirstMatch("/dbg").?);
     try testing.expectEqualStrings("/autopsy", tui_slash.findFirstMatch("/ast").?);
     try testing.expectEqualStrings("/context", tui_slash.findFirstMatch("/ctx").?);
     try testing.expectEqualStrings("/status", tui_slash.findNthMatch("/st", 0).?);
-    try testing.expectEqualStrings("/autopsy", tui_slash.findNthMatch("/st", 1).?);
+    try testing.expectEqualStrings("/details", tui_slash.findNthMatch("/st", 1).?);
     try testing.expectEqual(@as(usize, 0), tui_slash.matchingCount("/notreal"));
 
     var out_buf = std.ArrayList(u8).init(testing.allocator);
@@ -876,8 +933,8 @@ test "TUI slash command suggestions use prefix and fuzzy matching" {
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "+-- slash commands ") != null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "/help") != null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "/context") != null);
-    try testing.expectEqual(@as(u16, 13), session.previous_suggestion_height);
-    try testing.expectEqual(@as(u16, 13), tui_render.suggestionHeight("/", .{ .rows = 24, .cols = 80 }, false));
+    try testing.expectEqual(@as(u16, 14), session.previous_suggestion_height);
+    try testing.expectEqual(@as(u16, 14), tui_render.suggestionHeight("/", .{ .rows = 24, .cols = 80 }, false));
     try testing.expectEqual(@as(u16, 3), tui_render.suggestionHeight("/r", .{ .rows = 24, .cols = 80 }, false));
     try testing.expectEqual(@as(u16, 3), tui_render.suggestionHeight("/notreal", .{ .rows = 24, .cols = 80 }, false));
     try testing.expectEqual(@as(u16, 0), tui_render.suggestionHeight("normal prompt", .{ .rows = 24, .cols = 80 }, false));
@@ -895,6 +952,7 @@ test "TUI slash command suggestions use prefix and fuzzy matching" {
     try session.current_input.appendSlice("/d");
     try tui_render.renderSlashSuggestions(out_buf.writer(), &session, 20, .{ .color = false });
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "/debug") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "/details") != null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "/doctor") != null);
 
     out_buf.clearRetainingCapacity();
@@ -932,8 +990,8 @@ test "TUI tiny terminal layout hides suggestions and avoids reserved rows" {
     try testing.expect(!rows8.tiny);
     try testing.expect(rows8.suggestion_height <= rows8.suggestion_panel_bottom);
     try testing.expect(rows8.suggestion_panel_bottom < rows8.status_row);
-    try testing.expect(rows8.status_row < rows8.footer_row);
-    try testing.expect(rows8.footer_row < rows8.input_row);
+    try testing.expectEqual(rows8.status_row, rows8.footer_row);
+    try testing.expect(rows8.status_row < rows8.input_row);
 
     const rows10 = tui_render.layoutFor(.{ .rows = 10, .cols = 80 }, "/", false);
     try testing.expect(!rows10.tiny);

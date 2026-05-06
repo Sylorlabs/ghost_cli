@@ -4699,6 +4699,7 @@ test "ask human draft remains draft unverified" {
         "./zig-out/bin/ghost",
         "ask",
         "--engine-root=" ++ mock_root,
+        "--details",
         "hello",
     });
     defer {
@@ -4726,6 +4727,7 @@ test "ask human unresolved remains unresolved" {
         "./zig-out/bin/ghost",
         "ask",
         "--engine-root=" ++ mock_root,
+        "--details",
         "hello",
     });
     defer {
@@ -4738,6 +4740,36 @@ test "ask human unresolved remains unresolved" {
     try testing.expect(std.mem.indexOf(u8, res.stdout, "missing retained evidence") != null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "Pending Obligations:") != null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "Verified") == null);
+}
+
+test "ask human default stays basic and suppresses obligations" {
+    const mock_root = "/tmp/ghost-cli-basic-ask";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_task_operator",
+        "#!/bin/sh\nprintf '%s' '{\"verification_state\":\"unresolved\",\"summary\":\"basic answer\",\"unresolved_reason\":\"missing retained evidence\",\"pending_obligations\":[{\"id\":\"evidence\"}]}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "ask",
+        "--engine-root=" ++ mock_root,
+        "hello",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "YOU") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "GHOST") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "basic answer") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Pending Obligations:") == null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "missing retained evidence") == null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Unresolved") == null);
 }
 
 test "ask human correction negative knowledge and epistemic output stay non-authorizing" {
@@ -4754,6 +4786,7 @@ test "ask human correction negative knowledge and epistemic output stay non-auth
         "./zig-out/bin/ghost",
         "ask",
         "--engine-root=" ++ mock_root,
+        "--details",
         "hello",
     });
     defer {
@@ -4789,6 +4822,7 @@ test "ask human unknown supported-shaped json is not rendered verified" {
         "./zig-out/bin/ghost",
         "ask",
         "--engine-root=" ++ mock_root,
+        "--details",
         "hello",
     });
     defer {
@@ -5526,6 +5560,19 @@ test "status routes correctly after no-arg change" {
     const res = try runCmd(testing.allocator, &[_][]const u8{
         "./zig-out/bin/ghost",                         "status",
         "--engine-root=/tmp/ghost-noarg-route-status",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "Unknown command") == null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "--- Ghost CLI Status ---") != null);
+}
+
+test "slash status routes to status command" {
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",                         "/status",
+        "--engine-root=/tmp/ghost-slash-route-status",
     });
     defer {
         testing.allocator.free(res.stdout);

@@ -247,6 +247,9 @@ pub const EngineResponse = struct {
     pub fn getVisualAuthorityState(self: EngineResponse) VisualAuthorityState {
         if (self.isDraftStatus()) return .draft;
 
+        if (self.last_result) |lr| if (matchesAny(lr.kind orelse "", &.{"verified"})) return .verified;
+        if (self.lastResult) |lr| if (matchesAny(lr.kind orelse "", &.{"verified"})) return .verified;
+
         if (self.getExplicitAuthorityState()) |state| {
             if (std.mem.eql(u8, state, "verified") or std.mem.eql(u8, state, "supported")) return .verified;
             if (std.mem.eql(u8, state, "unresolved")) return .unresolved;
@@ -323,18 +326,18 @@ pub const EngineResponse = struct {
     }
 
     pub fn getObligations(self: EngineResponse) ?std.json.Value {
-        if (self.pending_obligations) |val| return val;
-        if (self.pendingObligations) |val| return val;
-        if (self.missing_obligations) |val| return val;
-        if (self.missingObligations) |val| return val;
+        if (self.pending_obligations) |val| if (jsonValueHasItems(val)) return val;
+        if (self.pendingObligations) |val| if (jsonValueHasItems(val)) return val;
+        if (self.missing_obligations) |val| if (jsonValueHasItems(val)) return val;
+        if (self.missingObligations) |val| if (jsonValueHasItems(val)) return val;
         return null;
     }
 
     pub fn getAmbiguities(self: EngineResponse) ?std.json.Value {
-        if (self.pending_ambiguities) |val| return val;
-        if (self.pendingAmbiguities) |val| return val;
-        if (self.ambiguity_sets) |val| return val;
-        if (self.ambiguity_choices) |val| return val;
+        if (self.pending_ambiguities) |val| if (jsonValueHasItems(val)) return val;
+        if (self.pendingAmbiguities) |val| if (jsonValueHasItems(val)) return val;
+        if (self.ambiguity_sets) |val| if (jsonValueHasItems(val)) return val;
+        if (self.ambiguity_choices) |val| if (jsonValueHasItems(val)) return val;
         return null;
     }
 
@@ -359,6 +362,19 @@ pub const EngineResponse = struct {
         return null;
     }
 };
+
+fn jsonValueHasItems(value: std.json.Value) bool {
+    return switch (value) {
+        .array => |arr| arr.items.len > 0,
+        .object => |obj| obj.count() > 0,
+        .integer => |n| n != 0,
+        .float => |n| n != 0,
+        .bool => |b| b,
+        .null => false,
+        .string => |text| text.len > 0,
+        .number_string => |text| text.len > 0 and !std.mem.eql(u8, text, "0"),
+    };
+}
 
 pub const RenderCounters = struct {
     corrections: usize = 0,

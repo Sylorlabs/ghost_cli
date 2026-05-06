@@ -45,12 +45,41 @@ Stage corpus data through `ghost_corpus_ingest`.
 Usage: `ghost corpus ingest ./corpus-fixture --project-shard=my-project --trust-class=project --source-label=fixture`
 Usage: `ghost corpus ingest ./corpus-fixture --project-shard=my-project --trust-class=project --source-label=fixture --json`
 Usage: `ghost corpus ingest ./corpus-fixture --project-shard=my-project --trust-class=project --source-label=fixture --debug`
+Usage: `ghost corpus ingest ./research-notes --deep-research --deep-research-root=/mnt/secondary/ghost_vault --project-shard=my-project`
 
 This command is explicit only. It routes to `ghost_corpus_ingest <path>` with
 optional `--project-shard=<id>`, `--trust-class=<class>`, and
 `--source-label=<label>`. Human output says the result is **STAGED** and **NOT
 LIVE**. Staged corpus is not visible to `ghost corpus ask` until
 `ghost corpus apply-staged` succeeds.
+
+`--deep-research` creates a local `forever_shard/` under the configured
+secondary-drive vault root, writes a deterministic bounded synthesis from the
+input files, and writes `license.json` with `status: "unverified-research"`.
+It does not perform network search, embeddings, hidden model calls, or verifier
+execution. The vault root can be supplied with `--deep-research-root`, with
+`GHOST_DEEP_RESEARCH_ROOT` / `GHOST_VAULT_ROOT`, or by using a mounted path such
+as `/mnt/secondary/ghost_vault` or `D:\ghost_vault` (normalized to `/mnt/d` on
+Linux).
+
+### `ghost verify <path> --rank=<rank>`
+
+Usage: `ghost verify /mnt/secondary/ghost_vault/forever_shard --rank=verified`
+Usage: `ghost verify D:\ghost_vault\forever_shard --rank=shadow`
+Usage: `ghost verify /mnt/secondary/ghost_vault/noise --rank=trash`
+Usage: `ghost trash /mnt/secondary/ghost_vault/noise`
+
+Updates the target corpus root's `license.json` in place through an atomic
+rewrite. The target path must exist and contain `license.json`. Ranks map to
+`authority_level` as `root=0`, `verified=1`, `unverified=2`, `shadow=3`,
+and `trash=4`.
+Each update appends an audit entry like
+`{"action":"promoted","by":"human","timestamp":"..."}` or `demoted` for lower
+ranks.
+
+Trash updates append `action: "trashed"` and move the corpus root under a
+sibling hidden `.trash/` directory in the same vault. `ghost trash <path>` is a
+shortcut for `ghost verify <path> --rank=trash`.
 
 `--json` preserves raw engine stdout exactly. The verified engine at
 `707ae0c7e14f1f0eb91b2a536b89489eeea95e9c` emits JSON from

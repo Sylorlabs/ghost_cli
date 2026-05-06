@@ -4,6 +4,7 @@ const locator = @import("../engine/locator.zig");
 const process = @import("../engine/process.zig");
 const json_contracts = @import("../engine/json_contracts.zig");
 const terminal = @import("../render/terminal.zig");
+const corpus = @import("corpus.zig");
 
 pub const VerifyOptions = struct {
     reasoning: ?json_contracts.ReasoningLevel = null,
@@ -20,10 +21,13 @@ pub fn printHelp(writer: anytype) !void {
         \\verify
         \\
         \\Usage: ghost verify [options]
+        \\Usage: ghost verify <path> --rank=[root|verified|unverified|shadow|trash]
+        \\Usage: ghost trash <path>
         \\Usage: ghost verify candidates <propose|list|review> --file <request.json> [--json] [--debug]
         \\Usage: ghost verify executions <list|get> --file <request.json> [--json] [--debug]
         \\
         \\Subcommands:
+        \\  <path> --rank=<rank>        Promote, demote, or trash a corpus license.json
         \\  candidates propose --file <request.json>
         \\  candidates list --file <request.json>
         \\  candidates review --file <request.json>
@@ -31,6 +35,9 @@ pub fn printHelp(writer: anytype) !void {
         \\  executions get --file <request.json>
         \\
         \\Safety:
+        \\  Rank promotion is a local human audit update of license.json.
+        \\  Trash also moves the folder under a sibling .trash directory.
+        \\  Rank values map to authority_level root=0 verified=1 unverified=2 shadow=3 trash=4.
         \\  Verifier candidates are candidate metadata only.
         \\  Verifier execution records are evidence candidates only.
         \\  Execution inspection is READ-ONLY and NON-AUTHORIZING.
@@ -214,9 +221,8 @@ pub fn executeFromArgs(
             try executeExecutionsFromArgs(allocator, engine_root, args[1..], base);
             return;
         }
-        try std.io.getStdErr().writer().print("Unknown verify command: {s}\n", .{args[0]});
-        try printHelp(std.io.getStdErr().writer());
-        std.process.exit(1);
+        try corpus.executeVerifyPromotionFromArgs(allocator, args);
+        return;
     }
     try executeCandidatesFromArgs(allocator, engine_root, args[1..], base);
 }

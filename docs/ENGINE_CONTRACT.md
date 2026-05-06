@@ -305,10 +305,27 @@ and `ghost packs validate-autopsy-guidance` do not run `sigil.inspect`.
 ## Corpus Lifecycle
 
 `ghost corpus ingest` routes explicitly to `ghost_corpus_ingest <path>`.
-Supported CLI flags are `--project-shard=<id>`, `--trust-class=<class>`, and
-`--source-label=<label>`. Human mode renders the result as STAGED and states
-that staged corpus is not live and is not visible to `corpus.ask` until
-apply-staged succeeds.
+Supported CLI flags are `--project-shard=<id>`, `--trust-class=<class>`,
+`--source-label=<label>`, `--deep-research`, and `--deep-research-root=<path>`.
+Human mode renders the result as STAGED and states that staged corpus is not
+live and is not visible to `corpus.ask` until apply-staged succeeds.
+
+When `--deep-research` is used, the CLI creates a local secondary-drive
+`forever_shard/`, writes bounded deterministic file excerpts into
+`deep_research_summary.md`, and writes `license.json` with
+`status: "unverified-research"` before invoking the existing engine ingest
+binary. It remains local-only and does not perform network search, embeddings,
+hidden model calls, verifier execution, or automatic apply-staged.
+
+`ghost verify <path> --rank=<root|verified|unverified|shadow|trash>` is a local
+human promotion/demotion workflow for corpus roots. It validates that `<path>`
+exists and contains `license.json`, normalizes mounted Windows-style paths such
+as `D:\...` to `/mnt/d/...` on Linux, atomically rewrites `license.json`, sets
+`status` plus numeric `authority_level` (`root=0`, `verified=1`,
+`unverified=2`, `shadow=3`, `trash=4`), and appends a human audit entry. Trash
+rank also moves the corpus root under a sibling hidden `.trash/` directory;
+`ghost trash <path>` is the shortcut. It does not call the engine, ingest,
+apply-staged, or mutate corpus shard files directly.
 
 `ghost corpus apply-staged` routes explicitly to
 `ghost_corpus_ingest --apply-staged` with optional `--project-shard=<id>`.

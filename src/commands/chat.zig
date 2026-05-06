@@ -9,6 +9,8 @@ pub const ContextOptions = struct {
     context_artifact: ?[]const u8 = null,
     json: bool = false,
     debug: bool = false,
+    details: bool = false,
+    color: bool = true,
 };
 
 pub fn execute(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: ContextOptions) !void {
@@ -21,8 +23,7 @@ pub fn execute(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: 
     try argv.append("chat");
 
     if (options.message) |msg| {
-        try argv.append("--message");
-        try argv.append(msg);
+        try argv.append(try std.fmt.allocPrint(aa, "--message={s}", .{msg}));
     }
 
     if (options.reasoning) |level| {
@@ -62,8 +63,12 @@ pub fn execute(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: 
         if (json_contracts.parseEngineJson(allocator, res.stdout)) |parsed| {
             defer parsed.deinit();
             if (options.debug) std.debug.print("[DEBUG] JSON Parse: SUCCESS\n", .{});
-            if (options.debug) try terminal.printDebugFieldDetection(std.io.getStdErr().writer(), parsed.value);
-            try terminal.printEngineOutput(std.io.getStdOut().writer(), parsed.value);
+            if (options.details or options.debug) {
+                if (options.debug) try terminal.printDebugFieldDetection(std.io.getStdErr().writer(), parsed.value);
+                try terminal.printEngineOutput(std.io.getStdOut().writer(), parsed.value);
+            } else {
+                try terminal.printBasicExchange(std.io.getStdOut().writer(), options.message, parsed.value, options.color);
+            }
         } else |err| {
             if (options.debug) std.debug.print("[DEBUG] JSON Parse: FAILED ({})\n", .{err});
             std.debug.print("\x1b[31m[!] Error:\x1b[0m Failed to parse engine JSON.\n", .{});

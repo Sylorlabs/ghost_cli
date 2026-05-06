@@ -27,6 +27,7 @@ const CommandKind = enum {
     ask,
     fix,
     verify,
+    trash,
     packs,
     corpus,
     policy,
@@ -74,7 +75,8 @@ const command_registry = [_]CommandDef{
     .{ .name = "ask", .kind = .ask, .group = .core, .help = "Short one-shot question", .usage = "ghost ask [options] <message>" },
     .{ .name = "chat", .kind = .chat, .group = .core, .help = "Conversational interface to task operator", .usage = "ghost chat [options] --message=\"...\"" },
     .{ .name = "fix", .kind = .fix, .group = .core, .help = "Ask Ghost for a fix-oriented response", .usage = "ghost fix [options] <message>" },
-    .{ .name = "verify", .kind = .verify, .group = .core, .help = "Ask the engine to verify current workspace state", .usage = "ghost verify [options]" },
+    .{ .name = "verify", .kind = .verify, .group = .core, .help = "Verify workspace state or promote corpus license rank", .usage = "ghost verify [options] | ghost verify <path> --rank=<rank>" },
+    .{ .name = "trash", .kind = .trash, .group = .core, .help = "Move a corpus root to vault .trash and blacklist its license", .usage = "ghost trash <path>" },
     .{ .name = "autopsy", .kind = .autopsy, .group = .inspection, .help = "Project Autopsy pass (explicit scan only)", .usage = "ghost autopsy [--json] [--debug] [path]" },
     .{ .name = "artifact", .kind = .artifact, .group = .inspection, .help = "Artifact Autopsy pass (explicit GIP request only)", .usage = "ghost artifact autopsy inspect --file <request.json> [--json] [--debug]" },
     .{ .name = "context", .kind = .context, .group = .inspection, .help = "Context Autopsy pass (explicit GIP request only)", .usage = "ghost context autopsy [--json] [--debug] [--input-file <path>] <description>" },
@@ -96,6 +98,7 @@ const CliOptions = struct {
     explicit_engine_root: ?[]const u8 = null,
     json_out: bool = false,
     debug_mode: bool = false,
+    details_mode: bool = false,
     color_mode: tui.ColorMode = .auto,
     compact: bool = false,
     read_only: bool = false,
@@ -218,6 +221,7 @@ pub fn main() !void {
             .json = parsed.options.json_out,
             .debug = parsed.options.debug_mode,
         }),
+        .trash => try corpus.executeTrashShortcutFromArgs(allocator, parsed.leftover_args.items),
         .packs => try packs.executeFromArgs(allocator, root, parsed.leftover_args.items, .{
             .subcommand = "list",
             .pack_id = parsed.options.pack_id,
@@ -264,6 +268,7 @@ pub fn main() !void {
             .reasoning = parsed.options.reasoning_level,
             .context_artifact = parsed.options.context_artifact,
             .debug = parsed.options.debug_mode,
+            .details = parsed.options.details_mode or parsed.options.debug_mode,
             .color = parsed.options.color_mode,
             .compact = parsed.options.compact,
             .read_only = parsed.options.read_only,
@@ -330,6 +335,8 @@ fn parseFlag(args: *std.process.ArgIterator, arg: []const u8, options: *CliOptio
         options.json_out = true;
     } else if (std.mem.eql(u8, arg, "--debug")) {
         options.debug_mode = true;
+    } else if (std.mem.eql(u8, arg, "--details")) {
+        options.details_mode = true;
     } else if (std.mem.eql(u8, arg, "--no-color")) {
         options.color_mode = .never;
     } else if (std.mem.startsWith(u8, arg, "--color=")) {
@@ -395,10 +402,16 @@ fn parseFlag(args: *std.process.ArgIterator, arg: []const u8, options: *CliOptio
 }
 
 fn lookupCommand(name: []const u8) ?CommandDef {
+    const normalized_name = normalizeCommandName(name);
     for (command_registry) |command| {
-        if (std.mem.eql(u8, name, command.name)) return command;
+        if (std.mem.eql(u8, normalized_name, command.name)) return command;
     }
     return null;
+}
+
+fn normalizeCommandName(name: []const u8) []const u8 {
+    if (name.len > 1 and name[0] == '/') return name[1..];
+    return name;
 }
 
 fn runDefaultTui(allocator: std.mem.Allocator, options: CliOptions) !void {
@@ -409,6 +422,7 @@ fn runDefaultTui(allocator: std.mem.Allocator, options: CliOptions) !void {
         .reasoning = options.reasoning_level,
         .context_artifact = options.context_artifact,
         .debug = options.debug_mode,
+        .details = options.details_mode or options.debug_mode,
         .color = options.color_mode,
         .compact = options.compact,
         .read_only = options.read_only,
@@ -429,6 +443,8 @@ fn runChatLike(allocator: std.mem.Allocator, root: ?[]const u8, parsed: *ParsedC
         .context_artifact = parsed.options.context_artifact,
         .json = parsed.options.json_out,
         .debug = parsed.options.debug_mode,
+        .details = parsed.options.details_mode or parsed.options.debug_mode,
+        .color = parsed.options.color_mode != .never,
     });
 }
 
@@ -621,6 +637,7 @@ fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
             \\  --engine-root=<path>   Resolve engine binaries from path
             \\  --json                 Preserve raw engine stdout exactly
             \\  --debug                Diagnostics to stderr
+            \\  --details              Show status, obligations, ambiguities, and other engine detail
             \\
         , .{}),
         .verify => try writer.print(
@@ -640,6 +657,7 @@ fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
             \\  --context-artifact=<p> Set active context artifact
             \\  --engine-root=<path>   Resolve engine binaries from path when commands run
             \\  --debug                Start with debug mode on
+            \\  --details              Start with detailed engine sections visible
             \\  --no-color             Disable ANSI color
             \\  --color=<mode>         auto|always|never
             \\  --compact              Tighter layout
@@ -648,7 +666,7 @@ fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
             \\  --max-history-turns=<n> Bound retained TUI turns (default 500)
             \\
             \\Slash commands:
-            \\  /help, /quit, /status, /reasoning <level>, /debug on|off, /json on|off
+            \\  /help, /quit, /status, /reasoning <level>, /debug on|off, /details on|off, /json on|off
             \\  /clear, /doctor, /autopsy <path>, /context <path>, /mount <pack[@version]>
             \\  Typing / shows prefix-first fuzzy suggestions. Invalid slash commands are rejected locally.
             \\  In --read-only mode, /doctor, /autopsy, and submitted prompts are blocked locally.
@@ -670,6 +688,13 @@ fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
             \\
         , .{}),
         .status => try writer.print("\nOptions:\n  --debug                Include candidate resolution detail\n", .{}),
+        .trash => try writer.print(
+            \\
+            \\Safety:
+            \\  Updates license.json to trash/authority_level 4, then moves the corpus root
+            \\  under a sibling .trash directory. Does not call engine binaries.
+            \\
+        , .{}),
         .autopsy => try writer.print(
             \\
             \\Options:

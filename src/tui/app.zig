@@ -27,6 +27,7 @@ pub const RunOptions = struct {
     reasoning: ?json_contracts.ReasoningLevel = null,
     context_artifact: ?[]const u8 = null,
     debug: bool = false,
+    details: bool = false,
     color: ColorMode = .auto,
     compact: bool = false,
     read_only: bool = false,
@@ -73,6 +74,7 @@ pub fn run(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: RunO
     if (options.context_artifact) |c| s.context_artifact = try allocator.dupe(u8, c);
     if (options.project_shard) |project_shard| s.project_shard = try allocator.dupe(u8, project_shard);
     s.debug = options.debug;
+    s.details = options.details or options.debug;
     s.read_only = options.read_only;
 
     const stdin = std.io.getStdIn();
@@ -104,6 +106,7 @@ pub fn run(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: RunO
                     'R' => s.cycleReasoning(),
                     'D' => {
                         s.debug = !s.debug;
+                        s.details = s.debug;
                         s.last_command_status = if (s.debug) "debug on" else "debug off";
                     },
                     'L' => {
@@ -248,8 +251,15 @@ pub fn handleSlash(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *s
         .debug => {
             const setting = command.arg orelse "";
             if (std.mem.eql(u8, setting, "on")) s.debug = true else if (std.mem.eql(u8, setting, "off")) s.debug = false else s.debug = !s.debug;
+            s.details = s.debug;
             s.last_command_status = if (s.debug) "debug on" else "debug off";
             try render.renderCommandMessage(writer, style, "debug={s}", .{if (s.debug) "on" else "off"});
+        },
+        .details => {
+            const setting = command.arg orelse "";
+            if (std.mem.eql(u8, setting, "on")) s.details = true else if (std.mem.eql(u8, setting, "off")) s.details = false else s.details = !s.details;
+            s.last_command_status = if (s.details) "details on" else "details off";
+            try render.renderCommandMessage(writer, style, "details={s}", .{if (s.details) "on" else "off"});
         },
         .json => {
             const setting = command.arg orelse "";
@@ -347,6 +357,8 @@ pub fn handleSubmit(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *
     }
 
     const start_time = std.time.milliTimestamp();
+    s.last_command_status = "thinking";
+    try render.renderFrameWithSize(writer, s, style, s.terminal_size);
 
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
@@ -376,8 +388,7 @@ pub fn handleSubmit(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *
         };
     } else blk: {
         try argv.append("chat");
-        try argv.append("--message");
-        try argv.append(cmd_text);
+        try argv.append(try std.fmt.allocPrint(aa, "--message={s}", .{cmd_text}));
 
         var buf: [64]u8 = undefined;
         const reasoning_arg = try std.fmt.bufPrint(&buf, "--reasoning={s}", .{s.reasoning.toStr()});
@@ -418,8 +429,12 @@ pub fn handleSubmit(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *
         // For now, let's just render it into our buffer
         s.last_counters = json_contracts.renderCounters(parsed.value);
         s.recordResponseState(parsed.value);
-        if (s.debug) try terminal_render.printDebugFieldDetection(rendered_buf.writer(), parsed.value);
-        try terminal_render.printEngineOutput(rendered_buf.writer(), parsed.value);
+        if (s.details or s.debug) {
+            if (s.debug) try terminal_render.printDebugFieldDetection(rendered_buf.writer(), parsed.value);
+            try terminal_render.printEngineOutput(rendered_buf.writer(), parsed.value);
+        } else {
+            try terminal_render.printBasicEngineOutput(rendered_buf.writer(), parsed.value);
+        }
         json_ok = true;
         parsed.deinit();
     } else |_| {

@@ -8,6 +8,8 @@ pub const CorpusOptions = struct {
     project_shard: ?[]const u8 = null,
     trust_class: ?[]const u8 = null,
     source_label: ?[]const u8 = null,
+    deep_research: bool = false,
+    deep_research_root: ?[]const u8 = null,
     max_results: ?u64 = null,
     max_snippet_bytes: ?u64 = null,
     mounted_packs: []const MountedPackRef = &.{},
@@ -21,10 +23,40 @@ pub const MountedPackRef = struct {
     pack_version: []const u8 = "v1",
 };
 
+pub const LicenseRank = enum(u8) {
+    root = 0,
+    verified = 1,
+    unverified = 2,
+    shadow = 3,
+    trash = 4,
+
+    fn parse(raw: []const u8) ?LicenseRank {
+        if (std.mem.eql(u8, raw, "root")) return .root;
+        if (std.mem.eql(u8, raw, "verified")) return .verified;
+        if (std.mem.eql(u8, raw, "unverified")) return .unverified;
+        if (std.mem.eql(u8, raw, "shadow")) return .shadow;
+        if (std.mem.eql(u8, raw, "trash")) return .trash;
+        return null;
+    }
+
+    fn status(self: LicenseRank) []const u8 {
+        return @tagName(self);
+    }
+
+    fn action(self: LicenseRank) []const u8 {
+        return switch (self) {
+            .root, .verified => "promoted",
+            .unverified, .shadow => "demoted",
+            .trash => "trashed",
+        };
+    }
+};
+
 const usage =
     \\Usage: ghost corpus <ingest|apply-staged|ask> [options]
     \\
     \\  ghost corpus ingest <path> --project-shard=<id> --trust-class=<class> --source-label=<label>
+    \\  ghost corpus ingest <path> --deep-research
     \\  ghost corpus apply-staged --project-shard=<id>
     \\  ghost corpus ask [--json] [--debug] [--project-shard=<id>] <question>
     \\
@@ -80,7 +112,7 @@ fn printIngestHelp(writer: anytype) !void {
     try writer.print(
         \\corpus ingest
         \\
-        \\Usage: ghost corpus ingest <path> [--project-shard=<id>] [--trust-class=<class>] [--source-label=<label>] [--json] [--debug]
+        \\Usage: ghost corpus ingest <path> [--project-shard=<id>] [--trust-class=<class>] [--source-label=<label>] [--deep-research] [--deep-research-root=<path>] [--json] [--debug]
         \\
         \\Stages corpus data through ghost_corpus_ingest. Staged corpus is not live
         \\and cannot be read by corpus.ask until `ghost corpus apply-staged` is run.
@@ -89,6 +121,8 @@ fn printIngestHelp(writer: anytype) !void {
         \\  --project-shard <id>       Target shard id
         \\  --trust-class <class>      exploratory|project|promoted|core
         \\  --source-label <label>     Source label recorded by the engine
+        \\  --deep-research            Build a local forever_shard research corpus first
+        \\  --deep-research-root <path> Secondary drive vault root for forever_shard
         \\  --json                     Preserve raw engine stdout exactly
         \\  --debug                    Diagnostics to stderr
         \\
@@ -187,6 +221,14 @@ pub fn executeFromArgs(
                 options.source_label = args[i];
             } else if (std.mem.startsWith(u8, arg, "--source-label=")) {
                 options.source_label = arg["--source-label=".len..];
+            } else if (std.mem.eql(u8, arg, "--deep-research")) {
+                options.deep_research = true;
+            } else if (std.mem.eql(u8, arg, "--deep-research-root")) {
+                i += 1;
+                if (i >= args.len) try failMissingValue("--deep-research-root");
+                options.deep_research_root = args[i];
+            } else if (std.mem.startsWith(u8, arg, "--deep-research-root=")) {
+                options.deep_research_root = arg["--deep-research-root=".len..];
             } else if (std.mem.startsWith(u8, arg, "--")) {
                 try std.io.getStdErr().writer().print("Unknown corpus ingest option: {s}\n", .{arg});
                 std.process.exit(1);
@@ -276,16 +318,370 @@ pub fn executeFromArgs(
     try executeAsk(allocator, engine_root, options);
 }
 
+pub fn executeVerifyPromotionFromArgs(allocator: std.mem.Allocator, args: []const []const u8) !void {
+    var target_path: ?[]const u8 = null;
+    var rank: ?LicenseRank = null;
+
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        const arg = args[i];
+        if (std.mem.eql(u8, arg, "--rank")) {
+            i += 1;
+            if (i >= args.len) try failMissingValue("--rank");
+            rank = LicenseRank.parse(args[i]) orelse {
+                try std.io.getStdErr().writer().print("Invalid rank: {s}\nExpected one of: root, verified, unverified, shadow, trash\n", .{args[i]});
+                std.process.exit(1);
+            };
+        } else if (std.mem.startsWith(u8, arg, "--rank=")) {
+            const raw = arg["--rank=".len..];
+            rank = LicenseRank.parse(raw) orelse {
+                try std.io.getStdErr().writer().print("Invalid rank: {s}\nExpected one of: root, verified, unverified, shadow, trash\n", .{raw});
+                std.process.exit(1);
+            };
+        } else if (std.mem.startsWith(u8, arg, "--")) {
+            try std.io.getStdErr().writer().print("Unknown verify option: {s}\n", .{arg});
+            std.process.exit(1);
+        } else if (target_path == null) {
+            target_path = arg;
+        } else {
+            try std.io.getStdErr().writer().print("Unexpected extra verify argument: {s}\n", .{arg});
+            std.process.exit(1);
+        }
+    }
+
+    const path = target_path orelse {
+        try std.io.getStdErr().writer().print("Usage: ghost verify <path> --rank=[root|verified|unverified|shadow|trash]\n", .{});
+        std.process.exit(1);
+    };
+    const selected_rank = rank orelse {
+        try std.io.getStdErr().writer().print("Missing required --rank=[root|verified|unverified|shadow|trash]\n", .{});
+        std.process.exit(1);
+    };
+
+    const result = updateLicenseRank(allocator, path, selected_rank) catch |err| {
+        try std.io.getStdErr().writer().print("Failed to update license rank for {s}: {s}\n", .{ path, @errorName(err) });
+        std.process.exit(1);
+    };
+    defer if (result.original_path) |value| allocator.free(value);
+    defer allocator.free(result.root_path);
+    defer allocator.free(result.license_path);
+
+    try std.io.getStdOut().writer().print(
+        "Corpus License Rank Updated\nPath: {s}\nLicense: {s}\nStatus: {s}\nAuthority Level: {d}\nAudit Action: {s}\n",
+        .{ result.root_path, result.license_path, selected_rank.status(), @intFromEnum(selected_rank), selected_rank.action() },
+    );
+    if (result.original_path) |original| {
+        try std.io.getStdOut().writer().print("Original Path: {s}\nMoved To: {s}\n", .{ original, result.root_path });
+    }
+}
+
+pub fn executeTrashShortcutFromArgs(allocator: std.mem.Allocator, args: []const []const u8) !void {
+    var target_path: ?[]const u8 = null;
+    for (args) |arg| {
+        if (std.mem.startsWith(u8, arg, "--")) {
+            try std.io.getStdErr().writer().print("Unknown trash option: {s}\n", .{arg});
+            std.process.exit(1);
+        } else if (target_path == null) {
+            target_path = arg;
+        } else {
+            try std.io.getStdErr().writer().print("Unexpected extra trash argument: {s}\n", .{arg});
+            std.process.exit(1);
+        }
+    }
+    const path = target_path orelse {
+        try std.io.getStdErr().writer().print("Usage: ghost trash <path>\n", .{});
+        std.process.exit(1);
+    };
+    try executeVerifyPromotionFromArgs(allocator, &.{ path, "--rank=trash" });
+}
+
+const LicenseUpdateResult = struct {
+    original_path: ?[]u8 = null,
+    root_path: []u8,
+    license_path: []u8,
+};
+
+fn updateLicenseRank(allocator: std.mem.Allocator, raw_path: []const u8, rank: LicenseRank) !LicenseUpdateResult {
+    const root_path = try resolveExistingCorpusPath(allocator, raw_path);
+    errdefer allocator.free(root_path);
+    {
+        var dir = try std.fs.openDirAbsolute(root_path, .{});
+        dir.close();
+    }
+
+    const license_path = try std.fs.path.join(allocator, &.{ root_path, "license.json" });
+    errdefer allocator.free(license_path);
+    const file = try std.fs.openFileAbsolute(license_path, .{});
+    defer file.close();
+    const stat = try file.stat();
+    const bytes = try file.readToEndAlloc(allocator, @intCast(@min(stat.size, 1024 * 1024)));
+    defer allocator.free(bytes);
+
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, bytes, .{});
+    defer parsed.deinit();
+    if (parsed.value != .object) return error.InvalidLicenseJson;
+    var obj = &parsed.value.object;
+
+    try obj.put("status", .{ .string = rank.status() });
+    try obj.put("authority_level", .{ .integer = @intFromEnum(rank) });
+
+    const timestamp = try std.fmt.allocPrint(allocator, "{d}", .{std.time.timestamp()});
+    defer allocator.free(timestamp);
+    var audit_entry = std.json.Value{ .object = std.json.ObjectMap.init(allocator) };
+    defer audit_entry.object.deinit();
+    try audit_entry.object.put("action", .{ .string = rank.action() });
+    try audit_entry.object.put("by", .{ .string = "human" });
+    try audit_entry.object.put("timestamp", .{ .string = timestamp });
+
+    if (obj.getPtr("audit_log")) |audit_value| {
+        if (audit_value.* != .array) return error.InvalidLicenseAuditLog;
+        try audit_value.array.append(audit_entry);
+    } else if (obj.getPtr("auditLog")) |audit_value| {
+        if (audit_value.* != .array) return error.InvalidLicenseAuditLog;
+        try audit_value.array.append(audit_entry);
+    } else {
+        var audit = std.json.Array.init(allocator);
+        try audit.append(audit_entry);
+        try obj.put("audit_log", .{ .array = audit });
+    }
+
+    const tmp_path = try std.fmt.allocPrint(allocator, "{s}.tmp.{d}", .{ license_path, std.time.milliTimestamp() });
+    defer allocator.free(tmp_path);
+    errdefer std.fs.deleteFileAbsolute(tmp_path) catch {};
+    {
+        var tmp = try std.fs.createFileAbsolute(tmp_path, .{ .truncate = true });
+        defer tmp.close();
+        try std.json.stringify(parsed.value, .{ .whitespace = .indent_2 }, tmp.writer());
+        try tmp.writeAll("\n");
+    }
+    if (obj.getPtr("audit_log")) |audit_value| {
+        if (audit_value.* == .array) audit_value.array.deinit();
+    } else if (obj.getPtr("auditLog")) |audit_value| {
+        if (audit_value.* == .array) audit_value.array.deinit();
+    }
+    try std.fs.renameAbsolute(tmp_path, license_path);
+
+    if (rank == .trash) {
+        return try moveCorpusRootToTrash(allocator, root_path, license_path);
+    }
+    return .{ .root_path = root_path, .license_path = license_path };
+}
+
+fn moveCorpusRootToTrash(allocator: std.mem.Allocator, root_path: []u8, license_path: []u8) !LicenseUpdateResult {
+    const parent = std.fs.path.dirname(root_path) orelse return error.InvalidCorpusPath;
+    if (std.mem.eql(u8, std.fs.path.basename(parent), ".trash")) {
+        return .{ .root_path = root_path, .license_path = license_path };
+    }
+
+    const trash_root = try std.fs.path.join(allocator, &.{ parent, ".trash" });
+    defer allocator.free(trash_root);
+    try std.fs.cwd().makePath(trash_root);
+
+    const base_name = std.fs.path.basename(root_path);
+    var destination = try std.fs.path.join(allocator, &.{ trash_root, base_name });
+    errdefer allocator.free(destination);
+    if (pathExistsAbsolute(destination)) {
+        allocator.free(destination);
+        const unique_name = try std.fmt.allocPrint(allocator, "{s}-{d}", .{ base_name, std.time.milliTimestamp() });
+        defer allocator.free(unique_name);
+        destination = try std.fs.path.join(allocator, &.{ trash_root, unique_name });
+    }
+
+    try std.fs.renameAbsolute(root_path, destination);
+    const moved_license_path = try std.fs.path.join(allocator, &.{ destination, "license.json" });
+    errdefer allocator.free(moved_license_path);
+    allocator.free(license_path);
+    return .{
+        .original_path = root_path,
+        .root_path = destination,
+        .license_path = moved_license_path,
+    };
+}
+
+fn pathExistsAbsolute(path: []const u8) bool {
+    std.fs.accessAbsolute(path, .{}) catch return false;
+    return true;
+}
+
+fn resolveExistingCorpusPath(allocator: std.mem.Allocator, raw_path: []const u8) ![]u8 {
+    const normalized = try normalizeSecondaryPath(allocator, raw_path);
+    defer allocator.free(normalized);
+    const resolved = if (std.fs.path.isAbsolute(normalized))
+        try allocator.dupe(u8, normalized)
+    else
+        try std.fs.cwd().realpathAlloc(allocator, normalized);
+    errdefer allocator.free(resolved);
+    var dir = try std.fs.openDirAbsolute(resolved, .{});
+    dir.close();
+    const license_path = try std.fs.path.join(allocator, &.{ resolved, "license.json" });
+    defer allocator.free(license_path);
+    const license_file = try std.fs.openFileAbsolute(license_path, .{});
+    license_file.close();
+    return resolved;
+}
+
 pub fn executeIngest(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: CorpusOptions) !void {
-    const corpus_path = options.corpus_path orelse {
+    var effective_options = options;
+    var deep_path: ?[]u8 = null;
+    defer if (deep_path) |value| allocator.free(value);
+    const input_path = options.corpus_path orelse {
         try printIngestHelp(std.io.getStdErr().writer());
         std.process.exit(1);
     };
-    if (std.mem.trim(u8, corpus_path, " \r\n\t").len == 0) {
+    if (std.mem.trim(u8, input_path, " \r\n\t").len == 0) {
         try std.io.getStdErr().writer().print("corpus ingest path must be non-empty\n", .{});
         std.process.exit(1);
     }
-    try runCorpusIngest(allocator, engine_root, .ingest, corpus_path, options);
+    const corpus_path = if (options.deep_research) blk: {
+        deep_path = try buildDeepResearchShard(allocator, input_path, options.deep_research_root);
+        effective_options.trust_class = options.trust_class orelse "exploratory";
+        effective_options.source_label = options.source_label orelse "deep-research";
+        break :blk deep_path.?;
+    } else input_path;
+    try runCorpusIngest(allocator, engine_root, .ingest, corpus_path, effective_options);
+}
+
+fn buildDeepResearchShard(allocator: std.mem.Allocator, input_path: []const u8, requested_root: ?[]const u8) ![]u8 {
+    const vault_root = try resolveDeepResearchRoot(allocator, input_path, requested_root);
+    defer allocator.free(vault_root);
+    try std.fs.cwd().makePath(vault_root);
+    const shard_root = try std.fs.path.join(allocator, &.{ vault_root, "forever_shard" });
+    errdefer allocator.free(shard_root);
+    try std.fs.cwd().makePath(shard_root);
+
+    const license_path = try std.fs.path.join(allocator, &.{ shard_root, "license.json" });
+    defer allocator.free(license_path);
+    var license_file = try std.fs.createFileAbsolute(license_path, .{ .truncate = true });
+    try license_file.writeAll(
+        "{\n  \"status\": \"unverified-research\",\n  \"source\": \"ghost corpus ingest --deep-research\",\n  \"authority\": \"non-authorizing research synthesis\"\n}\n",
+    );
+    license_file.close();
+
+    const summary_path = try std.fs.path.join(allocator, &.{ shard_root, "deep_research_summary.md" });
+    defer allocator.free(summary_path);
+    var summary_file = try std.fs.createFileAbsolute(summary_path, .{ .truncate = true });
+    defer summary_file.close();
+    const writer = summary_file.writer();
+    try writer.writeAll("# Deep Research Ingest\n\n");
+    try writer.writeAll("Status: unverified-research\n\n");
+    try writer.print("Seed path: {s}\n\n", .{input_path});
+    try writer.writeAll("Local search summary:\n");
+    try writeLocalResearchSummary(allocator, writer, input_path);
+    try writer.writeAll("\nMissing context search:\n");
+    try writer.writeAll("- No network or hidden model search was performed by the CLI.\n");
+    try writer.writeAll("- Files containing unknown, todo, tbd, missing, or unresolved markers should be reviewed as follow-up evidence candidates.\n");
+    return shard_root;
+}
+
+fn resolveDeepResearchRoot(allocator: std.mem.Allocator, input_path: []const u8, requested_root: ?[]const u8) ![]u8 {
+    if (requested_root) |root| return normalizeSecondaryPath(allocator, root);
+    if (std.process.getEnvVarOwned(allocator, "GHOST_DEEP_RESEARCH_ROOT")) |root| return normalizeSecondaryPathOwned(allocator, root) else |_| {}
+    if (std.process.getEnvVarOwned(allocator, "GHOST_VAULT_ROOT")) |root| return normalizeSecondaryPathOwned(allocator, root) else |_| {}
+    if (std.mem.startsWith(u8, input_path, "/mnt/secondary/")) return try allocator.dupe(u8, "/mnt/secondary/ghost_vault");
+    if (std.mem.startsWith(u8, input_path, "/mnt/d/")) return try allocator.dupe(u8, "/mnt/d/ghost_vault");
+    if (looksLikeWindowsDrivePath(input_path)) {
+        const normalized = try normalizeSecondaryPath(allocator, input_path);
+        defer allocator.free(normalized);
+        const dirname = std.fs.path.dirname(normalized) orelse normalized;
+        return try allocator.dupe(u8, dirname);
+    }
+    return try allocator.dupe(u8, "/mnt/secondary/ghost_vault");
+}
+
+fn normalizeSecondaryPathOwned(allocator: std.mem.Allocator, owned: []u8) ![]u8 {
+    defer allocator.free(owned);
+    return normalizeSecondaryPath(allocator, owned);
+}
+
+fn normalizeSecondaryPath(allocator: std.mem.Allocator, raw: []const u8) ![]u8 {
+    if (looksLikeWindowsDrivePath(raw)) {
+        const drive = std.ascii.toLower(raw[0]);
+        var out = std.ArrayList(u8).init(allocator);
+        errdefer out.deinit();
+        try out.writer().print("/mnt/{c}", .{drive});
+        var idx: usize = 2;
+        while (idx < raw.len and (raw[idx] == '\\' or raw[idx] == '/')) : (idx += 1) {}
+        if (idx < raw.len) try out.append('/');
+        while (idx < raw.len) : (idx += 1) {
+            try out.append(if (raw[idx] == '\\') '/' else raw[idx]);
+        }
+        return out.toOwnedSlice();
+    }
+    return try allocator.dupe(u8, raw);
+}
+
+fn looksLikeWindowsDrivePath(path: []const u8) bool {
+    return path.len >= 2 and std.ascii.isAlphabetic(path[0]) and path[1] == ':';
+}
+
+fn writeLocalResearchSummary(allocator: std.mem.Allocator, writer: anytype, input_path: []const u8) !void {
+    var dir = std.fs.cwd().openDir(input_path, .{ .iterate = true }) catch {
+        try writer.print("- Seed file: {s}\n", .{input_path});
+        return;
+    };
+    defer dir.close();
+    var walker = try dir.walk(allocator);
+    defer walker.deinit();
+    var count: usize = 0;
+    var marker_count: usize = 0;
+    while (try walker.next()) |entry| {
+        if (entry.kind != .file) continue;
+        count += 1;
+        if (count <= 64) try writer.print("- File: {s}\n", .{entry.path});
+        if (count <= 16) {
+            if (try readSmallFileFromDir(allocator, dir, entry.path)) |text| {
+                defer allocator.free(text);
+                try writer.print("  Excerpt: {s}\n", .{text});
+            }
+        }
+        const marker = containsMissingContextMarker(entry.basename);
+        if (marker) marker_count += 1;
+    }
+    try writer.print("- Files scanned for local context: {d}\n", .{count});
+    try writer.print("- Filename-level missing-context markers: {d}\n", .{marker_count});
+}
+
+fn readSmallFileFromDir(allocator: std.mem.Allocator, dir: std.fs.Dir, path: []const u8) !?[]u8 {
+    const file = dir.openFile(path, .{}) catch return null;
+    defer file.close();
+    const bytes = file.readToEndAlloc(allocator, 1024) catch return null;
+    errdefer allocator.free(bytes);
+    var out = std.ArrayList(u8).init(allocator);
+    errdefer out.deinit();
+    var last_space = false;
+    for (bytes) |c| {
+        const normalized: u8 = switch (c) {
+            '\n', '\r', '\t' => ' ',
+            0 => ' ',
+            else => c,
+        };
+        if (normalized == ' ') {
+            if (last_space) continue;
+            last_space = true;
+        } else {
+            last_space = false;
+        }
+        try out.append(normalized);
+    }
+    allocator.free(bytes);
+    return try out.toOwnedSlice();
+}
+
+fn containsMissingContextMarker(text: []const u8) bool {
+    return indexOfIgnoreCase(text, "todo") != null or
+        indexOfIgnoreCase(text, "tbd") != null or
+        indexOfIgnoreCase(text, "unknown") != null or
+        indexOfIgnoreCase(text, "missing") != null or
+        indexOfIgnoreCase(text, "unresolved") != null;
+}
+
+fn indexOfIgnoreCase(haystack: []const u8, needle: []const u8) ?usize {
+    if (needle.len == 0 or needle.len > haystack.len) return null;
+    var idx: usize = 0;
+    while (idx + needle.len <= haystack.len) : (idx += 1) {
+        if (std.ascii.eqlIgnoreCase(haystack[idx .. idx + needle.len], needle)) return idx;
+    }
+    return null;
 }
 
 pub fn executeApplyStaged(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: CorpusOptions) !void {
@@ -650,6 +1046,7 @@ fn printCorpusAskResult(writer: anytype, value: std.json.Value) !void {
     const unknowns = corpus.get("unknowns");
     const capacity_telemetry = corpus.get("capacityTelemetry");
     const evidence = corpus.get("evidenceUsed");
+    const suppressed_evidence = corpus.get("suppressedEvidence");
     const similar_candidates = corpus.get("similarCandidates");
     const accepted_correction_warnings = corpus.get("acceptedCorrectionWarnings");
     const correction_influences = corpus.get("correctionInfluences");
@@ -715,6 +1112,10 @@ fn printCorpusAskResult(writer: anytype, value: std.json.Value) !void {
             try writer.print("No live shard corpus is available for this ask request.\n", .{});
         } else if (hasUnknownKind(unknowns, "conflicting_evidence")) {
             try writer.print("Conflicting corpus evidence was reported, so no answer draft is rendered.\n", .{});
+        } else if (hasUnknownKind(unknowns, "rejected_falsehood") or isCorpusStatus(corpus, "rejected_falsehood")) {
+            try writer.print("A blacklisted Trash-ranked source matched this query, so the falsehood was rejected.\n", .{});
+        } else if (hasUnknownKind(unknowns, "insufficient_high_rank_evidence")) {
+            try writer.print("Only Shadow-ranked corpus context matched, so no answer draft is rendered.\n", .{});
         } else if (hasUnknownKind(unknowns, "insufficient_evidence")) {
             try writer.print("Corpus evidence was insufficient, so no answer draft is rendered.\n", .{});
         }
@@ -727,6 +1128,14 @@ fn printCorpusAskResult(writer: anytype, value: std.json.Value) !void {
         if (!isEmptyJsonList(evidence_value)) {
             try writer.print("\nEvidence Used:\n", .{});
             try printEvidenceUsed(writer, evidence_value);
+        }
+    }
+
+    if (suppressed_evidence) |suppressed_value| {
+        if (!isEmptyJsonList(suppressed_value)) {
+            try writer.print("\nSuppressed Evidence / NON-AUTHORIZING\n", .{});
+            try writer.print("These sources were excluded from answer drafting.\n", .{});
+            try printEvidenceUsed(writer, suppressed_value);
         }
     }
 
@@ -1069,14 +1478,57 @@ fn printEvidenceItem(writer: anytype, value: std.json.Value) !void {
             return;
         },
     };
+    if (isTrashEvidence(obj)) {
+        try writer.print("    🚫 [Blacklisted Source Blocked] discarded; not used as evidence\n", .{});
+    } else if (isShadowEvidence(obj)) {
+        try writer.print("    👤 [Shadow Context] contextual only; not used as truth basis\n", .{});
+    }
     try printOptionalEvidenceField(writer, obj, "itemId", "itemId");
     try printOptionalEvidenceField(writer, obj, "path", "path");
     try printOptionalEvidenceField(writer, obj, "sourcePath", "sourcePath");
     try printOptionalEvidenceField(writer, obj, "class", "class");
+    try printOptionalEvidenceField(writer, obj, "licenseStatus", "licenseStatus");
+    try printOptionalEvidenceField(writer, obj, "authorityLevel", "authorityLevel");
     try printOptionalEvidenceField(writer, obj, "snippet", "snippet");
     try printOptionalEvidenceField(writer, obj, "reason", "reason");
+    try printOptionalEvidenceField(writer, obj, "authorityRef", "authorityRef");
     try printOptionalEvidenceField(writer, obj, "provenance", "provenance");
     try printOptionalEvidenceField(writer, obj, "score", "score");
+}
+
+fn isShadowEvidence(obj: std.json.ObjectMap) bool {
+    if (getString(obj, "licenseStatus")) |status| {
+        if (std.ascii.eqlIgnoreCase(status, "shadow")) return true;
+    }
+    if (obj.get("authorityLevel")) |value| {
+        switch (value) {
+            .integer => |i| return i == 3,
+            .float => |f| return f == 3,
+            else => {},
+        }
+    }
+    return false;
+}
+
+fn isTrashEvidence(obj: std.json.ObjectMap) bool {
+    if (getString(obj, "licenseStatus")) |status| {
+        if (std.ascii.eqlIgnoreCase(status, "trash")) return true;
+    }
+    if (obj.get("authorityLevel")) |value| {
+        switch (value) {
+            .integer => |i| return i >= 4,
+            .float => |f| return f >= 4,
+            else => {},
+        }
+    }
+    if (getString(obj, "reason")) |reason| {
+        if (std.mem.indexOf(u8, reason, "blacklisted") != null) return true;
+    }
+    return false;
+}
+
+fn isCorpusStatus(obj: std.json.ObjectMap, status: []const u8) bool {
+    return if (getString(obj, "status")) |value| std.mem.eql(u8, value, status) else false;
 }
 
 fn printOptionalEvidenceField(writer: anytype, obj: std.json.ObjectMap, field: []const u8, label: []const u8) !void {
