@@ -16,6 +16,7 @@ pub const PacksOptions = struct {
     version: ?[]const u8 = null,
     manifest: ?[]const u8 = null,
     all_mounted: bool = false,
+    unmount_all: bool = false,
     project_shard: ?[]const u8 = null,
     max_guidance_bytes: ?[]const u8 = null,
     max_array_items: ?[]const u8 = null,
@@ -137,9 +138,10 @@ pub fn printHelp(writer: anytype) !void {
         \\
         \\Subcommands:
         \\  list
-        \\  inspect <pack-id> [--version=<v>]
-        \\  mount <pack-id> [--version=<v>]
-        \\  unmount <pack-id> [--version=<v>]
+        \\  inspect <pack-id[@version]> [--version=<v>]
+        \\  mount <pack-id[@version]> [--version=<v>]
+        \\  unmount <pack-id[@version]> [--version=<v>]
+        \\  unmount --all [--project-shard=<id>]
         \\  candidates propose --file <request.json> [--json] [--debug]
         \\  candidates review --file <request.json> [--json] [--debug]
         \\  candidates reviewed list --project-shard=<id> [--decision=accepted|rejected|all] [--limit=<n>] [--offset=<n>] [--json] [--debug]
@@ -305,10 +307,13 @@ pub fn executeFromArgs(
         try executeCandidatesFromArgs(allocator, engine_root, args[1..], base);
         return;
     }
-    const p_id = if (base.pack_id) |pack_id| pack_id else if (args.len > 1 and !std.mem.startsWith(u8, args[1], "--")) args[1] else null;
     var options = base;
     options.subcommand = sub;
-    options.pack_id = p_id;
+    if (base.pack_id) |pack_id| {
+        applyPackSpec(&options, pack_id);
+    } else if (args.len > 1 and !std.mem.startsWith(u8, args[1], "--")) {
+        applyPackSpec(&options, args[1]);
+    }
 
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
@@ -325,6 +330,8 @@ pub fn executeFromArgs(
             options.project_shard = args[i];
         } else if (std.mem.startsWith(u8, arg, "--project-shard=")) {
             options.project_shard = arg["--project-shard=".len..];
+        } else if (std.mem.eql(u8, arg, "--all")) {
+            options.unmount_all = true;
         } else if (std.mem.eql(u8, arg, "--all-mounted")) {
             options.all_mounted = true;
         } else if (std.mem.eql(u8, arg, "--max-guidance-bytes")) {
@@ -651,6 +658,11 @@ fn executeMount(allocator: std.mem.Allocator, engine_root: ?[]const u8, options:
         version_arg = try std.fmt.allocPrint(allocator, "--version={s}", .{v});
         try argv.append(version_arg.?);
     }
+    var project_shard_arg: ?[]u8 = null;
+    defer if (project_shard_arg) |arg| allocator.free(arg);
+    const project_shard = options.project_shard orelse "default";
+    project_shard_arg = try std.fmt.allocPrint(allocator, "--project-shard={s}", .{project_shard});
+    try argv.append(project_shard_arg.?);
 
     const res = try runner.run(allocator, .{
         .engine_root = engine_root,
@@ -669,11 +681,24 @@ fn executeMount(allocator: std.mem.Allocator, engine_root: ?[]const u8, options:
 }
 
 fn executeUnmount(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: PacksOptions) !void {
+    if (options.unmount_all) {
+        try executeUnmountAll(allocator, engine_root, options);
+        return;
+    }
     const pack_id = options.pack_id orelse {
         std.debug.print("\x1b[31m[!] Error:\x1b[0m Usage: ghost packs unmount <pack-id>\n", .{});
         std.process.exit(1);
     };
+    try executeUnmountOne(allocator, engine_root, options, pack_id, options.version);
+}
 
+fn executeUnmountOne(
+    allocator: std.mem.Allocator,
+    engine_root: ?[]const u8,
+    options: PacksOptions,
+    pack_id: []const u8,
+    version: ?[]const u8,
+) !void {
     var argv = std.ArrayList([]const u8).init(allocator);
     defer argv.deinit();
 
@@ -684,10 +709,15 @@ fn executeUnmount(allocator: std.mem.Allocator, engine_root: ?[]const u8, option
 
     var version_arg: ?[]u8 = null;
     defer if (version_arg) |arg| allocator.free(arg);
-    if (options.version) |v| {
+    if (version) |v| {
         version_arg = try std.fmt.allocPrint(allocator, "--version={s}", .{v});
         try argv.append(version_arg.?);
     }
+    var project_shard_arg: ?[]u8 = null;
+    defer if (project_shard_arg) |arg| allocator.free(arg);
+    const project_shard = options.project_shard orelse "default";
+    project_shard_arg = try std.fmt.allocPrint(allocator, "--project-shard={s}", .{project_shard});
+    try argv.append(project_shard_arg.?);
 
     const res = try runner.run(allocator, .{
         .engine_root = engine_root,
@@ -702,6 +732,48 @@ fn executeUnmount(allocator: std.mem.Allocator, engine_root: ?[]const u8, option
         std.debug.print("Run 'ghost packs list' to see current state.\n", .{});
     } else {
         std.process.exit(res.exit_code);
+    }
+}
+
+fn executeUnmountAll(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: PacksOptions) !void {
+    const project_shard = options.project_shard orelse "default";
+    const project_shard_arg = try std.fmt.allocPrint(allocator, "--project-shard={s}", .{project_shard});
+    defer allocator.free(project_shard_arg);
+    const res = try runner.run(allocator, .{
+        .engine_root = engine_root,
+        .binary = .ghost_knowledge_pack,
+        .argv = &[_][]const u8{ "list", project_shard_arg, "--json" },
+        .json = true,
+        .debug = options.debug,
+    });
+    defer res.deinit();
+    if (res.exit_code != 0) std.process.exit(res.exit_code);
+
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, res.stdout, .{}) catch |err| {
+        try std.io.getStdErr().writer().print("Error: failed to parse active pack registry JSON: {s}\n", .{@errorName(err)});
+        std.process.exit(1);
+    };
+    defer parsed.deinit();
+    if (parsed.value != .array) {
+        try std.io.getStdErr().writer().print("Error: active pack registry JSON was not an array.\n", .{});
+        std.process.exit(1);
+    }
+
+    var cleared: usize = 0;
+    for (parsed.value.array.items) |item| {
+        if (item != .object) continue;
+        const obj = item.object;
+        const mounted = if (obj.get("mounted")) |value| value == .bool and value.bool else false;
+        if (!mounted) continue;
+        const pack_id = jsonStringField(obj, "packId") orelse continue;
+        const version = jsonStringField(obj, "version") orelse continue;
+        try executeUnmountOne(allocator, engine_root, options, pack_id, version);
+        cleared += 1;
+    }
+    if (cleared == 0) {
+        std.debug.print("No mounted packs to unmount for project shard '{s}'.\n", .{project_shard});
+    } else {
+        std.debug.print("Unmounted {d} pack(s) for project shard '{s}'.\n", .{ cleared, project_shard });
     }
 }
 
@@ -1343,6 +1415,25 @@ fn hasKind(value: std.json.Value, expected_kind: []const u8) bool {
     };
     const kind = obj.get("kind") orelse return false;
     return kind == .string and std.mem.eql(u8, kind.string, expected_kind);
+}
+
+fn applyPackSpec(options: *PacksOptions, raw: []const u8) void {
+    const trimmed = std.mem.trim(u8, raw, " \t\r\n");
+    if (std.mem.indexOfScalar(u8, trimmed, '@')) |idx| {
+        const pack_id = std.mem.trim(u8, trimmed[0..idx], " \t\r\n");
+        const version = std.mem.trim(u8, trimmed[(idx + 1)..], " \t\r\n");
+        if (pack_id.len != 0 and version.len != 0) {
+            options.pack_id = pack_id;
+            options.version = version;
+            return;
+        }
+    }
+    options.pack_id = trimmed;
+}
+
+fn jsonStringField(obj: std.json.ObjectMap, field: []const u8) ?[]const u8 {
+    const value = obj.get(field) orelse return null;
+    return if (value == .string) value.string else null;
 }
 
 fn parseValueArg(args: []const []const u8, index: *usize, arg: []const u8, flag: []const u8) !?[]const u8 {

@@ -400,9 +400,17 @@ pub fn executeAsk(allocator: std.mem.Allocator, engine_root: ?[]const u8, option
     };
     defer allocator.free(bin_path);
 
+    var active_mounts: []MountedPackRef = &.{};
+    defer freeMountedPackRefs(allocator, active_mounts);
+    var effective_options = options;
+    if (options.mounted_packs.len == 0) {
+        active_mounts = try loadActiveMountedPacks(allocator, engine_root, options.project_shard, options.debug);
+        effective_options.mounted_packs = active_mounts;
+    }
+
     var request = std.ArrayList(u8).init(allocator);
     defer request.deinit();
-    try writeCorpusAskRequest(request.writer(), question, options);
+    try writeCorpusAskRequest(request.writer(), question, effective_options);
 
     const argv = &[_][]const u8{ bin_path, "--stdin" };
     if (options.debug) {
@@ -466,6 +474,67 @@ pub fn executeAsk(allocator: std.mem.Allocator, engine_root: ?[]const u8, option
     }
 
     try printCorpusAskResult(std.io.getStdOut().writer(), parsed.value);
+}
+
+fn loadActiveMountedPacks(
+    allocator: std.mem.Allocator,
+    engine_root: ?[]const u8,
+    project_shard: ?[]const u8,
+    debug: bool,
+) ![]MountedPackRef {
+    const shard = project_shard orelse "default";
+    const bin_path = locator.findEngineBinary(allocator, engine_root, .ghost_knowledge_pack) catch return &.{};
+    defer allocator.free(bin_path);
+    const shard_arg = try std.fmt.allocPrint(allocator, "--project-shard={s}", .{shard});
+    defer allocator.free(shard_arg);
+    const argv = &[_][]const u8{ bin_path, "list", shard_arg, "--json" };
+    if (debug) try printDebugArgv(std.io.getStdErr().writer(), argv);
+    const res = process.runEngineCommand(allocator, argv) catch return &.{};
+    defer {
+        allocator.free(res.stdout);
+        allocator.free(res.stderr);
+    }
+    if (res.exit_code != 0) return &.{};
+
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, res.stdout, .{}) catch {
+        return &.{};
+    };
+    defer parsed.deinit();
+    if (parsed.value != .array) return &.{};
+
+    var refs = std.ArrayList(MountedPackRef).init(allocator);
+    errdefer {
+        freeMountedPackRefs(allocator, refs.items);
+        refs.deinit();
+    }
+    for (parsed.value.array.items) |item| {
+        if (item != .object) continue;
+        const obj = item.object;
+        const mounted = if (obj.get("mounted")) |value| value == .bool and value.bool else false;
+        const enabled = if (obj.get("enabled")) |value| value == .bool and value.bool else false;
+        if (!mounted or !enabled) continue;
+        const pack_id = jsonStringField(obj, "packId") orelse continue;
+        const version = jsonStringField(obj, "version") orelse continue;
+        try refs.append(.{
+            .pack_id = try allocator.dupe(u8, pack_id),
+            .pack_version = try allocator.dupe(u8, version),
+        });
+    }
+    return refs.toOwnedSlice();
+}
+
+fn freeMountedPackRefs(allocator: std.mem.Allocator, refs: []MountedPackRef) void {
+    if (refs.len == 0) return;
+    for (refs) |ref| {
+        allocator.free(ref.pack_id);
+        allocator.free(ref.pack_version);
+    }
+    allocator.free(refs);
+}
+
+fn jsonStringField(obj: std.json.ObjectMap, field: []const u8) ?[]const u8 {
+    const value = obj.get(field) orelse return null;
+    return if (value == .string) value.string else null;
 }
 
 fn writeCorpusAskRequest(writer: anytype, question: []const u8, options: CorpusOptions) !void {

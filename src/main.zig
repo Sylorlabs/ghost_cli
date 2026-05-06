@@ -20,7 +20,7 @@ const tui = @import("commands/tui.zig");
 const tui_state = @import("tui/state.zig");
 const json_contracts = @import("engine/json_contracts.zig");
 
-const build_version = "v1.2.1-stable";
+const build_version = "v1.3.0-stable";
 
 const CommandKind = enum {
     chat,

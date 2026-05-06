@@ -363,7 +363,7 @@ test "version flag works" {
         testing.allocator.free(res.stdout);
         testing.allocator.free(res.stderr);
     }
-    try testing.expect(std.mem.indexOf(u8, res.stderr, "ghost_cli v1.2.1-stable") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "ghost_cli v1.3.0-stable") != null);
 }
 
 test "engine root resolution - repo root case" {
@@ -518,7 +518,7 @@ test "doctor report includes version path and engine root fields" {
     }
 
     try testing.expect(std.mem.indexOf(u8, res.stdout, "Ghost Tester Report") != null);
-    try testing.expect(std.mem.indexOf(u8, res.stdout, "Ghost version: v1.2.1-stable") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Ghost version: v1.3.0-stable") != null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "CLI path:") != null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "Engine root: /tmp/ghost-doctor-report") != null);
 }
@@ -559,6 +559,7 @@ test "status still works" {
 
     try testing.expect(std.mem.indexOf(u8, res.stdout, "--- Ghost CLI Status ---") != null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "Engine Root: /tmp/ghost-status-still-works") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Release Seal:") != null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "Knowledge Pack Validation Capabilities") != null);
 }
 
@@ -587,6 +588,7 @@ test "status reports capabilities without running validation" {
     try testing.expect(std.mem.indexOf(u8, res.stdout, "capabilities available: yes") != null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "validate-autopsy-guidance supported: yes") != null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "--max-guidance-bytes") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Global Pack Registry:") != null);
     try testing.expectError(error.FileNotFound, std.fs.cwd().access(marker, .{}));
 }
 
@@ -1884,6 +1886,67 @@ test "existing packs list command still works" {
     }
 
     try testing.expectEqual(@as(u32, 0), res.term.Exited);
+}
+
+test "packs mount accepts pack at version shorthand" {
+    const mock_root = "/tmp/ghost-cli-packs-shorthand";
+    const log_path = mock_root ++ "/args.log";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_knowledge_pack",
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '" ++ log_path ++ "'\ncase \"$*\" in *mount*--pack-id=hitl-cert-pack*--version=1.0.0*--project-shard=default*) exit 0 ;; *) exit 7 ;; esac\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "packs",
+        "mount",
+        "hitl-cert-pack@1.0.0",
+        "--engine-root=" ++ mock_root,
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    const log = try std.fs.cwd().readFileAlloc(testing.allocator, log_path, 4096);
+    defer testing.allocator.free(log);
+    try testing.expect(std.mem.indexOf(u8, log, "--pack-id=hitl-cert-pack") != null);
+    try testing.expect(std.mem.indexOf(u8, log, "--version=1.0.0") != null);
+}
+
+test "packs unmount all clears active default mounts" {
+    const mock_root = "/tmp/ghost-cli-packs-unmount-all";
+    const log_path = mock_root ++ "/args.log";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_knowledge_pack",
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '" ++ log_path ++ "'\ncase \"$*\" in list*--project-shard=default*--json*) printf '%s' '[{\"packId\":\"hitl-cert-pack\",\"version\":\"1.0.0\",\"mounted\":true,\"enabled\":true},{\"packId\":\"idle-pack\",\"version\":\"v1\",\"mounted\":false,\"enabled\":false}]' ;; unmount*--pack-id=hitl-cert-pack*--version=1.0.0*--project-shard=default*) exit 0 ;; *) exit 8 ;; esac\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "packs",
+        "unmount",
+        "--all",
+        "--engine-root=" ++ mock_root,
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    const log = try std.fs.cwd().readFileAlloc(testing.allocator, log_path, 4096);
+    defer testing.allocator.free(log);
+    try testing.expect(std.mem.indexOf(u8, log, "list --project-shard=default --json") != null);
+    try testing.expect(std.mem.indexOf(u8, log, "unmount --pack-id=hitl-cert-pack --version=1.0.0 --project-shard=default") != null);
+    try testing.expect(std.mem.indexOf(u8, log, "--pack-id=idle-pack") == null);
 }
 
 test "packs validate autopsy guidance spaced flags parse in command module" {
@@ -5442,7 +5505,7 @@ test "version flag still prints version after no-arg change" {
         testing.allocator.free(res.stdout);
         testing.allocator.free(res.stderr);
     }
-    try testing.expect(std.mem.indexOf(u8, res.stderr, "ghost_cli v1.2.1-stable") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stderr, "ghost_cli v1.3.0-stable") != null);
     try testing.expectEqual(@as(u32, 0), res.term.Exited);
 }
 
