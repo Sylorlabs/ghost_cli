@@ -4764,12 +4764,37 @@ test "ask human default stays basic and suppresses obligations" {
     }
 
     try testing.expectEqual(@as(u32, 0), res.term.Exited);
-    try testing.expect(std.mem.indexOf(u8, res.stdout, "YOU") != null);
-    try testing.expect(std.mem.indexOf(u8, res.stdout, "GHOST") != null);
-    try testing.expect(std.mem.indexOf(u8, res.stdout, "basic answer") != null);
+    try testing.expectEqualStrings("basic answer\n", res.stdout);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "Pending Obligations:") == null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "missing retained evidence") == null);
     try testing.expect(std.mem.indexOf(u8, res.stdout, "Unresolved") == null);
+}
+
+test "ask human renders generated denial from engine json" {
+    const mock_root = "/tmp/ghost-cli-generated-denial-ask";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_task_operator",
+        "#!/bin/sh\nprintf '%s' '{\"verification_state\":\"unresolved\",\"generatedDenial\":{\"text\":\"No corpus evidence found for Nullstar-771.\"}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "ask",
+        "--engine-root=" ++ mock_root,
+        "What is Nullstar-771?",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expectEqualStrings("No corpus evidence found for Nullstar-771.\n", res.stdout);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "I don't know") == null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Pending Obligations:") == null);
 }
 
 test "ask human correction negative knowledge and epistemic output stay non-authorizing" {

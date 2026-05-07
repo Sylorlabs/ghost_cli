@@ -90,17 +90,8 @@ pub fn printEngineOutput(writer: anytype, response: json_contracts.EngineRespons
 }
 
 pub fn printBasicExchange(writer: anytype, user_text: ?[]const u8, response: json_contracts.EngineResponse, color: bool) !void {
-    if (user_text) |text| {
-        try writer.print("{s}YOU{s}\n{s}\n\n", .{
-            if (color) white_rgb else "",
-            if (color) reset else "",
-            text,
-        });
-    }
-    try writer.print("{s}GHOST{s}\n", .{
-        if (color) ghost_blue_rgb else "",
-        if (color) reset else "",
-    });
+    _ = user_text;
+    _ = color;
     try printBasicEngineOutput(writer, response);
 }
 
@@ -116,7 +107,7 @@ pub fn printBasicEngineOutput(writer: anytype, response: json_contracts.EngineRe
         wrote = true;
     }
     if (!wrote) {
-        try writer.writeAll("I do not have a conversational response for that yet.");
+        try writer.writeAll("No generated response was present in engine output.");
     }
     try writer.writeAll("\n");
 }

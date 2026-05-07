@@ -152,6 +152,10 @@ pub const EngineResponse = struct {
     message: ?[]const u8 = null,
     suggested_action: ?[]const u8 = null,
     suggestedAction: ?[]const u8 = null,
+    generatedDenial: ?GeneratedDenial = null,
+    generated_denial: ?GeneratedDenial = null,
+    lowConfidenceGeneration: ?GeneratedDenial = null,
+    low_confidence_generation: ?GeneratedDenial = null,
 
     // Nested results (ghost_task_operator chat style)
     lastResult: ?LastResult = null,
@@ -207,6 +211,16 @@ pub const EngineResponse = struct {
         corrections: ?std.json.Value = null,
         negative_knowledge: ?std.json.Value = null,
         epistemic_render: ?std.json.Value = null,
+        generatedDenial: ?GeneratedDenial = null,
+        generated_denial: ?GeneratedDenial = null,
+    };
+
+    pub const GeneratedDenial = struct {
+        text: ?[]const u8 = null,
+        draftText: ?[]const u8 = null,
+        draft_text: ?[]const u8 = null,
+        answerDraft: ?[]const u8 = null,
+        answer_draft: ?[]const u8 = null,
     };
 
     pub const CurrentIntent = struct {
@@ -303,8 +317,16 @@ pub const EngineResponse = struct {
 
     pub fn getSummary(self: EngineResponse) ?[]const u8 {
         if (self.summary) |val| return val;
+        if (self.generatedDenial) |value| if (generatedDenialText(value)) |text| return text;
+        if (self.generated_denial) |value| if (generatedDenialText(value)) |text| return text;
+        if (self.lowConfidenceGeneration) |value| if (generatedDenialText(value)) |text| return text;
+        if (self.low_confidence_generation) |value| if (generatedDenialText(value)) |text| return text;
         if (self.last_result) |lr| if (lr.summary) |val| return val;
         if (self.lastResult) |lr| if (lr.summary) |val| return val;
+        if (self.last_result) |lr| if (lr.generatedDenial) |value| if (generatedDenialText(value)) |text| return text;
+        if (self.last_result) |lr| if (lr.generated_denial) |value| if (generatedDenialText(value)) |text| return text;
+        if (self.lastResult) |lr| if (lr.generatedDenial) |value| if (generatedDenialText(value)) |text| return text;
+        if (self.lastResult) |lr| if (lr.generated_denial) |value| if (generatedDenialText(value)) |text| return text;
         return null;
     }
 
@@ -374,6 +396,15 @@ fn jsonValueHasItems(value: std.json.Value) bool {
         .string => |text| text.len > 0,
         .number_string => |text| text.len > 0 and !std.mem.eql(u8, text, "0"),
     };
+}
+
+fn generatedDenialText(value: EngineResponse.GeneratedDenial) ?[]const u8 {
+    if (value.text) |text| return text;
+    if (value.draftText) |text| return text;
+    if (value.draft_text) |text| return text;
+    if (value.answerDraft) |text| return text;
+    if (value.answer_draft) |text| return text;
+    return null;
 }
 
 pub const RenderCounters = struct {
