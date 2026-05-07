@@ -487,7 +487,7 @@ fn runAsk(allocator: std.mem.Allocator, root: ?[]const u8, parsed: *ParsedCli) !
     if (daemon_client.request(allocator, request.items)) |response| {
         defer allocator.free(response);
         if (parsed.options.debug_mode) {
-            try std.io.getStdErr().writer().print("[DEBUG] Daemon Socket: {s}\n", .{daemon_client.SOCKET_PATH});
+            try std.io.getStdErr().writer().print("[DEBUG] Daemon Socket: {s}\n", .{daemon_client.socketPath()});
             try std.io.getStdErr().writer().print("[DEBUG] GIP Kind: corpus.ask\n", .{});
         }
         if (parsed.options.json_out) {

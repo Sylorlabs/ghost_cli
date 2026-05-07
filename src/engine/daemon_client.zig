@@ -1,15 +1,15 @@
 const std = @import("std");
 
 pub const SOCKET_PATH = "/tmp/ghost.sock";
+pub const HEARTBEAT_PATH = "/dev/shm/ghostd.hot";
 const MAX_FRAME_BYTES: usize = 10 * 1024 * 1024;
 
 pub fn isActive() bool {
-    var stream = std.net.connectUnixSocket(socketPath()) catch return false;
-    stream.close();
-    return true;
+    return readHeartbeatHot();
 }
 
 pub fn request(allocator: std.mem.Allocator, payload: []const u8) ![]u8 {
+    if (!isActive()) return error.DaemonInactive;
     var stream = try std.net.connectUnixSocket(socketPath());
     defer stream.close();
     try writeFrame(stream, payload);
@@ -18,6 +18,19 @@ pub fn request(allocator: std.mem.Allocator, payload: []const u8) ![]u8 {
 
 pub fn socketPath() []const u8 {
     return std.posix.getenv("GHOSTD_SOCKET_PATH") orelse SOCKET_PATH;
+}
+
+pub fn heartbeatPath() []const u8 {
+    return std.posix.getenv("GHOSTD_HEARTBEAT_PATH") orelse HEARTBEAT_PATH;
+}
+
+fn readHeartbeatHot() bool {
+    std.fs.accessAbsolute(socketPath(), .{}) catch return false;
+    var file = std.fs.openFileAbsolute(heartbeatPath(), .{}) catch return false;
+    defer file.close();
+    var byte: [1]u8 = undefined;
+    const n = file.read(&byte) catch return false;
+    return n == 1 and byte[0] == '1';
 }
 
 fn writeFrame(stream: std.net.Stream, payload: []const u8) !void {

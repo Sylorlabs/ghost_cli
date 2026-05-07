@@ -16,8 +16,8 @@ pub fn printHelp(writer: anytype) !void {
         \\Controls the local ghostd resident engine process.
         \\
         \\Subcommands:
-        \\  start   Spawn ghostd in the background and wait for /tmp/ghost.sock
-        \\  status  Report whether the daemon socket is accepting requests
+        \\  start   Spawn ghostd in the background and wait for the hot heartbeat flag
+        \\  status  Report daemon status after checking the hot heartbeat flag
         \\  stop    Ask the active daemon to shut down
         \\
     );
@@ -61,7 +61,7 @@ fn start(allocator: std.mem.Allocator, engine_root: ?[]const u8, debug: bool) !v
         }
         std.Thread.sleep(25 * std.time.ns_per_ms);
     }
-    try std.io.getStdErr().writer().print("ghostd start timed out waiting for {s}\n", .{daemon_client.socketPath()});
+    try std.io.getStdErr().writer().print("ghostd start timed out waiting for heartbeat={s}\n", .{daemon_client.heartbeatPath()});
     std.process.exit(1);
 }
 
