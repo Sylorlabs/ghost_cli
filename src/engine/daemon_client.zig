@@ -4,16 +4,20 @@ pub const SOCKET_PATH = "/tmp/ghost.sock";
 const MAX_FRAME_BYTES: usize = 10 * 1024 * 1024;
 
 pub fn isActive() bool {
-    var stream = std.net.connectUnixSocket(SOCKET_PATH) catch return false;
+    var stream = std.net.connectUnixSocket(socketPath()) catch return false;
     stream.close();
     return true;
 }
 
 pub fn request(allocator: std.mem.Allocator, payload: []const u8) ![]u8 {
-    var stream = try std.net.connectUnixSocket(SOCKET_PATH);
+    var stream = try std.net.connectUnixSocket(socketPath());
     defer stream.close();
     try writeFrame(stream, payload);
     return try readFrame(allocator, stream);
+}
+
+pub fn socketPath() []const u8 {
+    return std.posix.getenv("GHOSTD_SOCKET_PATH") orelse SOCKET_PATH;
 }
 
 fn writeFrame(stream: std.net.Stream, payload: []const u8) !void {

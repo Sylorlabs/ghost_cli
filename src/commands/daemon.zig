@@ -37,7 +37,7 @@ pub fn executeFromArgs(allocator: std.mem.Allocator, engine_root: ?[]const u8, a
 
 fn start(allocator: std.mem.Allocator, engine_root: ?[]const u8, debug: bool) !void {
     if (daemon_client.isActive()) {
-        try std.io.getStdOut().writer().print("ghostd already active socket={s}\n", .{daemon_client.SOCKET_PATH});
+        try std.io.getStdOut().writer().print("ghostd already active socket={s}\n", .{daemon_client.socketPath()});
         return;
     }
 
@@ -56,19 +56,19 @@ fn start(allocator: std.mem.Allocator, engine_root: ?[]const u8, debug: bool) !v
     var timer = try std.time.Timer.start();
     while (timer.read() < 5 * std.time.ns_per_s) {
         if (daemon_client.isActive()) {
-            try std.io.getStdOut().writer().print("ghostd active socket={s}\n", .{daemon_client.SOCKET_PATH});
+            try std.io.getStdOut().writer().print("ghostd active socket={s}\n", .{daemon_client.socketPath()});
             return;
         }
         std.Thread.sleep(25 * std.time.ns_per_ms);
     }
-    try std.io.getStdErr().writer().print("ghostd start timed out waiting for {s}\n", .{daemon_client.SOCKET_PATH});
+    try std.io.getStdErr().writer().print("ghostd start timed out waiting for {s}\n", .{daemon_client.socketPath()});
     std.process.exit(1);
 }
 
 fn status(allocator: std.mem.Allocator) !void {
     const payload = "{\"kind\":\"daemon.status\"}";
     const response = daemon_client.request(allocator, payload) catch {
-        try std.io.getStdOut().writer().print("ghostd inactive socket={s}\n", .{daemon_client.SOCKET_PATH});
+        try std.io.getStdOut().writer().print("ghostd inactive socket={s}\n", .{daemon_client.socketPath()});
         return;
     };
     defer allocator.free(response);
@@ -79,7 +79,7 @@ fn status(allocator: std.mem.Allocator) !void {
 fn stop(allocator: std.mem.Allocator) !void {
     const payload = "{\"kind\":\"daemon.stop\"}";
     const response = daemon_client.request(allocator, payload) catch {
-        try std.io.getStdOut().writer().print("ghostd inactive socket={s}\n", .{daemon_client.SOCKET_PATH});
+        try std.io.getStdOut().writer().print("ghostd inactive socket={s}\n", .{daemon_client.socketPath()});
         return;
     };
     defer allocator.free(response);
