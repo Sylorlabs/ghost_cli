@@ -4534,6 +4534,42 @@ test "corpus apply-staged routes correct argv to ghost_corpus_ingest" {
     try testing.expect(std.mem.indexOf(u8, res.stdout, "applied/promoted") != null);
 }
 
+test "top-level ingest indexes and applies to user_vault by default" {
+    const mock_root = "/tmp/ghost-cli-ingest-shortcut";
+    const argv_path = mock_root ++ "/argv.txt";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_corpus_ingest",
+        "#!/bin/sh\n" ++
+            "printf '%s\\n' \"$*\" >> '" ++ argv_path ++ "'\n" ++
+            "case \"$*\" in\n" ++
+            "  *--apply-staged*) printf '{\"status\":\"applied\",\"liveManifest\":\"/tmp/live.json\",\"liveFilesRoot\":\"/tmp/live-files\",\"shard\":{\"kind\":\"project\",\"id\":\"user_vault\"}}' ;;\n" ++
+            "  *) printf '{\"status\":\"staged\",\"stagedManifest\":\"/tmp/staged.json\",\"stagedFilesRoot\":\"/tmp/staged-files\",\"fileCount\":1,\"itemCount\":1,\"bytesRead\":64}' ;;\n" ++
+            "esac\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "ingest",
+        "--engine-root=" ++ mock_root,
+        "fixture-note.txt",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    const argv = try std.fs.cwd().readFileAlloc(testing.allocator, argv_path, 1024 * 1024);
+    defer testing.allocator.free(argv);
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, argv, "fixture-note.txt --project-shard=user_vault --trust-class=project --source-label=user_vault") != null);
+    try testing.expect(std.mem.indexOf(u8, argv, "--apply-staged --project-shard=user_vault") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "State: STAGED") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "State: LIVE") != null);
+}
+
 test "corpus ingest json preserves raw engine stdout and debug stays on stderr" {
     const mock_root = "/tmp/ghost-cli-corpus-ingest-json";
     const raw_json = "{\"status\":\"staged\",\"stagedManifest\":\"/tmp/raw-staged.json\"}";

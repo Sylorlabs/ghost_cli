@@ -541,6 +541,65 @@ pub fn executeIngest(allocator: std.mem.Allocator, engine_root: ?[]const u8, opt
     try runCorpusIngest(allocator, engine_root, .ingest, corpus_path, effective_options);
 }
 
+pub fn executeUserVaultIngestShortcutFromArgs(
+    allocator: std.mem.Allocator,
+    engine_root: ?[]const u8,
+    args: []const []const u8,
+    base: CorpusOptions,
+) !void {
+    var options = base;
+    options.project_shard = options.project_shard orelse "user_vault";
+    options.trust_class = options.trust_class orelse "project";
+    options.source_label = options.source_label orelse "user_vault";
+
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        const arg = args[i];
+        if (std.mem.eql(u8, arg, "--project-shard")) {
+            i += 1;
+            if (i >= args.len) try failMissingValue("--project-shard");
+            options.project_shard = args[i];
+        } else if (std.mem.startsWith(u8, arg, "--project-shard=")) {
+            options.project_shard = arg["--project-shard=".len..];
+        } else if (std.mem.eql(u8, arg, "--trust-class")) {
+            i += 1;
+            if (i >= args.len) try failMissingValue("--trust-class");
+            options.trust_class = args[i];
+        } else if (std.mem.startsWith(u8, arg, "--trust-class=")) {
+            options.trust_class = arg["--trust-class=".len..];
+        } else if (std.mem.eql(u8, arg, "--source-label")) {
+            i += 1;
+            if (i >= args.len) try failMissingValue("--source-label");
+            options.source_label = args[i];
+        } else if (std.mem.startsWith(u8, arg, "--source-label=")) {
+            options.source_label = arg["--source-label=".len..];
+        } else if (std.mem.eql(u8, arg, "--deep-research")) {
+            options.deep_research = true;
+        } else if (std.mem.eql(u8, arg, "--deep-research-root")) {
+            i += 1;
+            if (i >= args.len) try failMissingValue("--deep-research-root");
+            options.deep_research_root = args[i];
+        } else if (std.mem.startsWith(u8, arg, "--deep-research-root=")) {
+            options.deep_research_root = arg["--deep-research-root=".len..];
+        } else if (std.mem.startsWith(u8, arg, "--")) {
+            try std.io.getStdErr().writer().print("Unknown ingest option: {s}\n", .{arg});
+            std.process.exit(1);
+        } else if (options.corpus_path == null) {
+            options.corpus_path = arg;
+        } else {
+            try std.io.getStdErr().writer().print("Unexpected extra ingest argument: {s}\n", .{arg});
+            std.process.exit(1);
+        }
+    }
+
+    try executeIngest(allocator, engine_root, options);
+    try executeApplyStaged(allocator, engine_root, .{
+        .project_shard = options.project_shard,
+        .json = options.json,
+        .debug = options.debug,
+    });
+}
+
 fn buildDeepResearchShard(allocator: std.mem.Allocator, input_path: []const u8, requested_root: ?[]const u8) ![]u8 {
     const vault_root = try resolveDeepResearchRoot(allocator, input_path, requested_root);
     defer allocator.free(vault_root);

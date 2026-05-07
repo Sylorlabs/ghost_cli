@@ -28,6 +28,7 @@ const CommandKind = enum {
     fix,
     verify,
     trash,
+    ingest,
     packs,
     corpus,
     policy,
@@ -77,6 +78,7 @@ const command_registry = [_]CommandDef{
     .{ .name = "fix", .kind = .fix, .group = .core, .help = "Ask Ghost for a fix-oriented response", .usage = "ghost fix [options] <message>" },
     .{ .name = "verify", .kind = .verify, .group = .core, .help = "Verify workspace state or promote corpus license rank", .usage = "ghost verify [options] | ghost verify <path> --rank=<rank>" },
     .{ .name = "trash", .kind = .trash, .group = .core, .help = "Move a corpus root to vault .trash and blacklist its license", .usage = "ghost trash <path>" },
+    .{ .name = "ingest", .kind = .ingest, .group = .core, .help = "Index a text file into user_vault", .usage = "ghost ingest <path>" },
     .{ .name = "autopsy", .kind = .autopsy, .group = .inspection, .help = "Project Autopsy pass (explicit scan only)", .usage = "ghost autopsy [--json] [--debug] [path]" },
     .{ .name = "artifact", .kind = .artifact, .group = .inspection, .help = "Artifact Autopsy pass (explicit GIP request only)", .usage = "ghost artifact autopsy inspect --file <request.json> [--json] [--debug]" },
     .{ .name = "context", .kind = .context, .group = .inspection, .help = "Context Autopsy pass (explicit GIP request only)", .usage = "ghost context autopsy [--json] [--debug] [--input-file <path>] <description>" },
@@ -222,6 +224,11 @@ pub fn main() !void {
             .debug = parsed.options.debug_mode,
         }),
         .trash => try corpus.executeTrashShortcutFromArgs(allocator, parsed.leftover_args.items),
+        .ingest => try corpus.executeUserVaultIngestShortcutFromArgs(allocator, root, parsed.leftover_args.items, .{
+            .project_shard = parsed.options.project_shard,
+            .json = parsed.options.json_out,
+            .debug = parsed.options.debug_mode,
+        }),
         .packs => try packs.executeFromArgs(allocator, root, parsed.leftover_args.items, .{
             .subcommand = "list",
             .pack_id = parsed.options.pack_id,
@@ -447,7 +454,7 @@ fn runChatLike(allocator: std.mem.Allocator, root: ?[]const u8, parsed: *ParsedC
         .json = parsed.options.json_out,
         .debug = parsed.options.debug_mode,
         .details = parsed.options.details_mode or parsed.options.debug_mode,
-        .color = parsed.options.color_mode != .never,
+        .color = parsed.options.color_mode == .always,
     });
 }
 
@@ -698,6 +705,14 @@ fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
             \\Safety:
             \\  Updates license.json to trash/authority_level 4, then moves the corpus root
             \\  under a sibling .trash directory. Does not call engine binaries.
+            \\
+        , .{}),
+        .ingest => try writer.print(
+            \\
+            \\Usage: ghost ingest <path> [--project-shard=<id>] [--trust-class=<class>] [--source-label=<label>] [--engine-root=<path>]
+            \\
+            \\Indexes .txt/.md corpus text into the selected project shard and immediately applies it.
+            \\Defaults: --project-shard=user_vault --trust-class=project --source-label=user_vault.
             \\
         , .{}),
         .autopsy => try writer.print(

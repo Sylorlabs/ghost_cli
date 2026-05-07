@@ -91,11 +91,16 @@ pub fn printEngineOutput(writer: anytype, response: json_contracts.EngineRespons
 
 pub fn printBasicExchange(writer: anytype, user_text: ?[]const u8, response: json_contracts.EngineResponse, color: bool) !void {
     _ = user_text;
-    _ = color;
-    try printBasicEngineOutput(writer, response);
+    try printBasicEngineOutputWithColor(writer, response, color);
 }
 
 pub fn printBasicEngineOutput(writer: anytype, response: json_contracts.EngineResponse) !void {
+    try printBasicEngineOutputWithColor(writer, response, false);
+}
+
+pub fn printBasicEngineOutputWithColor(writer: anytype, response: json_contracts.EngineResponse, color: bool) !void {
+    if (color) try writer.writeAll(ghost_blue_rgb);
+    defer if (color) writer.writeAll(reset) catch {};
     var wrote = false;
     if (response.getSummary()) |summary| {
         try writer.writeAll(summary);
