@@ -6,6 +6,7 @@ pub const EngineBinaries = enum {
     ghost_patch_candidates,
     ghost_knowledge_pack,
     ghost_gip,
+    ghostd,
     ghost_project_autopsy,
     ghost_corpus_ingest,
 
@@ -16,6 +17,7 @@ pub const EngineBinaries = enum {
             .ghost_patch_candidates => "ghost_patch_candidates",
             .ghost_knowledge_pack => "ghost_knowledge_pack",
             .ghost_gip => "ghost_gip",
+            .ghostd => "ghostd",
             .ghost_project_autopsy => "ghost_project_autopsy",
             .ghost_corpus_ingest => "ghost_corpus_ingest",
         };
@@ -29,6 +31,7 @@ pub const EngineBinaries = enum {
             .ghost_knowledge_pack,
             => true,
             .ghost_gip,
+            .ghostd,
             .ghost_project_autopsy,
             .ghost_corpus_ingest,
             => false,
@@ -109,6 +112,7 @@ pub fn allBinaries() []const EngineBinaries {
         .ghost_patch_candidates,
         .ghost_knowledge_pack,
         .ghost_gip,
+        .ghostd,
         .ghost_project_autopsy,
         .ghost_corpus_ingest,
     };

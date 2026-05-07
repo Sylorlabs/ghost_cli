@@ -4,6 +4,7 @@ const chat = @import("commands/chat.zig");
 const debug_cmd = @import("commands/debug.zig");
 const doctor = @import("commands/doctor.zig");
 const status = @import("commands/status.zig");
+const daemon_cmd = @import("commands/daemon.zig");
 const packs = @import("commands/packs.zig");
 const corpus = @import("commands/corpus.zig");
 const rules = @import("commands/rules.zig");
@@ -19,6 +20,7 @@ const context_cmd = @import("commands/context.zig");
 const tui = @import("commands/tui.zig");
 const tui_state = @import("tui/state.zig");
 const json_contracts = @import("engine/json_contracts.zig");
+const daemon_client = @import("engine/daemon_client.zig");
 
 const build_version = "v1.3.0-stable";
 
@@ -38,6 +40,7 @@ const CommandKind = enum {
     nk,
     learn,
     tui,
+    daemon,
     status,
     doctor,
     debug,
@@ -94,6 +97,7 @@ const command_registry = [_]CommandDef{
     .{ .name = "sigil", .kind = .sigil, .group = .advanced, .help = "Inspect Sigil bytecode read-only", .usage = "ghost sigil inspect --file <request.json> [--json] [--debug]" },
     .{ .name = "debug", .kind = .debug, .group = .advanced, .help = "Advanced raw engine diagnostics", .usage = "ghost debug raw <engine-binary> [args...]" },
     .{ .name = "tui", .kind = .tui, .group = .interface, .help = "Interactive Ghost operator console", .usage = "ghost tui [options]" },
+    .{ .name = "daemon", .kind = .daemon, .group = .interface, .help = "Control resident ghostd process", .usage = "ghost daemon <start|status|stop>" },
 };
 
 const CliOptions = struct {
@@ -205,6 +209,10 @@ pub fn main() !void {
             try verify.printHelpForArgs(std.io.getStdErr().writer(), parsed.leftover_args.items);
             return;
         }
+        if (parsed.command.? == .daemon) {
+            try daemon_cmd.printHelp(std.io.getStdErr().writer());
+            return;
+        }
         try printCommandHelp(std.io.getStdErr().writer(), parsed.command.?);
         return;
     }
@@ -215,7 +223,7 @@ pub fn main() !void {
 
     switch (parsed.command.?) {
         .chat => try runChatLike(allocator, root, &parsed, null),
-        .ask => try runChatLike(allocator, root, &parsed, .balanced),
+        .ask => try runAsk(allocator, root, &parsed),
         .fix => try runChatLike(allocator, root, &parsed, .deep),
         .verify => try verify.executeFromArgs(allocator, root, parsed.leftover_args.items, .{
             .reasoning = parsed.options.reasoning_level,
@@ -284,6 +292,7 @@ pub fn main() !void {
             .engine_root_label = root,
             .project_shard = parsed.options.project_shard,
         }),
+        .daemon => try daemon_cmd.executeFromArgs(allocator, root, parsed.leftover_args.items, parsed.options.debug_mode),
         .status => try status.execute(allocator, root, parsed.options.debug_mode, build_version),
         .doctor => try doctor.execute(allocator, root, .{
             .json = parsed.options.json_out,
@@ -458,6 +467,88 @@ fn runChatLike(allocator: std.mem.Allocator, root: ?[]const u8, parsed: *ParsedC
     });
 }
 
+fn runAsk(allocator: std.mem.Allocator, root: ?[]const u8, parsed: *ParsedCli) !void {
+    var message = parsed.options.message;
+    if (message == null and parsed.leftover_args.items.len > 0) message = parsed.leftover_args.items[0];
+    const question = message orelse {
+        try std.io.getStdErr().writer().print("Usage: ghost ask [options] <message>\n", .{});
+        std.process.exit(1);
+    };
+
+    var request = std.ArrayList(u8).init(allocator);
+    defer request.deinit();
+    try corpus.writeCorpusAskRequest(request.writer(), question, .{
+        .question = question,
+        .project_shard = parsed.options.project_shard orelse "english_core",
+        .json = parsed.options.json_out,
+        .debug = parsed.options.debug_mode,
+    });
+
+    if (daemon_client.request(allocator, request.items)) |response| {
+        defer allocator.free(response);
+        if (parsed.options.debug_mode) {
+            try std.io.getStdErr().writer().print("[DEBUG] Daemon Socket: {s}\n", .{daemon_client.SOCKET_PATH});
+            try std.io.getStdErr().writer().print("[DEBUG] GIP Kind: corpus.ask\n", .{});
+        }
+        if (parsed.options.json_out) {
+            try std.io.getStdOut().writer().writeAll(response);
+            try std.io.getStdOut().writer().writeByte('\n');
+            return;
+        }
+
+        var parsed_json = std.json.parseFromSlice(std.json.Value, allocator, response, .{}) catch |err| {
+            try std.io.getStdErr().writer().print("Error: Failed to parse daemon response as corpus.ask JSON ({s}).\n", .{@errorName(err)});
+            try std.io.getStdErr().writer().print("Raw output:\n{s}\n", .{response});
+            return;
+        };
+        defer parsed_json.deinit();
+        if (try printDaemonVoice(std.io.getStdOut().writer(), parsed_json.value, parsed.options.color_mode != .never)) return;
+        try corpus.printCorpusAskResult(std.io.getStdOut().writer(), parsed_json.value);
+        return;
+    } else |_| {
+        try std.io.getStdErr().writer().print("Daemon inactive; slow-path engaged\n", .{});
+        try chat.execute(allocator, root, .{
+            .message = question,
+            .reasoning = parsed.options.reasoning_level orelse .balanced,
+            .context_artifact = parsed.options.context_artifact,
+            .project_shard = parsed.options.project_shard,
+            .json = parsed.options.json_out,
+            .debug = parsed.options.debug_mode,
+            .details = parsed.options.details_mode or parsed.options.debug_mode,
+            .color = parsed.options.color_mode == .always,
+        });
+    }
+}
+
+fn printDaemonVoice(writer: anytype, value: std.json.Value, color: bool) !bool {
+    const corpus_value = findCorpusAsk(value) orelse return false;
+    if (corpus_value != .object) return false;
+    const obj = corpus_value.object;
+    const voice = obj.get("voiceSynthesis") orelse return false;
+    if (voice != .bool or !voice.bool) return false;
+    const answer = obj.get("answerDraft") orelse return false;
+    if (answer != .string) return false;
+    if (color) try writer.writeAll("\x1b[34m");
+    try writer.writeAll(answer.string);
+    if (color) try writer.writeAll("\x1b[0m");
+    try writer.writeByte('\n');
+    return true;
+}
+
+fn findCorpusAsk(value: std.json.Value) ?std.json.Value {
+    if (value != .object) return null;
+    const obj = value.object;
+    if (obj.get("corpusAsk")) |corpus_value| return corpus_value;
+    if (obj.get("corpus_ask")) |corpus_value| return corpus_value;
+    if (obj.get("result")) |result| {
+        if (result == .object) {
+            if (result.object.get("corpusAsk")) |corpus_value| return corpus_value;
+            if (result.object.get("corpus_ask")) |corpus_value| return corpus_value;
+        }
+    }
+    return null;
+}
+
 fn runLearn(allocator: std.mem.Allocator, root: ?[]const u8, parsed: ParsedCli) !void {
     const sub = if (parsed.leftover_args.items.len > 0) parsed.leftover_args.items[0] else {
         try std.io.getStdErr().writer().print("Usage: ghost learn <candidates|show|export|status|review|plan>\n", .{});
@@ -605,7 +696,7 @@ fn printHelp(writer: anytype) !void {
         \\Advanced/debug options:
         \\
         \\  --version=<v>          Specific version for packs/distillation
-        \\  --project-shard=<s>    Project shard ID for distillation
+        \\  --project-shard=<s>    Narrow commands/TUI to one project shard
         \\  --pack-id=<id>         Target pack ID for export
         \\  --manifest=<path>      Knowledge pack manifest path
         \\  --all-mounted          Target all mounted packs where supported
@@ -635,6 +726,7 @@ fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
     if (kind == .correction) return correction.printHelp(writer);
     if (kind == .nk) return nk.printHelp(writer);
     if (kind == .verify) return verify.printHelp(writer);
+    if (kind == .daemon) return daemon_cmd.printHelp(writer);
 
     const command = commandByKind(kind).?;
     try writer.print("{s}\n\nUsage: {s}\n\n{s}\n", .{ command.name, command.usage, command.help });
@@ -645,7 +737,7 @@ fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
             \\  --message="..."        Message to send
             \\  --reasoning=<level>    quick|balanced|deep|max
             \\  --context-artifact=<p> Attach explicit context path
-            \\  --project-shard=<id>   Project shard for chat/ask/fix
+            \\  --project-shard=<id>   Narrow chat/ask/fix to one project shard
             \\  --engine-root=<path>   Resolve engine binaries from path
             \\  --json                 Preserve raw engine stdout exactly
             \\  --debug                Diagnostics to stderr
@@ -674,7 +766,7 @@ fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
             \\  --color=<mode>         auto|always|never
             \\  --compact              Tighter layout
             \\  --read-only            Block engine-invoking TUI commands/prompts
-            \\  --project-shard=<id>   Project shard for mounted-pack corpus.ask prompts
+            \\  --project-shard=<id>   Narrow TUI prompts to one project shard; default searches all shards
             \\  --max-history-turns=<n> Bound retained TUI turns (default 500)
             \\
             \\Slash commands:
@@ -725,7 +817,7 @@ fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
             \\  This scan runs only when this command is explicitly invoked.
             \\
         , .{}),
-        .artifact, .context, .packs, .corpus, .policy, .rules, .sigil, .correction, .nk => unreachable,
+        .artifact, .context, .packs, .corpus, .policy, .rules, .sigil, .correction, .nk, .daemon => unreachable,
         .learn => try writer.print(
             \\
             \\Subcommands:

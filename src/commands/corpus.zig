@@ -992,7 +992,7 @@ fn jsonStringField(obj: std.json.ObjectMap, field: []const u8) ?[]const u8 {
     return if (value == .string) value.string else null;
 }
 
-fn writeCorpusAskRequest(writer: anytype, question: []const u8, options: CorpusOptions) !void {
+pub fn writeCorpusAskRequest(writer: anytype, question: []const u8, options: CorpusOptions) !void {
     try writer.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"corpus.ask\",\"question\":");
     try std.json.stringify(question, .{}, writer);
     if (options.project_shard) |project_shard| {
@@ -1080,7 +1080,7 @@ fn printTopLevelInt(writer: anytype, value: std.json.Value, field: []const u8, l
     }
 }
 
-fn printCorpusAskResult(writer: anytype, value: std.json.Value) !void {
+pub fn printCorpusAskResult(writer: anytype, value: std.json.Value) !void {
     try writer.print("Corpus Ask Result\n", .{});
     try writer.print("State: DRAFT\n", .{});
     try writer.print("Authority: NON-AUTHORIZING\n\n", .{});
