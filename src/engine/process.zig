@@ -7,11 +7,20 @@ pub const ProcessResult = struct {
 };
 
 pub fn runEngineCommand(allocator: std.mem.Allocator, args: []const []const u8) !ProcessResult {
+    return runEngineCommandWithEngineLogs(allocator, args, false);
+}
+
+pub fn runEngineCommandWithEngineLogs(allocator: std.mem.Allocator, args: []const []const u8, engine_logs: bool) !ProcessResult {
     // Output is bounded, but runtime timeout/cancellation is still command-runner
     // hygiene pending. Keep callers explicit about long-running engine work.
+    var env_map = if (engine_logs) try std.process.getEnvMap(allocator) else null;
+    defer if (env_map) |*map| map.deinit();
+    if (env_map) |*map| try map.put("GHOST_ENGINE_DEBUG", "1");
+
     const result = try std.process.Child.run(.{
         .allocator = allocator,
         .argv = args,
+        .env_map = if (env_map) |*map| map else null,
         .max_output_bytes = 10 * 1024 * 1024, // 10MB
     });
 

@@ -335,6 +335,8 @@ fn parseFlag(args: *std.process.ArgIterator, arg: []const u8, options: *CliOptio
         options.json_out = true;
     } else if (std.mem.eql(u8, arg, "--debug")) {
         options.debug_mode = true;
+    } else if (std.mem.eql(u8, arg, "--verbose")) {
+        options.debug_mode = true;
     } else if (std.mem.eql(u8, arg, "--details")) {
         options.details_mode = true;
     } else if (std.mem.eql(u8, arg, "--no-color")) {
@@ -441,6 +443,7 @@ fn runChatLike(allocator: std.mem.Allocator, root: ?[]const u8, parsed: *ParsedC
         .message = message,
         .reasoning = reasoning,
         .context_artifact = parsed.options.context_artifact,
+        .project_shard = parsed.options.project_shard,
         .json = parsed.options.json_out,
         .debug = parsed.options.debug_mode,
         .details = parsed.options.details_mode or parsed.options.debug_mode,
@@ -607,6 +610,7 @@ fn printHelp(writer: anytype) !void {
         \\  --full                 Include optional doctor checks
         \\  --run-build-check      Let doctor run `zig build --help`
         \\  --debug                Show debug information
+        \\  --verbose              Alias for --debug
         \\
         \\Use `ghost <command> --help` for command-specific usage.
         \\
@@ -634,6 +638,7 @@ fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
             \\  --message="..."        Message to send
             \\  --reasoning=<level>    quick|balanced|deep|max
             \\  --context-artifact=<p> Attach explicit context path
+            \\  --project-shard=<id>   Project shard for chat/ask/fix
             \\  --engine-root=<path>   Resolve engine binaries from path
             \\  --json                 Preserve raw engine stdout exactly
             \\  --debug                Diagnostics to stderr

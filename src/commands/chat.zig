@@ -7,6 +7,7 @@ pub const ContextOptions = struct {
     message: ?[]const u8 = null,
     reasoning: ?json_contracts.ReasoningLevel = null,
     context_artifact: ?[]const u8 = null,
+    project_shard: ?[]const u8 = null,
     json: bool = false,
     debug: bool = false,
     details: bool = false,
@@ -35,6 +36,10 @@ pub fn execute(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: 
     if (options.context_artifact) |art| {
         try argv.append("--context-artifact");
         try argv.append(art);
+    }
+
+    if (options.project_shard) |shard| {
+        try argv.append(try std.fmt.allocPrint(aa, "--project-shard={s}", .{shard}));
     }
 
     try argv.append("--render=json");

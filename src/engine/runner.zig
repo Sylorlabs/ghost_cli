@@ -46,7 +46,7 @@ pub fn run(allocator: std.mem.Allocator, options: RunOptions) !RunResult {
         std.debug.print("\n", .{});
     }
 
-    const result = process.runEngineCommand(allocator, run_args.items) catch |err| {
+    const result = process.runEngineCommandWithEngineLogs(allocator, run_args.items, options.debug) catch |err| {
         std.debug.print("\x1b[31m[!] Error:\x1b[0m Failed to execute engine command ({})\n", .{err});
         std.debug.print("\x1b[33mHint:\x1b[0m Run `ghost status` to verify your environment.\n", .{});
         std.process.exit(1);
