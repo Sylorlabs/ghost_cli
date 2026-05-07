@@ -10,7 +10,9 @@ const json_contracts = @import("../engine/json_contracts.zig");
 const terminal_render = @import("../render/terminal.zig");
 const doctor = @import("../commands/doctor.zig");
 const autopsy = @import("../commands/autopsy.zig");
+const corpus = @import("../commands/corpus.zig");
 const packs = @import("../commands/packs.zig");
+const daemon_client = @import("../engine/daemon_client.zig");
 const locator = @import("../engine/locator.zig");
 const process = @import("../engine/process.zig");
 
@@ -96,6 +98,7 @@ pub fn run(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: RunO
         const now_ms = std.time.milliTimestamp();
         s.refreshTerminalSize(now_ms, terminal.getSize);
         s.refreshRam(now_ms, stats.getCliRamRss);
+        try refreshDaemonTelemetry(allocator, &s, now_ms);
         try render.renderFrameWithSize(writer, &s, style, s.terminal_size);
 
         const key = try input.readKey(stdin.reader());
@@ -212,6 +215,66 @@ fn colorEnabled(allocator: std.mem.Allocator, mode: ColorMode) !bool {
             break :blk false;
         },
     };
+}
+
+const DaemonStatusPayload = struct {
+    status: []const u8 = "",
+    vramResidentBytes: ?usize = null,
+    l1ConceptIndexBytes: ?usize = null,
+    hotPageBytes: ?usize = null,
+    rawShardVramBytes: ?usize = null,
+    sessionHotBytes: ?usize = null,
+    sessionContextTarget: ?[]const u8 = null,
+    vaultIngestActive: ?bool = null,
+    vaultIngestRecent: ?bool = null,
+    vaultIngestedFiles: ?usize = null,
+    vaultIngestErrors: ?usize = null,
+    lastVaultIngestMs: ?i64 = null,
+};
+
+const DaemonStatusEnvelope = struct {
+    status: []const u8 = "",
+    daemon: ?DaemonStatusPayload = null,
+};
+
+fn refreshDaemonTelemetry(allocator: std.mem.Allocator, s: *state.SessionState, now_ms: i64) !void {
+    if (s.daemon_refresh_count != 0 and now_ms - s.last_daemon_refresh_ms < state.daemon_refresh_interval_ms) return;
+    s.last_daemon_refresh_ms = now_ms;
+    s.daemon_refresh_count += 1;
+
+    const response = daemon_client.request(allocator, "{\"kind\":\"daemon.status\"}") catch {
+        s.daemon_active = false;
+        s.daemon_vault_ingest_active = false;
+        s.daemon_vault_ingest_recent = false;
+        try s.setDaemonContextTarget(null);
+        return;
+    };
+    defer allocator.free(response);
+
+    var parsed = std.json.parseFromSlice(DaemonStatusEnvelope, allocator, response, .{ .ignore_unknown_fields = true }) catch {
+        s.daemon_active = false;
+        try s.setDaemonContextTarget(null);
+        return;
+    };
+    defer parsed.deinit();
+
+    const payload = parsed.value.daemon orelse {
+        s.daemon_active = false;
+        try s.setDaemonContextTarget(null);
+        return;
+    };
+    s.daemon_active = std.mem.eql(u8, payload.status, "running");
+    s.daemon_vram_resident_bytes = payload.vramResidentBytes orelse 0;
+    s.daemon_l1_concept_index_bytes = payload.l1ConceptIndexBytes orelse 0;
+    s.daemon_hot_page_bytes = payload.hotPageBytes orelse 0;
+    s.daemon_raw_shard_vram_bytes = payload.rawShardVramBytes orelse 0;
+    s.daemon_session_hot_bytes = payload.sessionHotBytes orelse 0;
+    s.daemon_vault_ingest_active = payload.vaultIngestActive orelse false;
+    s.daemon_vault_ingest_recent = payload.vaultIngestRecent orelse false;
+    s.daemon_vault_ingested_files = payload.vaultIngestedFiles orelse 0;
+    s.daemon_vault_ingest_errors = payload.vaultIngestErrors orelse 0;
+    s.daemon_last_vault_ingest_ms = payload.lastVaultIngestMs orelse 0;
+    try s.setDaemonContextTarget(payload.sessionContextTarget);
 }
 
 pub fn handleSlash(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *state.SessionState, text: []const u8, writer: anytype, style: render.Style) !?bool {
@@ -364,7 +427,7 @@ pub fn handleSubmit(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *
     defer arena.deinit();
     const aa = arena.allocator();
 
-    var argv = std.ArrayList([]const u8).init(aa);
+    const use_daemon = s.daemon_refresh_count != 0 and s.daemon_active;
     const res = if (s.active_session_mounts.items.len != 0) blk: {
         const bin_path = locator.findEngineBinary(allocator, engine_root, .ghost_gip) catch |err| {
             try render.renderErrorMessage(writer, style, "Failed to resolve ghost_gip: {}", .{err});
@@ -386,31 +449,22 @@ pub fn handleSubmit(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *
             .exit_code = result.exit_code,
             .allocator = allocator,
         };
-    } else blk: {
-        try argv.append("chat");
-        try argv.append(try std.fmt.allocPrint(aa, "--message={s}", .{cmd_text}));
-
-        var buf: [64]u8 = undefined;
-        const reasoning_arg = try std.fmt.bufPrint(&buf, "--reasoning={s}", .{s.reasoning.toStr()});
-        try argv.append(try aa.dupe(u8, reasoning_arg));
-
-        if (s.context_artifact) |art| {
-            try argv.append("--context-artifact");
-            try argv.append(art);
-        }
-
-        try argv.append("--render=json");
-
-        break :blk runner.run(allocator, .{
-            .engine_root = engine_root,
-            .binary = .ghost_task_operator,
-            .argv = argv.items,
-            .json = true,
-            .debug = s.debug,
-        }) catch |err| {
-            try render.renderErrorMessage(writer, style, "Failed to run engine: {}", .{err});
-            return;
+    } else if (use_daemon) blk: {
+        var request = std.ArrayList(u8).init(aa);
+        try writeDaemonCorpusAskRequest(request.writer(), cmd_text, s);
+        const response = daemon_client.request(allocator, request.items) catch |err| {
+            s.daemon_active = false;
+            try render.renderWarningMessage(writer, style, "Daemon request failed; falling back to local engine: {}", .{err});
+            break :blk try runTaskOperatorFallback(allocator, engine_root, aa, cmd_text, s);
         };
+        break :blk runner.RunResult{
+            .stdout = response,
+            .stderr = try allocator.alloc(u8, 0),
+            .exit_code = 0,
+            .allocator = allocator,
+        };
+    } else blk: {
+        break :blk try runTaskOperatorFallback(allocator, engine_root, aa, cmd_text, s);
     };
     defer res.deinit();
 
@@ -423,6 +477,8 @@ pub fn handleSubmit(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *
 
     if (s.json_mode) {
         try rendered_buf.appendSlice(res.stdout);
+        json_ok = true;
+    } else if (try renderCorpusAskIfPresent(allocator, res.stdout, rendered_buf.writer())) {
         json_ok = true;
     } else if (json_contracts.parseEngineJson(allocator, res.stdout)) |parsed| {
         // defer parsed.deinit(); // We'd need to copy the response if we deinit here
@@ -445,6 +501,8 @@ pub fn handleSubmit(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *
         }
     }
 
+    const rendered_output = try rendered_buf.toOwnedSlice();
+    const output_runes = stats.countRunes(rendered_output);
     const turn = state.Turn{
         .index = s.nextTurnIndex(),
         .input = try allocator.dupe(u8, cmd_text),
@@ -452,17 +510,80 @@ pub fn handleSubmit(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *
         .context_artifact = if (s.context_artifact) |ca| try allocator.dupe(u8, ca) else null,
         .response = null, // TODO: store response if needed
         .raw_output = try allocator.dupe(u8, res.stdout),
-        .rendered_output = try rendered_buf.toOwnedSlice(),
+        .rendered_output = rendered_output,
         .elapsed_ms = elapsed,
         .input_runes = stats.countRunes(cmd_text),
-        .output_runes = stats.countRunes(rendered_buf.items),
+        .output_runes = output_runes,
         .json_ok = json_ok,
     };
 
     try s.appendTurn(turn);
-    s.refreshRam(std.time.milliTimestamp(), stats.getCliRamRss);
+    const post_ms = std.time.milliTimestamp();
+    s.refreshRam(post_ms, stats.getCliRamRss);
+    if (s.daemon_refresh_count != 0) try refreshDaemonTelemetry(allocator, s, post_ms);
     s.last_command_status = if (res.exit_code == 0) "engine response" else "engine error";
-    try render.renderTurnWithSize(writer, turn, style, s.terminal_size);
+    try renderTypewriterTurn(writer, s, turn.index, rendered_output.len, style);
+}
+
+fn renderTypewriterTurn(writer: anytype, s: *state.SessionState, turn_index: usize, output_len: usize, style: render.Style) !void {
+    s.typing_turn_index = turn_index;
+    s.typing_output_bytes = 0;
+    const step = @max(@as(usize, 8), output_len / 80 + 1);
+    while (s.typing_output_bytes < output_len) {
+        s.typing_output_bytes = @min(output_len, s.typing_output_bytes + step);
+        try render.renderFrameWithSize(writer, s, style, s.terminal_size);
+        std.time.sleep(6 * std.time.ns_per_ms);
+    }
+    s.typing_turn_index = null;
+    s.typing_output_bytes = 0;
+    try render.renderFrameWithSize(writer, s, style, s.terminal_size);
+}
+
+fn runTaskOperatorFallback(
+    allocator: std.mem.Allocator,
+    engine_root: ?[]const u8,
+    aa: std.mem.Allocator,
+    cmd_text: []const u8,
+    s: *state.SessionState,
+) !runner.RunResult {
+    var argv = std.ArrayList([]const u8).init(aa);
+    try argv.append("chat");
+    try argv.append(try std.fmt.allocPrint(aa, "--message={s}", .{cmd_text}));
+
+    var buf: [64]u8 = undefined;
+    const reasoning_arg = try std.fmt.bufPrint(&buf, "--reasoning={s}", .{s.reasoning.toStr()});
+    try argv.append(try aa.dupe(u8, reasoning_arg));
+
+    if (s.context_artifact) |art| {
+        try argv.append("--context-artifact");
+        try argv.append(art);
+    }
+
+    try argv.append("--render=json");
+    return try runner.run(allocator, .{
+        .engine_root = engine_root,
+        .binary = .ghost_task_operator,
+        .argv = argv.items,
+        .json = true,
+        .debug = s.debug,
+    });
+}
+
+fn renderCorpusAskIfPresent(allocator: std.mem.Allocator, bytes: []const u8, writer: anytype) !bool {
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, bytes, .{}) catch return false;
+    defer parsed.deinit();
+    if (!jsonContainsCorpusAsk(parsed.value)) return false;
+    try corpus.printCorpusAskResult(writer, parsed.value);
+    return true;
+}
+
+fn jsonContainsCorpusAsk(value: std.json.Value) bool {
+    if (value != .object) return false;
+    if (value.object.get("corpusAsk") != null) return true;
+    if (value.object.get("result")) |result| {
+        if (result == .object and result.object.get("corpusAsk") != null) return true;
+    }
+    return false;
 }
 
 fn writeMountedCorpusAskRequest(writer: anytype, question: []const u8, s: *const state.SessionState) !void {
@@ -482,4 +603,14 @@ fn writeMountedCorpusAskRequest(writer: anytype, question: []const u8, s: *const
         try writer.writeByte('}');
     }
     try writer.writeAll("],\"requireCitations\":true}");
+}
+
+fn writeDaemonCorpusAskRequest(writer: anytype, question: []const u8, s: *const state.SessionState) !void {
+    try writer.writeAll("{\"gipVersion\":\"gip.v0.1\",\"kind\":\"corpus.ask\",\"question\":");
+    try std.json.stringify(question, .{}, writer);
+    if (s.project_shard) |project_shard| {
+        try writer.writeAll(",\"projectShard\":");
+        try std.json.stringify(project_shard, .{}, writer);
+    }
+    try writer.writeAll(",\"requireCitations\":true}");
 }

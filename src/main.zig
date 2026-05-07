@@ -479,7 +479,7 @@ fn runAsk(allocator: std.mem.Allocator, root: ?[]const u8, parsed: *ParsedCli) !
     defer request.deinit();
     try corpus.writeCorpusAskRequest(request.writer(), question, .{
         .question = question,
-        .project_shard = parsed.options.project_shard orelse "english_core",
+        .project_shard = parsed.options.project_shard,
         .json = parsed.options.json_out,
         .debug = parsed.options.debug_mode,
     });
@@ -737,7 +737,7 @@ fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
             \\  --message="..."        Message to send
             \\  --reasoning=<level>    quick|balanced|deep|max
             \\  --context-artifact=<p> Attach explicit context path
-            \\  --project-shard=<id>   Narrow chat/ask/fix to one project shard
+            \\  --project-shard=<id>   Narrow chat/ask/fix to one project shard; default searches all resident shards
             \\  --engine-root=<path>   Resolve engine binaries from path
             \\  --json                 Preserve raw engine stdout exactly
             \\  --debug                Diagnostics to stderr

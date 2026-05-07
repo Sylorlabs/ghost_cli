@@ -89,30 +89,7 @@ pub fn renderWithSize(writer: anytype, s: *state.SessionState, style: Style, siz
         try renderTiny(writer, s, style, size);
         return;
     }
-    const input_row = size.rows;
-    const status_row = size.rows - 1;
-    const suggestion_panel_bottom = status_row - 1;
-    const suggestion_height = suggestionHeight(s.current_input.items, size, false);
-    try prepareFrame(writer, s, size, suggestion_height, suggestion_panel_bottom, 2, style);
-
-    try writer.print("\x1b[2;{d}r", .{historyBottomRow(size, suggestion_height)});
-
-    try writer.print("\x1b[1;1H{s}\x1b[K Ghost{s}", .{
-        style.header(),
-        style.reset(),
-    });
-
-    try writer.print("\x1b[{d};1H{s}\x1b[K shard={s} | {s}{s}", .{
-        status_row,
-        style.status(),
-        s.project_shard orelse "zenith_root",
-        systemIndicator(s),
-        style.reset(),
-    });
-
-    try renderSlashSuggestionsWithSize(writer, s, suggestion_panel_bottom, style, size);
-
-    try renderInputLine(writer, s, input_row, style);
+    try renderDashboardWithSize(writer, s, style, size, false);
 }
 
 pub fn renderCompact(writer: anytype, s: *state.SessionState, style: Style) !void {
@@ -124,22 +101,183 @@ pub fn renderCompactWithSize(writer: anytype, s: *state.SessionState, style: Sty
         try renderTiny(writer, s, style, size);
         return;
     }
-    const status_row = size.rows - 1;
-    const suggestion_panel_bottom = status_row - 1;
-    const suggestion_height = suggestionHeight(s.current_input.items, size, true);
-    try prepareFrame(writer, s, size, suggestion_height, suggestion_panel_bottom, 2, style);
+    try renderDashboardWithSize(writer, s, style, size, true);
+}
 
-    try writer.print("\x1b[2;{d}r", .{historyBottomRow(size, suggestion_height)});
-    try writer.print("\x1b[{d};1H{s}\x1b[K shard={s} | {s}{s}", .{
-        status_row,
-        style.status(),
-        s.project_shard orelse "zenith_root",
+fn renderDashboardWithSize(writer: anytype, s: *state.SessionState, style: Style, size: TerminalSize, compact: bool) !void {
+    const suggestion_height = suggestionHeight(s.current_input.items, size, compact);
+    const input_row = size.rows;
+    const content_top: u16 = 2;
+    const content_bottom: u16 = if (size.rows > 2 + suggestion_height) size.rows - 1 - suggestion_height else 2;
+    const desired_left: u16 = @as(u16, @intCast((@as(usize, size.cols) * 60) / 100));
+    const max_left: u16 = if (size.cols > 18) size.cols - 18 else size.cols - 2;
+    const left_width: u16 = @min(@max(@as(u16, 24), @min(desired_left, max_left)), if (size.cols > 2) size.cols - 2 else 1);
+    const divider_col: u16 = @min(left_width + 1, size.cols);
+    const right_col: u16 = @min(divider_col + 1, size.cols);
+    const right_width: u16 = if (right_col <= size.cols) size.cols - right_col + 1 else 0;
+    const content_height: u16 = if (content_bottom >= content_top) content_bottom - content_top + 1 else 0;
+    const right_split: u16 = content_top + @max(@as(u16, 4), content_height / 2);
+
+    try writer.writeAll("\x1b[r");
+    try clearRows(writer, size.rows);
+    try writeFmtAt(writer, 1, 1, size.cols, "{s} Ghost TUI {s} shard={s} | daemon={s} | {s}{s}", .{
+        style.header(),
+        style.reset(),
+        s.project_shard orelse "all",
+        if (s.daemon_active) "hot" else "off",
         systemIndicator(s),
         style.reset(),
     });
-    try renderSlashSuggestionsWithSize(writer, s, suggestion_panel_bottom, style, size);
 
-    try renderInputLine(writer, s, size.rows, style);
+    if (content_height != 0) {
+        var row = content_top;
+        while (row <= content_bottom) : (row += 1) {
+            try writeAt(writer, row, divider_col, 1, "|");
+        }
+        try renderConversationPane(writer, s, style, content_top, content_bottom, 1, if (left_width > 1) left_width - 1 else left_width);
+        try renderTelemetryPane(writer, s, style, content_top, @min(content_bottom, right_split - 1), right_col + 1, if (right_width > 2) right_width - 2 else right_width);
+        if (right_split <= content_bottom) {
+            try renderSessionHotPane(writer, s, style, right_split, content_bottom, right_col + 1, if (right_width > 2) right_width - 2 else right_width);
+        }
+    }
+
+    try renderSlashSuggestionsWithSize(writer, s, size.rows - 1, style, size);
+    try renderInputLine(writer, s, input_row, style);
+
+    s.previous_render_rows = size.rows;
+    s.previous_render_cols = size.cols;
+}
+
+fn renderConversationPane(writer: anytype, s: *state.SessionState, style: Style, top: u16, bottom: u16, col: u16, width: u16) !void {
+    try writeFmtAt(writer, top, col, width, "{s}CHAT{s}", .{ style.cyan(), style.reset() });
+    var row = top + 1;
+    if (row > bottom) return;
+    const rows_available = bottom - row + 1;
+    const max_turns: usize = @max(@as(usize, 1), rows_available / 4 + 1);
+    const start = if (s.history.items.len > max_turns) s.history.items.len - max_turns else 0;
+    for (s.history.items[start..]) |turn| {
+        if (row > bottom) break;
+        try writeFmtAt(writer, row, col, width, "{s}YOU{s} {s}", .{ style.userText(), style.reset(), turn.input });
+        row += 1;
+        if (row > bottom) break;
+        try writeFmtAt(writer, row, col, width, "{s}GHOST{s}", .{ style.ghostText(), style.reset() });
+        row += 1;
+        const output = visibleTurnOutput(s, turn);
+        var it = std.mem.splitScalar(u8, output, '\n');
+        while (it.next()) |line| {
+            if (row > bottom) break;
+            const trimmed = std.mem.trimRight(u8, line, "\r");
+            if (trimmed.len == 0) continue;
+            try writeAt(writer, row, col + 2, if (width > 2) width - 2 else width, trimmed);
+            row += 1;
+        }
+        if (row <= bottom) row += 1;
+    }
+}
+
+fn visibleTurnOutput(s: *const state.SessionState, turn: state.Turn) []const u8 {
+    if (s.typing_turn_index) |idx| {
+        if (idx == turn.index) return turn.rendered_output[0..@min(s.typing_output_bytes, turn.rendered_output.len)];
+    }
+    return turn.rendered_output;
+}
+
+fn renderTelemetryPane(writer: anytype, s: *state.SessionState, style: Style, top: u16, bottom: u16, col: u16, width: u16) !void {
+    if (top > bottom or width == 0) return;
+    var row = top;
+    try writeFmtAt(writer, row, col, width, "{s}DAEMON TELEMETRY{s}", .{ style.cyan(), style.reset() });
+    row += 1;
+    if (row <= bottom) {
+        try writeFmtAt(writer, row, col, width, "heartbeat: {s}", .{if (s.daemon_active) "hot" else "off"});
+        row += 1;
+    }
+    var vram_buf: [32]u8 = undefined;
+    if (row <= bottom) {
+        try writeFmtAt(writer, row, col, width, "VRAM resident: {s}", .{formatBytes(&vram_buf, s.daemon_vram_resident_bytes)});
+        row += 1;
+    }
+    var l1_buf: [32]u8 = undefined;
+    if (row <= bottom) {
+        try writeFmtAt(writer, row, col, width, "L1 index: {s}", .{formatBytes(&l1_buf, s.daemon_l1_concept_index_bytes)});
+        row += 1;
+    }
+    var hot_buf: [32]u8 = undefined;
+    if (row <= bottom) {
+        try writeFmtAt(writer, row, col, width, "hot-page: {s}", .{formatBytes(&hot_buf, s.daemon_hot_page_bytes)});
+        row += 1;
+    }
+    var raw_buf: [32]u8 = undefined;
+    if (row <= bottom) {
+        try writeFmtAt(writer, row, col, width, "raw shard VRAM: {s}", .{formatBytes(&raw_buf, s.daemon_raw_shard_vram_bytes)});
+        row += 1;
+    }
+    if (row <= bottom) {
+        try writeFmtAt(writer, row, col, width, "vault ingest: {s}", .{if (s.daemon_vault_ingest_active) "active" else if (s.daemon_vault_ingest_recent) "recent" else "idle"});
+        row += 1;
+    }
+    if (row <= bottom) {
+        try writeFmtAt(writer, row, col, width, "vault files/errors: {d}/{d}", .{ s.daemon_vault_ingested_files, s.daemon_vault_ingest_errors });
+        row += 1;
+    }
+}
+
+fn renderSessionHotPane(writer: anytype, s: *state.SessionState, style: Style, top: u16, bottom: u16, col: u16, width: u16) !void {
+    if (top > bottom or width == 0) return;
+    var row = top;
+    try writeFmtAt(writer, row, col, width, "{s}SESSION HOT{s}", .{ style.cyan(), style.reset() });
+    row += 1;
+    if (row <= bottom) {
+        try writeFmtAt(writer, row, col, width, "target: {s}", .{s.daemon_context_target orelse "none"});
+        row += 1;
+    }
+    var session_buf: [32]u8 = undefined;
+    if (row <= bottom) {
+        try writeFmtAt(writer, row, col, width, "working bytes: {s}", .{formatBytes(&session_buf, s.daemon_session_hot_bytes)});
+        row += 1;
+    }
+    if (row <= bottom) {
+        try writeFmtAt(writer, row, col, width, "reasoning: {s}", .{s.reasoning.toStr()});
+        row += 1;
+    }
+    if (row <= bottom) {
+        try writeFmtAt(writer, row, col, width, "mounts: {d}", .{s.active_session_mounts.items.len});
+        row += 1;
+    }
+    if (row <= bottom) {
+        try writeFmtAt(writer, row, col, width, "last: {s}", .{s.last_command_status});
+        row += 1;
+    }
+}
+
+fn clearRows(writer: anytype, rows: u16) !void {
+    var row: u16 = 1;
+    while (row <= rows) : (row += 1) {
+        try writer.print("\x1b[{d};1H\x1b[K", .{row});
+    }
+}
+
+fn writeFmtAt(writer: anytype, row: u16, col: u16, width: u16, comptime fmt: []const u8, args: anytype) !void {
+    var buf: [512]u8 = undefined;
+    const text = std.fmt.bufPrint(&buf, fmt, args) catch |err| switch (err) {
+        error.NoSpaceLeft => buf[0..],
+        else => return err,
+    };
+    try writeAt(writer, row, col, width, text);
+}
+
+fn writeAt(writer: anytype, row: u16, col: u16, width: u16, text: []const u8) !void {
+    try writer.print("\x1b[{d};{d}H", .{ row, col });
+    try writeTruncated(writer, text, width);
+}
+
+fn formatBytes(buf: *[32]u8, bytes: usize) []const u8 {
+    if (bytes >= 1024 * 1024) {
+        return std.fmt.bufPrint(buf, "{d}.{d} MiB", .{ bytes / (1024 * 1024), (bytes % (1024 * 1024)) / (1024 * 102) }) catch "n/a";
+    }
+    if (bytes >= 1024) {
+        return std.fmt.bufPrint(buf, "{d}.{d} KiB", .{ bytes / 1024, (bytes % 1024) / 102 }) catch "n/a";
+    }
+    return std.fmt.bufPrint(buf, "{d} B", .{bytes}) catch "n/a";
 }
 
 fn renderInputLine(writer: anytype, s: *state.SessionState, row: u16, style: Style) !void {

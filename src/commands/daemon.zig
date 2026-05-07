@@ -7,6 +7,8 @@ const usage =
     \\
 ;
 
+const START_TIMEOUT_NS: u64 = 30 * std.time.ns_per_s;
+
 pub fn printHelp(writer: anytype) !void {
     try writer.writeAll(
         \\daemon
@@ -54,8 +56,8 @@ fn start(allocator: std.mem.Allocator, engine_root: ?[]const u8, debug: bool) !v
     try child.spawn();
 
     var timer = try std.time.Timer.start();
-    while (timer.read() < 5 * std.time.ns_per_s) {
-        if (daemon_client.isActive()) {
+    while (timer.read() < START_TIMEOUT_NS) {
+        if (daemonReady(allocator)) {
             try std.io.getStdOut().writer().print("ghostd active socket={s}\n", .{daemon_client.socketPath()});
             return;
         }
@@ -63,6 +65,13 @@ fn start(allocator: std.mem.Allocator, engine_root: ?[]const u8, debug: bool) !v
     }
     try std.io.getStdErr().writer().print("ghostd start timed out waiting for heartbeat={s}\n", .{daemon_client.heartbeatPath()});
     std.process.exit(1);
+}
+
+fn daemonReady(allocator: std.mem.Allocator) bool {
+    if (daemon_client.isActive()) return true;
+    const response = daemon_client.request(allocator, "{\"kind\":\"daemon.status\"}") catch return false;
+    allocator.free(response);
+    return true;
 }
 
 fn status(allocator: std.mem.Allocator) !void {

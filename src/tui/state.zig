@@ -5,6 +5,7 @@ const terminal = @import("terminal.zig");
 pub const default_max_history_turns: usize = 500;
 pub const terminal_refresh_interval_ms: i64 = 250;
 pub const ram_refresh_interval_ms: i64 = 1000;
+pub const daemon_refresh_interval_ms: i64 = 500;
 
 pub const Turn = struct {
     index: usize,
@@ -63,6 +64,22 @@ pub const SessionState = struct {
     previous_render_cols: u16,
     suggestion_index: usize,
     active_session_mounts: std.ArrayList(ActiveSessionMount),
+    daemon_active: bool,
+    daemon_vram_resident_bytes: usize,
+    daemon_l1_concept_index_bytes: usize,
+    daemon_hot_page_bytes: usize,
+    daemon_raw_shard_vram_bytes: usize,
+    daemon_session_hot_bytes: usize,
+    daemon_vault_ingest_active: bool,
+    daemon_vault_ingest_recent: bool,
+    daemon_vault_ingested_files: usize,
+    daemon_vault_ingest_errors: usize,
+    daemon_last_vault_ingest_ms: i64,
+    daemon_context_target: ?[]u8,
+    last_daemon_refresh_ms: i64,
+    daemon_refresh_count: usize,
+    typing_turn_index: ?usize,
+    typing_output_bytes: usize,
 
     pub fn init(allocator: std.mem.Allocator, version: []const u8, engine_root_label: ?[]const u8, compact: bool) SessionState {
         return initWithLimit(allocator, version, engine_root_label, compact, default_max_history_turns);
@@ -107,6 +124,22 @@ pub const SessionState = struct {
             .previous_render_cols = 0,
             .suggestion_index = 0,
             .active_session_mounts = std.ArrayList(ActiveSessionMount).init(allocator),
+            .daemon_active = false,
+            .daemon_vram_resident_bytes = 0,
+            .daemon_l1_concept_index_bytes = 0,
+            .daemon_hot_page_bytes = 0,
+            .daemon_raw_shard_vram_bytes = 0,
+            .daemon_session_hot_bytes = 0,
+            .daemon_vault_ingest_active = false,
+            .daemon_vault_ingest_recent = false,
+            .daemon_vault_ingested_files = 0,
+            .daemon_vault_ingest_errors = 0,
+            .daemon_last_vault_ingest_ms = 0,
+            .daemon_context_target = null,
+            .last_daemon_refresh_ms = -daemon_refresh_interval_ms,
+            .daemon_refresh_count = 0,
+            .typing_turn_index = null,
+            .typing_output_bytes = 0,
         };
     }
 
@@ -124,6 +157,15 @@ pub const SessionState = struct {
         self.active_session_mounts.deinit();
         if (self.context_artifact) |ca| self.allocator.free(ca);
         if (self.project_shard) |project_shard| self.allocator.free(project_shard);
+        if (self.daemon_context_target) |target| self.allocator.free(target);
+    }
+
+    pub fn setDaemonContextTarget(self: *SessionState, target: ?[]const u8) !void {
+        if (self.daemon_context_target) |existing| self.allocator.free(existing);
+        self.daemon_context_target = null;
+        if (target) |value| {
+            if (value.len != 0) self.daemon_context_target = try self.allocator.dupe(u8, value);
+        }
     }
 
     pub fn addActiveSessionMount(self: *SessionState, pack_id: []const u8, pack_version: []const u8) !void {
