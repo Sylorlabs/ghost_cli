@@ -98,6 +98,10 @@ pub fn run(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: RunO
     try render.initTerminalWithSize(writer, style, s.terminal_size);
     terminal_guard.markTerminalInitialized();
 
+    if (!s.read_only and daemon_cmd.ensureActiveQuiet(allocator, engine_root, s.debug)) {
+        s.last_daemon_refresh_ms = -state.daemon_refresh_interval_ms;
+    }
+
     var frame_dirty = true;
     while (true) {
         const now_ms = std.time.milliTimestamp();
@@ -527,7 +531,7 @@ pub fn handleSubmit(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *
         const response = daemon_client.request(allocator, request.items) catch {
             s.daemon_active = false;
             break :blk runner.RunResult{
-                .stdout = try allocator.dupe(u8, "[System Offline: Daemon unreachable. Run 'ghost daemon start' to awaken.]"),
+                .stdout = try allocator.dupe(u8, process.OFFLINE_ROUTING_ERROR),
                 .stderr = try allocator.alloc(u8, 0),
                 .exit_code = 1,
                 .allocator = allocator,
@@ -566,11 +570,7 @@ pub fn handleSubmit(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *
         json_ok = true;
         parsed.deinit();
     } else |_| {
-        try rendered_buf.appendSlice(res.stdout);
-        if (res.stderr.len > 0) {
-            try rendered_buf.appendSlice("\nStderr:\n");
-            try rendered_buf.appendSlice(res.stderr);
-        }
+        try writeCleanFallbackChat(rendered_buf.writer(), res.stdout, !use_daemon);
     }
 
     const rendered_output = try rendered_buf.toOwnedSlice();
@@ -733,7 +733,9 @@ fn renderTuiChatProjection(allocator: std.mem.Allocator, bytes: []const u8, writ
         return true;
     }
     if (try writeGenericJsonChat(allocator, writer, parsed.value, s)) return true;
-    return false;
+    try writer.writeAll(process.SEMANTIC_VOID_MESSAGE);
+    try writer.writeByte('\n');
+    return true;
 }
 
 fn findCorpusAskValue(value: std.json.Value) ?std.json.Value {
@@ -792,6 +794,32 @@ fn writeEngineResponseChat(writer: anytype, response: json_contracts.EngineRespo
     try writer.writeAll("No generated response was present in engine output.\n");
 }
 
+fn writeCleanFallbackChat(writer: anytype, stdout: []const u8, offline_path: bool) !void {
+    const trimmed = std.mem.trim(u8, stdout, " \r\n\t");
+    if (trimmed.len == 0) {
+        try writer.writeAll(if (offline_path) process.OFFLINE_ROUTING_ERROR else process.SEMANTIC_VOID_MESSAGE);
+        try writer.writeByte('\n');
+        return;
+    }
+    if (std.mem.eql(u8, trimmed, process.OFFLINE_ROUTING_ERROR) or process.looksLikeSystemTelemetry(trimmed)) {
+        try writer.writeAll(process.OFFLINE_ROUTING_ERROR);
+        try writer.writeByte('\n');
+        return;
+    }
+    if (process.looksLikeRawJson(trimmed)) {
+        try writer.writeAll(process.SEMANTIC_VOID_MESSAGE);
+        try writer.writeByte('\n');
+        return;
+    }
+    if (offline_path) {
+        try writer.writeAll(process.OFFLINE_ROUTING_ERROR);
+        try writer.writeByte('\n');
+        return;
+    }
+    try writer.writeAll(trimmed);
+    try writer.writeByte('\n');
+}
+
 fn traceFromEngineResponse(response: json_contracts.EngineResponse) state.EngineTrace {
     return .{
         .authority = authorityLabel(response),
@@ -800,6 +828,23 @@ fn traceFromEngineResponse(response: json_contracts.EngineResponse) state.Engine
         .source = if (response.answer_draft != null) "Resident Omni-Codex" else null,
         .trace_flags = null,
     };
+}
+
+test "tui clean fallback never renders raw json or daemon telemetry" {
+    var json_buf = std.ArrayList(u8).init(std.testing.allocator);
+    defer json_buf.deinit();
+    try writeCleanFallbackChat(json_buf.writer(), "{\"formatVersion\":\"telemetry.v1\"}", false);
+    try std.testing.expectEqualStrings(process.SEMANTIC_VOID_MESSAGE ++ "\n", json_buf.items);
+
+    var offline_buf = std.ArrayList(u8).init(std.testing.allocator);
+    defer offline_buf.deinit();
+    try writeCleanFallbackChat(offline_buf.writer(), "ghostd inactive socket=/tmp/ghost.sock", true);
+    try std.testing.expectEqualStrings(process.OFFLINE_ROUTING_ERROR ++ "\n", offline_buf.items);
+
+    var vulkan_buf = std.ArrayList(u8).init(std.testing.allocator);
+    defer vulkan_buf.deinit();
+    try writeCleanFallbackChat(vulkan_buf.writer(), "[VULKAN VALIDATION][INFO] noise", true);
+    try std.testing.expectEqualStrings(process.OFFLINE_ROUTING_ERROR ++ "\n", vulkan_buf.items);
 }
 
 fn authorityLabel(response: json_contracts.EngineResponse) []const u8 {

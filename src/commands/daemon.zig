@@ -67,6 +67,26 @@ pub fn startWithWriter(allocator: std.mem.Allocator, engine_root: ?[]const u8, d
     return error.DaemonStartTimedOut;
 }
 
+pub fn ensureActiveQuiet(allocator: std.mem.Allocator, engine_root: ?[]const u8, debug: bool) bool {
+    if (daemon_client.isActive()) return true;
+
+    const bin_path = locator.findEngineBinary(allocator, engine_root, .ghostd) catch return false;
+    defer allocator.free(bin_path);
+
+    var child = std.process.Child.init(&.{ "setsid", "-f", bin_path, "run" }, allocator);
+    child.stdin_behavior = .Ignore;
+    child.stdout_behavior = .Ignore;
+    child.stderr_behavior = if (debug) .Inherit else .Ignore;
+    child.spawn() catch return false;
+
+    var timer = std.time.Timer.start() catch return daemon_client.isActive();
+    while (timer.read() < START_TIMEOUT_NS) {
+        if (daemonReady(allocator)) return true;
+        std.Thread.sleep(25 * std.time.ns_per_ms);
+    }
+    return false;
+}
+
 fn daemonReady(allocator: std.mem.Allocator) bool {
     if (daemon_client.isActive()) return true;
     const response = daemon_client.request(allocator, "{\"kind\":\"daemon.status\"}") catch return false;

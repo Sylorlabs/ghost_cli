@@ -492,6 +492,7 @@ fn runAsk(allocator: std.mem.Allocator, root: ?[]const u8, parsed: *ParsedCli) !
         .debug = parsed.options.debug_mode,
     });
 
+    _ = daemon_cmd.ensureActiveQuiet(allocator, root, parsed.options.debug_mode);
     if (daemon_client.request(allocator, request.items)) |response| {
         defer allocator.free(response);
         if (parsed.options.debug_mode) {
@@ -514,7 +515,7 @@ fn runAsk(allocator: std.mem.Allocator, root: ?[]const u8, parsed: *ParsedCli) !
         try corpus.printCorpusAskResult(std.io.getStdOut().writer(), parsed_json.value);
         return;
     } else |_| {
-        try std.io.getStdErr().writer().print("Daemon inactive; slow-path engaged\n", .{});
+        if (parsed.options.debug_mode) try std.io.getStdErr().writer().print("Daemon inactive; slow-path engaged\n", .{});
         try chat.execute(allocator, root, .{
             .message = question,
             .reasoning = parsed.options.reasoning_level orelse .balanced,

@@ -3,6 +3,8 @@ const builtin = @import("builtin");
 
 pub const DEFAULT_ENGINE_TIMEOUT_MS: u64 = 30_000;
 pub const TIMEOUT_EXIT_CODE: u8 = 124;
+pub const SEMANTIC_VOID_MESSAGE = "Semantic Void. No human-readable response was produced.";
+pub const OFFLINE_ROUTING_ERROR = "System offline. Unable to establish semantic routing.";
 
 pub const ProcessResult = struct {
     stdout: []u8,
@@ -89,7 +91,7 @@ fn runEngineCommandBounded(
     var child = std.process.Child.init(args, allocator);
     child.stdin_behavior = if (stdin_payload == null) .Ignore else .Pipe;
     child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
+    child.stderr_behavior = .Ignore;
     child.env_map = env_map;
 
     try child.spawn();
@@ -113,21 +115,14 @@ fn runEngineCommandBounded(
         child.stdin = null;
     }
 
-    var stdout_list: std.ArrayListUnmanaged(u8) = .empty;
-    errdefer stdout_list.deinit(allocator);
-    var stderr_list: std.ArrayListUnmanaged(u8) = .empty;
-    errdefer stderr_list.deinit(allocator);
-    try child.collectOutput(allocator, &stdout_list, &stderr_list, 10 * 1024 * 1024);
+    const stdout = try child.stdout.?.reader().readAllAlloc(allocator, 10 * 1024 * 1024);
+    errdefer allocator.free(stdout);
     const term = try child.wait();
     markTimeoutDone(&timeout_context);
-
-    const stdout = try stdout_list.toOwnedSlice(allocator);
-    errdefer allocator.free(stdout);
-    var stderr = try stderr_list.toOwnedSlice(allocator);
+    const stderr = try allocator.alloc(u8, 0);
     errdefer allocator.free(stderr);
 
     const timed_out = timeout_context.timedOut();
-    if (timed_out) stderr = try appendTimeoutNotice(allocator, stderr, timeout_ms);
 
     return .{
         .stdout = stdout,
@@ -302,12 +297,19 @@ fn timeoutMs() u64 {
     return if (parsed == 0) DEFAULT_ENGINE_TIMEOUT_MS else parsed;
 }
 
-fn appendTimeoutNotice(allocator: std.mem.Allocator, stderr: []u8, timeout_ms: u64) ![]u8 {
-    defer allocator.free(stderr);
-    if (stderr.len == 0) {
-        return std.fmt.allocPrint(allocator, "ghost_cli: engine subprocess timed out after {d}ms and was terminated\n", .{timeout_ms});
-    }
-    return std.fmt.allocPrint(allocator, "{s}\nghost_cli: engine subprocess timed out after {d}ms and was terminated\n", .{ stderr, timeout_ms });
+pub fn looksLikeRawJson(bytes: []const u8) bool {
+    const trimmed = std.mem.trim(u8, bytes, " \r\n\t");
+    if (trimmed.len == 0) return false;
+    return trimmed[0] == '{' or trimmed[0] == '[';
+}
+
+pub fn looksLikeSystemTelemetry(bytes: []const u8) bool {
+    const trimmed = std.mem.trim(u8, bytes, " \r\n\t");
+    return std.ascii.indexOfIgnoreCase(trimmed, "ghostd inactive") != null or
+        std.ascii.indexOfIgnoreCase(trimmed, "daemon inactive") != null or
+        std.ascii.indexOfIgnoreCase(trimmed, "vram") != null or
+        std.ascii.indexOfIgnoreCase(trimmed, "[VULKAN") != null or
+        std.ascii.indexOfIgnoreCase(trimmed, "VULKAN VALIDATION") != null;
 }
 
 test "engine command timeout terminates hanging subprocess" {
@@ -318,7 +320,7 @@ test "engine command timeout terminates hanging subprocess" {
     defer allocator.free(result.stderr);
     try std.testing.expect(result.timed_out);
     try std.testing.expectEqual(TIMEOUT_EXIT_CODE, result.exit_code);
-    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "timed out") != null);
+    try std.testing.expectEqual(@as(usize, 0), result.stderr.len);
 }
 
 test "engine command stdin timeout recovers from non-reading subprocess" {
@@ -330,6 +332,16 @@ test "engine command stdin timeout recovers from non-reading subprocess" {
     defer allocator.free(result.stderr);
     try std.testing.expect(result.timed_out);
     try std.testing.expectEqual(TIMEOUT_EXIT_CODE, result.exit_code);
+}
+
+test "engine command discards stderr from chat subprocess boundary" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    const result = try runEngineCommandWithTimeout(allocator, &.{ "/bin/sh", "-c", "printf answer; printf '[VULKAN VALIDATION] hidden' >&2" }, 1000);
+    defer allocator.free(result.stdout);
+    defer allocator.free(result.stderr);
+    try std.testing.expectEqualStrings("answer", result.stdout);
+    try std.testing.expectEqual(@as(usize, 0), result.stderr.len);
 }
 
 test "engine process builds ephemeral dynamic task graph envelope" {
