@@ -122,6 +122,7 @@ pub const ArtifactAutopsyEnvelope = struct {
 pub const EngineResponse = struct {
     // Top-level status/permission
     status: ?[]const u8 = null,
+    state: ?[]const u8 = null,
     permission: ?[]const u8 = null,
     claim_status: ?[]const u8 = null,
 
@@ -150,6 +151,7 @@ pub const EngineResponse = struct {
     detail: ?[]const u8 = null,
     response: ?[]const u8 = null,
     message: ?[]const u8 = null,
+    answer_draft: ?[]const u8 = null,
     suggested_action: ?[]const u8 = null,
     suggestedAction: ?[]const u8 = null,
     generatedDenial: ?GeneratedDenial = null,

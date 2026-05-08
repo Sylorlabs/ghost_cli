@@ -102,7 +102,23 @@ pub fn printBasicEngineOutputWithColor(writer: anytype, response: json_contracts
     if (color) try writer.writeAll(ghost_blue_rgb);
     defer if (color) writer.writeAll(reset) catch {};
     var wrote = false;
+    
+    if (response.state) |s| {
+        if (std.mem.eql(u8, s, "concept void fallback")) {
+            try writer.writeAll("[Concept Void: Triggering Local Web Scrape...]\n\n");
+        } else if (response.answer_draft != null) {
+            try writer.writeAll("[Source: Resident Omni-Codex]\n\n");
+        }
+    } else if (response.answer_draft != null) {
+        try writer.writeAll("[Source: Resident Omni-Codex]\n\n");
+    }
+    
+    if (response.answer_draft) |draft| {
+        try writer.writeAll(draft);
+        wrote = true;
+    }
     if (response.getSummary()) |summary| {
+        if (wrote) try writer.writeAll("\n\n");
         try writer.writeAll(summary);
         wrote = true;
     }

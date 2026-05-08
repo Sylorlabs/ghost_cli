@@ -531,6 +531,15 @@ fn printDaemonVoice(writer: anytype, value: std.json.Value, color: bool) !bool {
     if (voice != .bool or !voice.bool) return false;
     const answer = obj.get("answerDraft") orelse return false;
     if (answer != .string) return false;
+
+    const state_val = obj.get("state");
+    const is_void = state_val != null and state_val.? == .string and std.mem.eql(u8, state_val.?.string, "concept void fallback");
+    if (is_void) {
+        try writer.writeAll("[Concept Void: Triggering Local Web Scrape...]\n\n");
+    } else {
+        try writer.writeAll("[Source: Resident Omni-Codex]\n\n");
+    }
+
     if (color) try writer.writeAll("\x1b[34m");
     try writer.writeAll(answer.string);
     if (color) try writer.writeAll("\x1b[0m");

@@ -1137,7 +1137,16 @@ pub fn printCorpusAskResult(writer: anytype, value: std.json.Value) !void {
     };
 
     if (getString(corpus, "status")) |status| try writer.print("Status: {s}\n", .{status});
-    if (getString(corpus, "state")) |state| try writer.print("Engine State: {s}\n", .{state});
+    if (getString(corpus, "state")) |state| {
+        if (std.mem.eql(u8, state, "concept void fallback")) {
+            try writer.writeAll("[Concept Void: Triggering Local Web Scrape...]\n\n");
+        } else if (corpus.get("answerDraft") != null) {
+            try writer.writeAll("[Source: Resident Omni-Codex]\n\n");
+        }
+        try writer.print("Engine State: {s}\n", .{state});
+    } else if (corpus.get("answerDraft") != null) {
+        try writer.writeAll("[Source: Resident Omni-Codex]\n\n");
+    }
     if (getString(corpus, "permission")) |permission| try writer.print("Permission: {s}\n", .{permission});
 
     const unknowns = corpus.get("unknowns");
