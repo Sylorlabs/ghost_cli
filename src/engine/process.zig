@@ -11,6 +11,47 @@ pub const ProcessResult = struct {
     timed_out: bool = false,
 };
 
+pub const DynamicTaskGraphNode = struct {
+    id: []u8,
+    label: []u8,
+
+    fn deinit(self: *DynamicTaskGraphNode, allocator: std.mem.Allocator) void {
+        allocator.free(self.id);
+        allocator.free(self.label);
+        self.* = undefined;
+    }
+};
+
+pub const DynamicTaskGraphEdge = struct {
+    from: []u8,
+    to: []u8,
+    relation: []u8,
+
+    fn deinit(self: *DynamicTaskGraphEdge, allocator: std.mem.Allocator) void {
+        allocator.free(self.from);
+        allocator.free(self.to);
+        allocator.free(self.relation);
+        self.* = undefined;
+    }
+};
+
+pub const DynamicTaskGraph = struct {
+    allocator: std.mem.Allocator,
+    request_hash: []u8,
+    nodes: []DynamicTaskGraphNode,
+    edges: []DynamicTaskGraphEdge,
+    ephemeral: bool = true,
+
+    pub fn deinit(self: *DynamicTaskGraph) void {
+        self.allocator.free(self.request_hash);
+        for (self.nodes) |*node| node.deinit(self.allocator);
+        self.allocator.free(self.nodes);
+        for (self.edges) |*edge| edge.deinit(self.allocator);
+        self.allocator.free(self.edges);
+        self.* = undefined;
+    }
+};
+
 pub fn runEngineCommand(allocator: std.mem.Allocator, args: []const []const u8) !ProcessResult {
     return runEngineCommandWithEngineLogs(allocator, args, false);
 }
@@ -42,6 +83,9 @@ fn runEngineCommandBounded(
     stdin_payload: ?[]const u8,
     timeout_ms: u64,
 ) !ProcessResult {
+    var dynamic_graph = try buildDynamicTaskGraph(allocator, args, stdin_payload);
+    defer dynamic_graph.deinit();
+
     var child = std.process.Child.init(args, allocator);
     child.stdin_behavior = if (stdin_payload == null) .Ignore else .Pipe;
     child.stdout_behavior = .Pipe;
@@ -91,6 +135,102 @@ fn runEngineCommandBounded(
         .exit_code = if (timed_out) TIMEOUT_EXIT_CODE else termExitCode(term),
         .timed_out = timed_out,
     };
+}
+
+pub fn buildDynamicTaskGraph(
+    allocator: std.mem.Allocator,
+    args: []const []const u8,
+    stdin_payload: ?[]const u8,
+) !DynamicTaskGraph {
+    const request_hash = try hashProcessRequest(allocator, args, stdin_payload);
+    errdefer allocator.free(request_hash);
+
+    var nodes = std.ArrayList(DynamicTaskGraphNode).init(allocator);
+    errdefer {
+        for (nodes.items) |*node| node.deinit(allocator);
+        nodes.deinit();
+    }
+    var edges = std.ArrayList(DynamicTaskGraphEdge).init(allocator);
+    errdefer {
+        for (edges.items) |*edge| edge.deinit(allocator);
+        edges.deinit();
+    }
+
+    try appendGraphNode(allocator, &nodes, "cli.request", "CLI request envelope");
+    try appendGraphNode(allocator, &nodes, "engine.process", "Ghost engine subprocess");
+    try appendGraphEdge(allocator, &edges, "cli.request", "engine.process", "executes");
+    if (stdin_payload) |_| {
+        try appendGraphNode(allocator, &nodes, "stdin.payload", "GIP stdin payload");
+        try appendGraphEdge(allocator, &edges, "stdin.payload", "engine.process", "feeds");
+    }
+    for (args, 0..) |arg, idx| {
+        const id = try std.fmt.allocPrint(allocator, "argv.{d}", .{idx});
+        try appendGraphNodeOwned(allocator, &nodes, id, arg);
+        try appendGraphEdge(allocator, &edges, id, "engine.process", "argv");
+    }
+
+    return .{
+        .allocator = allocator,
+        .request_hash = request_hash,
+        .nodes = try nodes.toOwnedSlice(),
+        .edges = try edges.toOwnedSlice(),
+    };
+}
+
+fn appendGraphNode(
+    allocator: std.mem.Allocator,
+    nodes: *std.ArrayList(DynamicTaskGraphNode),
+    id: []const u8,
+    label: []const u8,
+) !void {
+    try appendGraphNodeOwned(allocator, nodes, try allocator.dupe(u8, id), label);
+}
+
+fn appendGraphNodeOwned(
+    allocator: std.mem.Allocator,
+    nodes: *std.ArrayList(DynamicTaskGraphNode),
+    id: []u8,
+    label: []const u8,
+) !void {
+    errdefer allocator.free(id);
+    try nodes.append(.{
+        .id = id,
+        .label = try allocator.dupe(u8, label),
+    });
+}
+
+fn appendGraphEdge(
+    allocator: std.mem.Allocator,
+    edges: *std.ArrayList(DynamicTaskGraphEdge),
+    from: []const u8,
+    to: []const u8,
+    relation: []const u8,
+) !void {
+    try edges.append(.{
+        .from = try allocator.dupe(u8, from),
+        .to = try allocator.dupe(u8, to),
+        .relation = try allocator.dupe(u8, relation),
+    });
+}
+
+fn hashProcessRequest(allocator: std.mem.Allocator, args: []const []const u8, stdin_payload: ?[]const u8) ![]u8 {
+    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+    for (args) |arg| {
+        hasher.update(arg);
+        hasher.update(&.{0});
+    }
+    if (stdin_payload) |payload| hasher.update(payload);
+    var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
+    hasher.final(&digest);
+    const prefix = "sha256:";
+    var out = try allocator.alloc(u8, prefix.len + digest.len * 2);
+    @memcpy(out[0..prefix.len], prefix);
+    const hex = "0123456789abcdef";
+    for (digest, 0..) |byte, idx| {
+        out[prefix.len + idx * 2] = hex[byte >> 4];
+        out[prefix.len + idx * 2 + 1] = hex[byte & 0x0f];
+    }
+    return out;
 }
 
 const TimeoutContext = struct {
@@ -190,4 +330,15 @@ test "engine command stdin timeout recovers from non-reading subprocess" {
     defer allocator.free(result.stderr);
     try std.testing.expect(result.timed_out);
     try std.testing.expectEqual(TIMEOUT_EXIT_CODE, result.exit_code);
+}
+
+test "engine process builds ephemeral dynamic task graph envelope" {
+    const allocator = std.testing.allocator;
+    var graph = try buildDynamicTaskGraph(allocator, &.{ "ghost_engine", "--gip" }, "{\"kind\":\"corpus.ask\"}");
+    defer graph.deinit();
+
+    try std.testing.expect(graph.ephemeral);
+    try std.testing.expect(std.mem.startsWith(u8, graph.request_hash, "sha256:"));
+    try std.testing.expect(graph.nodes.len >= 4);
+    try std.testing.expect(graph.edges.len >= 3);
 }
