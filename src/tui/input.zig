@@ -15,6 +15,7 @@ pub const Key = union(enum) {
     left,
     right,
     tab,
+    shift_tab,
     unsupported,
 };
 
@@ -30,20 +31,26 @@ pub fn readKey(reader: anytype) !Key {
     if (c < 32 and c != 27) return Key{ .ctrl = c + 64 };
     if (c != 27) return Key{ .char = c };
 
-    var seq: [2]u8 = undefined;
-    const seq_len = try reader.read(&seq);
-    if (seq_len == 0) return .esc;
-    if (seq_len >= 2 and seq[0] == '[') {
-        return switch (seq[1]) {
-            'A' => .up,
-            'B' => .down,
-            'C' => .right,
-            'D' => .left,
-            else => .unsupported,
-        };
-    }
+    var first: [1]u8 = undefined;
+    const first_len = try reader.read(&first);
+    if (first_len == 0) return .esc;
+    if (first[0] != '[') return .esc;
 
-    return .esc;
+    var seq: [8]u8 = undefined;
+    var seq_len: usize = 0;
+    while (seq_len < seq.len) : (seq_len += 1) {
+        const read_len = try reader.read(seq[seq_len .. seq_len + 1]);
+        if (read_len == 0) break;
+        switch (seq[seq_len]) {
+            'A' => return .up,
+            'B' => return .down,
+            'C' => return .right,
+            'D' => return .left,
+            'Z' => return .shift_tab,
+            else => {},
+        }
+    }
+    return .unsupported;
 }
 
 test "readKey consumes pasted text one key at a time" {
@@ -69,6 +76,20 @@ test "readKey keeps arrow escape handling" {
     try std.testing.expectEqual(Key.down, try readKey(reader));
     try std.testing.expectEqual(Key.right, try readKey(reader));
     try std.testing.expectEqual(Key.left, try readKey(reader));
+}
+
+test "readKey recognizes shift tab" {
+    var stream = std.io.fixedBufferStream("\x1b[Z");
+    const reader = stream.reader();
+
+    try std.testing.expectEqual(Key.shift_tab, try readKey(reader));
+}
+
+test "readKey recognizes modified shift tab" {
+    var stream = std.io.fixedBufferStream("\x1b[1;2Z");
+    const reader = stream.reader();
+
+    try std.testing.expectEqual(Key.shift_tab, try readKey(reader));
 }
 
 pub const RawMode = struct {

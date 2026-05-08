@@ -885,16 +885,16 @@ mutate packs or execute verifiers.
 ### `ghost tui`
 Interactive Ghost Console TUI. Provides a live cockpit view for interacting with the engine.
 
-Usage: `ghost tui [--reasoning=quick|balanced|deep|max] [--context-artifact=<path>] [--no-color|--color=auto|always|never] [--compact] [--read-only] [--max-history-turns=<n>]`
+Usage: `ghost tui [--reasoning=quick|balanced|deep|max] [--context-artifact=<path>] [--no-color|--color=auto|always|never] [--compact] [--read-only] [--yolo] [--max-history-turns=<n>]`
 
-Engine prompt/response turns are retained in bounded TUI session history and rendered
-with `YOU` and `GHOST` labels plus turn separators. `SYSTEM`, `COMMAND`, and
-`ERROR` are render-only labels for local session status, local command output,
-and local errors. Ghost responses still use the same renderer as terminal
-chat/ask output, including correction, negative-knowledge, and epistemic
-sections when the engine reports them. The status bar includes compact counters
-for corrections, applied/proposed negative knowledge, verifier requirements,
-suppressions, and routing warnings.
+Engine prompt/response turns are retained in bounded TUI session history and
+rendered with a strict chat boundary: the left pane shows only `YOU`, the user
+input, `GHOST`, and the answer draft with a compact source tag. `SYSTEM`,
+`COMMAND`, and `ERROR` are render-only labels for local session status, local
+command output, and local errors. Verbose engine status, authority, stop
+reasons, trace flags, correction/negative-knowledge counters, verifier
+requirements, suppressions, and routing warnings are kept out of the chat pane
+and routed to the right-side telemetry / `ENGINE TRACE` area.
 
 By default, the TUI retains up to 500 turns. `--max-history-turns=<n>` changes
 that retained-turn bound; older turns are pruned from the local display history.
@@ -907,6 +907,18 @@ engine operations beyond local session state. `/doctor` and `/autopsy` are
 blocked with `Read-only mode: command blocked: /name`. Read-only mode is visible
 in the TUI status bar.
 
+When an engine response contains a `commandProposal` / `command_proposal`, the
+TUI pauses at the prompt bar with `[Ghost requests to run: \`...\`] - (y/N)`.
+`y` executes the proposed command and records stdout/stderr as a command result
+turn; `n` or `Esc` rejects it. `Ctrl+Y` toggles YOLO mode. In YOLO mode the
+prompt bar turns red, shows `[! YOLO MODE ACTIVE - AUTO-EXECUTION ENABLED]`,
+and command proposals execute immediately.
+
+When an engine response contains a `patchProposal` / `patch_proposal` with a
+unified diff, the chat pane becomes a blue-bordered diff reviewer. Deletions
+render red and additions render green. `Shift+Tab` applies the diff to disk;
+`Esc` rejects it.
+
 If stdin/stdout is not an interactive TTY, `ghost`/`ghost tui` exits gracefully
 with a message. The covered smoke path verifies that no CLI-owned TUI command,
 doctor check, context/project autopsy scan, correction proposal/review/reviewed
@@ -918,6 +930,8 @@ started from that non-TTY fallback.
 - `Ctrl+C`: Quit
 - `Ctrl+R`: Cycle reasoning level (quick → balanced → deep → max)
 - `Ctrl+D`: Toggle debug mode
+- `Ctrl+Y`: Toggle YOLO auto-execution mode
+- `Shift+Tab`: Accept pending diff edits
 - `Ctrl+L`: Clear history area
 - `Esc`: Quit
 - `q`: Quit (only when input is empty)

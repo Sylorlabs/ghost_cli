@@ -6,9 +6,11 @@ const slash = @import("slash.zig");
 const stats = @import("stats.zig");
 const terminal = @import("terminal.zig");
 const runner = @import("../engine/runner.zig");
+const shell = @import("../engine/shell.zig");
+const diff_viewer = @import("diff_viewer.zig");
 const json_contracts = @import("../engine/json_contracts.zig");
-const terminal_render = @import("../render/terminal.zig");
 const doctor = @import("../commands/doctor.zig");
+const daemon_cmd = @import("../commands/daemon.zig");
 const autopsy = @import("../commands/autopsy.zig");
 const corpus = @import("../commands/corpus.zig");
 const packs = @import("../commands/packs.zig");
@@ -33,6 +35,7 @@ pub const RunOptions = struct {
     color: ColorMode = .auto,
     compact: bool = false,
     read_only: bool = false,
+    yolo_mode: bool = false,
     max_history_turns: usize = state.default_max_history_turns,
     version: []const u8,
     engine_root_label: ?[]const u8 = null,
@@ -53,7 +56,7 @@ pub fn shouldSubmitToEngineInMode(text: []const u8, read_only: bool) bool {
 
 pub fn isReadOnlyBlockedCommand(command: SlashCommand) bool {
     return switch (command.kind) {
-        .doctor, .autopsy, .mount => true,
+        .daemon, .doctor, .autopsy, .mount => true,
         else => false,
     };
 }
@@ -78,6 +81,7 @@ pub fn run(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: RunO
     s.debug = options.debug;
     s.details = options.details or options.debug;
     s.read_only = options.read_only;
+    s.yolo_mode = options.yolo_mode;
 
     const stdin = std.io.getStdIn();
     const stdout = std.io.getStdOut();
@@ -94,14 +98,29 @@ pub fn run(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: RunO
     try render.initTerminalWithSize(writer, style, s.terminal_size);
     terminal_guard.markTerminalInitialized();
 
+    var frame_dirty = true;
     while (true) {
         const now_ms = std.time.milliTimestamp();
+        const previous_size = s.terminal_size;
+        const previous_daemon_active = s.daemon_active;
+        const previous_daemon_vram = s.daemon_vram_resident_bytes;
         s.refreshTerminalSize(now_ms, terminal.getSize);
         s.refreshRam(now_ms, stats.getCliRamRss);
         try refreshDaemonTelemetry(allocator, &s, now_ms);
-        try render.renderFrameWithSize(writer, &s, style, s.terminal_size);
+        if (previous_size.rows != s.terminal_size.rows or
+            previous_size.cols != s.terminal_size.cols or
+            previous_daemon_active != s.daemon_active or
+            previous_daemon_vram != s.daemon_vram_resident_bytes)
+        {
+            frame_dirty = true;
+        }
+        if (frame_dirty) {
+            try render.renderFrameWithSize(writer, &s, style, s.terminal_size);
+            frame_dirty = false;
+        }
 
         const key = try input.readKey(stdin.reader());
+        var key_changed = true;
         switch (key) {
             .ctrl => |c| {
                 switch (c) {
@@ -116,10 +135,22 @@ pub fn run(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: RunO
                         s.clearHistory();
                         try render.clearHistoryAreaWithSize(writer, s.terminal_size);
                     },
+                    'Y' => {
+                        s.yolo_mode = !s.yolo_mode;
+                        s.last_command_status = if (s.yolo_mode) "yolo on" else "yolo off";
+                    },
                     else => {},
                 }
             },
-            .esc => break,
+            .esc => {
+                if (s.pending_patch != null) {
+                    s.clearPendingPatch();
+                    s.last_command_status = "patch rejected";
+                } else if (s.pending_command != null) {
+                    s.clearPendingCommand();
+                    s.last_command_status = "command rejected";
+                } else break;
+            },
             .up => {
                 const count = slash.matchingCount(s.current_input.items);
                 if (count > 0) {
@@ -171,6 +202,11 @@ pub fn run(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: RunO
                     }
                 }
             },
+            .shift_tab => {
+                if (s.pending_patch != null) {
+                    try applyPendingPatch(allocator, &s, writer, style);
+                }
+            },
             .enter => {
                 if (s.current_input.items.len == 0) continue;
 
@@ -181,6 +217,7 @@ pub fn run(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: RunO
 
                 if (try handleSlash(allocator, engine_root, &s, cmd_text, writer, style)) |should_quit| {
                     if (should_quit) break;
+                    frame_dirty = true;
                     continue;
                 }
 
@@ -193,12 +230,23 @@ pub fn run(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: RunO
                 }
             },
             .char => |c| {
+                if (s.pending_command != null) {
+                    if (c == 'y' or c == 'Y') {
+                        try executePendingCommand(allocator, &s, writer, style);
+                    } else if (c == 'n' or c == 'N') {
+                        s.clearPendingCommand();
+                        s.last_command_status = "command rejected";
+                    }
+                    frame_dirty = true;
+                    continue;
+                }
                 if (s.current_input.items.len == 0 and c == 'q') break;
                 try s.current_input.append(c);
                 s.suggestion_index = 0;
             },
-            else => {},
+            .unsupported => key_changed = false,
         }
+        if (key_changed) frame_dirty = true;
     }
 }
 
@@ -342,6 +390,30 @@ pub fn handleSlash(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *s
                 .version = s.version,
             });
         },
+        .daemon => {
+            const sub = command.arg orelse "";
+            const action = if (sub.len == 0) "start" else sub;
+            s.last_command_status = "daemon requested";
+            try render.renderCommandMessage(writer, style, "daemon: {s}", .{action});
+            if (std.mem.eql(u8, action, "start")) {
+                try daemon_cmd.startWithWriter(allocator, engine_root, s.debug, writer);
+                s.last_command_status = "daemon start requested";
+                s.last_daemon_refresh_ms = -state.daemon_refresh_interval_ms;
+                try refreshDaemonTelemetry(allocator, s, std.time.milliTimestamp());
+            } else if (std.mem.eql(u8, action, "status")) {
+                try daemon_cmd.statusWithWriter(allocator, writer);
+                s.last_command_status = "daemon status";
+                s.last_daemon_refresh_ms = -state.daemon_refresh_interval_ms;
+                try refreshDaemonTelemetry(allocator, s, std.time.milliTimestamp());
+            } else if (std.mem.eql(u8, action, "stop")) {
+                try daemon_cmd.stopWithWriter(allocator, writer);
+                s.last_command_status = "daemon stop requested";
+                s.daemon_active = false;
+            } else {
+                s.last_command_status = "invalid daemon command";
+                try render.renderErrorMessage(writer, style, "Invalid daemon command: {s}. Use /daemon, /daemon status, or /daemon stop", .{action});
+            }
+        },
         .autopsy => {
             const path = command.arg orelse "";
             if (path.len == 0) {
@@ -452,10 +524,14 @@ pub fn handleSubmit(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *
     } else if (use_daemon) blk: {
         var request = std.ArrayList(u8).init(aa);
         try writeDaemonCorpusAskRequest(request.writer(), cmd_text, s);
-        const response = daemon_client.request(allocator, request.items) catch |err| {
+        const response = daemon_client.request(allocator, request.items) catch {
             s.daemon_active = false;
-            try render.renderWarningMessage(writer, style, "Daemon request failed; falling back to local engine: {}", .{err});
-            break :blk try runTaskOperatorFallback(allocator, engine_root, aa, cmd_text, s);
+            break :blk runner.RunResult{
+                .stdout = try allocator.dupe(u8, "[System Offline: Daemon unreachable. Run 'ghost daemon start' to awaken.]"),
+                .stderr = try allocator.alloc(u8, 0),
+                .exit_code = 1,
+                .allocator = allocator,
+            };
         };
         break :blk runner.RunResult{
             .stdout = response,
@@ -476,21 +552,17 @@ pub fn handleSubmit(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *
     var json_ok = false;
 
     if (s.json_mode) {
-        try rendered_buf.appendSlice(res.stdout);
+        if (!(try renderTuiChatProjection(allocator, res.stdout, rendered_buf.writer(), s))) {
+            try rendered_buf.appendSlice("No generated response was present in engine output.\n");
+        }
         json_ok = true;
-    } else if (try renderCorpusAskIfPresent(allocator, res.stdout, rendered_buf.writer())) {
+    } else if (try renderTuiChatProjection(allocator, res.stdout, rendered_buf.writer(), s)) {
         json_ok = true;
     } else if (json_contracts.parseEngineJson(allocator, res.stdout)) |parsed| {
-        // defer parsed.deinit(); // We'd need to copy the response if we deinit here
-        // For now, let's just render it into our buffer
         s.last_counters = json_contracts.renderCounters(parsed.value);
         s.recordResponseState(parsed.value);
-        if (s.details or s.debug) {
-            if (s.debug) try terminal_render.printDebugFieldDetection(rendered_buf.writer(), parsed.value);
-            try terminal_render.printEngineOutput(rendered_buf.writer(), parsed.value);
-        } else {
-            try terminal_render.printBasicEngineOutput(rendered_buf.writer(), parsed.value);
-        }
+        try s.setEngineTrace(traceFromEngineResponse(parsed.value));
+        try writeEngineResponseChat(rendered_buf.writer(), parsed.value);
         json_ok = true;
         parsed.deinit();
     } else |_| {
@@ -518,11 +590,92 @@ pub fn handleSubmit(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *
     };
 
     try s.appendTurn(turn);
+
+    if (try diff_viewer.findPatchProposal(allocator, res.stdout)) |proposal| {
+        s.setPendingPatch(proposal);
+        s.last_command_status = "patch approval pending";
+    } else if (try shell.findCommandProposal(allocator, res.stdout)) |proposal| {
+        s.setPendingCommand(proposal);
+        s.last_command_status = "command approval pending";
+    }
+
     const post_ms = std.time.milliTimestamp();
     s.refreshRam(post_ms, stats.getCliRamRss);
     if (s.daemon_refresh_count != 0) try refreshDaemonTelemetry(allocator, s, post_ms);
     s.last_command_status = if (res.exit_code == 0) "engine response" else "engine error";
+    if (s.pending_patch != null) {
+        s.last_command_status = "patch approval pending";
+    } else if (s.pending_command != null) {
+        s.last_command_status = "command approval pending";
+    }
     try renderTypewriterTurn(writer, s, turn.index, rendered_output.len, style);
+    if (s.yolo_mode and s.pending_command != null) {
+        try executePendingCommand(allocator, s, writer, style);
+    }
+}
+
+fn executePendingCommand(allocator: std.mem.Allocator, s: *state.SessionState, writer: anytype, style: render.Style) !void {
+    const proposal = s.takePendingCommand() orelse return;
+    defer proposal.deinit();
+    s.last_command_status = "command executing";
+    try render.renderFrameWithSize(writer, s, style, s.terminal_size);
+
+    const start_time = std.time.milliTimestamp();
+    const result = shell.execute(allocator, proposal) catch |err| {
+        s.last_command_status = "command failed";
+        try render.renderErrorMessage(writer, style, "Command failed before execution completed: {}", .{err});
+        return;
+    };
+    defer result.deinit();
+    const elapsed = @as(u64, @intCast(std.time.milliTimestamp() - start_time));
+
+    var raw = std.ArrayList(u8).init(allocator);
+    defer raw.deinit();
+    try shell.renderCommandResultJson(raw.writer(), proposal, result);
+
+    var rendered = std.ArrayList(u8).init(allocator);
+    defer rendered.deinit();
+    try rendered.writer().print("[COMMAND] {s}\nexit={d}\n", .{ proposal.command_display, result.exit_code });
+    if (result.stdout.len > 0) {
+        try rendered.appendSlice("\nStdout:\n");
+        try rendered.appendSlice(result.stdout);
+    }
+    if (result.stderr.len > 0) {
+        try rendered.appendSlice("\nStderr:\n");
+        try rendered.appendSlice(result.stderr);
+    }
+
+    const rendered_output = try rendered.toOwnedSlice();
+    const raw_output = try raw.toOwnedSlice();
+    const turn = state.Turn{
+        .index = s.nextTurnIndex(),
+        .input = try allocator.dupe(u8, proposal.command_display),
+        .reasoning = s.reasoning,
+        .context_artifact = if (s.context_artifact) |ca| try allocator.dupe(u8, ca) else null,
+        .response = null,
+        .raw_output = raw_output,
+        .rendered_output = rendered_output,
+        .elapsed_ms = elapsed,
+        .input_runes = stats.countRunes(proposal.command_display),
+        .output_runes = stats.countRunes(rendered_output),
+        .json_ok = true,
+    };
+    try s.appendTurn(turn);
+    s.last_command_status = if (result.exit_code == 0) "command executed" else "command error";
+    try renderTypewriterTurn(writer, s, turn.index, rendered_output.len, style);
+}
+
+fn applyPendingPatch(allocator: std.mem.Allocator, s: *state.SessionState, writer: anytype, style: render.Style) !void {
+    const proposal = s.takePendingPatch() orelse return;
+    defer proposal.deinit();
+    const result = diff_viewer.applyUnifiedDiff(allocator, proposal.diff) catch |err| {
+        s.last_command_status = "patch apply failed";
+        try render.renderErrorMessage(writer, style, "Patch apply failed: {}", .{err});
+        return;
+    };
+    defer result.deinit();
+    s.last_command_status = "patch applied";
+    try render.renderCommandMessage(writer, style, "applied patch to {s}", .{result.path});
 }
 
 fn renderTypewriterTurn(writer: anytype, s: *state.SessionState, turn_index: usize, output_len: usize, style: render.Style) !void {
@@ -569,21 +722,167 @@ fn runTaskOperatorFallback(
     });
 }
 
-fn renderCorpusAskIfPresent(allocator: std.mem.Allocator, bytes: []const u8, writer: anytype) !bool {
+fn renderTuiChatProjection(allocator: std.mem.Allocator, bytes: []const u8, writer: anytype, s: *state.SessionState) !bool {
     var parsed = std.json.parseFromSlice(std.json.Value, allocator, bytes, .{}) catch return false;
     defer parsed.deinit();
-    if (!jsonContainsCorpusAsk(parsed.value)) return false;
-    try corpus.printCorpusAskResult(writer, parsed.value);
+    if (findCorpusAskValue(parsed.value)) |corpus_value| {
+        const trace = try traceFromCorpusAskJson(allocator, parsed.value, corpus_value);
+        defer if (trace.trace_flags) |flags| allocator.free(flags);
+        try s.setEngineTrace(trace);
+        try writeCorpusAskChat(writer, corpus_value);
+        return true;
+    }
+    if (try writeGenericJsonChat(allocator, writer, parsed.value, s)) return true;
+    return false;
+}
+
+fn findCorpusAskValue(value: std.json.Value) ?std.json.Value {
+    if (value != .object) return null;
+    const obj = value.object;
+    if (obj.get("corpusAsk")) |corpus_value| return corpus_value;
+    if (obj.get("corpus_ask")) |corpus_value| return corpus_value;
+    if (obj.get("result")) |result| {
+        if (result == .object) {
+            if (result.object.get("corpusAsk")) |corpus_value| return corpus_value;
+            if (result.object.get("corpus_ask")) |corpus_value| return corpus_value;
+        }
+    }
+    return null;
+}
+
+fn writeCorpusAskChat(writer: anytype, corpus_value: std.json.Value) !void {
+    const obj = if (corpus_value == .object) corpus_value.object else return;
+    if (getStringField(obj, "answerDraft") orelse getStringField(obj, "answer_draft")) |answer| {
+        try writer.writeAll(answer);
+        if (sourceLabelFromCorpusAsk(corpus_value)) |source| {
+            try writer.print(" [Source: {s}]", .{source});
+        }
+        try writer.writeByte('\n');
+        return;
+    }
+    try writer.writeAll("No answer was produced.\n");
+}
+
+fn writeGenericJsonChat(allocator: std.mem.Allocator, writer: anytype, value: std.json.Value, s: *state.SessionState) !bool {
+    var out = std.ArrayList(u8).init(allocator);
+    defer out.deinit();
+    try std.json.stringify(value, .{}, out.writer());
+    var parsed = json_contracts.parseEngineJson(allocator, out.items) catch return false;
+    defer parsed.deinit();
+    s.last_counters = json_contracts.renderCounters(parsed.value);
+    s.recordResponseState(parsed.value);
+    try s.setEngineTrace(traceFromEngineResponse(parsed.value));
+    try writeEngineResponseChat(writer, parsed.value);
     return true;
 }
 
-fn jsonContainsCorpusAsk(value: std.json.Value) bool {
-    if (value != .object) return false;
-    if (value.object.get("corpusAsk") != null) return true;
-    if (value.object.get("result")) |result| {
-        if (result == .object and result.object.get("corpusAsk") != null) return true;
+fn writeEngineResponseChat(writer: anytype, response: json_contracts.EngineResponse) !void {
+    if (response.answer_draft) |answer| {
+        try writer.print("{s} [Source: Resident Omni-Codex]\n", .{answer});
+        return;
     }
-    return false;
+    if (response.getSummary()) |summary| {
+        try writer.print("{s}\n", .{summary});
+        return;
+    }
+    if (response.getDetail()) |detail| {
+        try writer.print("{s}\n", .{detail});
+        return;
+    }
+    try writer.writeAll("No generated response was present in engine output.\n");
+}
+
+fn traceFromEngineResponse(response: json_contracts.EngineResponse) state.EngineTrace {
+    return .{
+        .authority = authorityLabel(response),
+        .engine_state = response.getStatus() orelse response.getVerificationState(),
+        .stop_reason = response.getStopReason() orelse response.getUnresolvedReason(),
+        .source = if (response.answer_draft != null) "Resident Omni-Codex" else null,
+        .trace_flags = null,
+    };
+}
+
+fn authorityLabel(response: json_contracts.EngineResponse) []const u8 {
+    return switch (response.getVisualAuthorityState()) {
+        .draft => "draft / unverified",
+        .verified => "resolved",
+        .unresolved => "unresolved",
+        .failed => "failed",
+        .other => |label| label,
+        .unrecognized => "no verified authority",
+    };
+}
+
+fn traceFromCorpusAskJson(allocator: std.mem.Allocator, root: std.json.Value, corpus_value: std.json.Value) !state.EngineTrace {
+    const corpus_obj = if (corpus_value == .object) corpus_value.object else return .{};
+    return .{
+        .authority = if (getBoolField(corpus_obj, "nonAuthorizing") orelse getBoolField(corpus_obj, "non_authorizing") orelse false) "non-authorizing" else "unknown",
+        .engine_state = getStringField(corpus_obj, "state") orelse getStringField(corpus_obj, "status") orelse resultStateString(root, "state"),
+        .stop_reason = resultStateString(root, "stopReason") orelse resultStateString(root, "stop_reason"),
+        .source = sourceLabelFromCorpusAsk(corpus_value),
+        .trace_flags = try traceFlagsSummary(allocator, if (corpus_obj.get("trace")) |trace| trace else null),
+    };
+}
+
+fn resultStateString(root: std.json.Value, field: []const u8) ?[]const u8 {
+    if (root != .object) return null;
+    const obj = root.object;
+    const rs = obj.get("resultState") orelse obj.get("result_state") orelse return null;
+    if (rs != .object) return null;
+    return getStringField(rs.object, field);
+}
+
+fn traceFlagsSummary(allocator: std.mem.Allocator, value: ?std.json.Value) !?[]const u8 {
+    const trace = value orelse return null;
+    if (trace != .object) return null;
+    var out = std.ArrayList(u8).init(allocator);
+    defer out.deinit();
+    const fields = [_][]const u8{
+        "corpusMutation",
+        "packMutation",
+        "negativeKnowledgeMutation",
+        "commandsExecuted",
+        "verifiersExecuted",
+        "residentDaemon",
+    };
+    for (fields) |field| {
+        if (getBoolField(trace.object, field)) |flag| {
+            if (out.items.len != 0) try out.appendSlice(" ");
+            try out.writer().print("{s}={s}", .{ field, if (flag) "true" else "false" });
+        }
+    }
+    if (out.items.len == 0) return null;
+    return try out.toOwnedSlice();
+}
+
+fn sourceLabelFromCorpusAsk(corpus_value: std.json.Value) ?[]const u8 {
+    if (corpus_value != .object) return null;
+    const obj = corpus_value.object;
+    if (getStringField(obj, "state")) |state_label| {
+        if (std.mem.eql(u8, state_label, "concept void fallback")) return "Concept Void";
+    }
+    if (getBoolField(obj, "residentDaemon") orelse getBoolFromObjectField(obj, "trace", "residentDaemon") orelse false) return "Resident Omni-Codex";
+    if (getBoolField(obj, "voiceSynthesis") orelse getBoolField(obj, "voice_synthesis") orelse false) return "Resident Omni-Codex";
+    if (obj.get("answerDraft") != null or obj.get("answer_draft") != null) return "Resident Omni-Codex";
+    return null;
+}
+
+fn getBoolFromObjectField(obj: std.json.ObjectMap, object_field: []const u8, bool_field: []const u8) ?bool {
+    const value = obj.get(object_field) orelse return null;
+    if (value != .object) return null;
+    return getBoolField(value.object, bool_field);
+}
+
+fn getStringField(obj: std.json.ObjectMap, field: []const u8) ?[]const u8 {
+    const value = obj.get(field) orelse return null;
+    if (value != .string) return null;
+    return value.string;
+}
+
+fn getBoolField(obj: std.json.ObjectMap, field: []const u8) ?bool {
+    const value = obj.get(field) orelse return null;
+    if (value != .bool) return null;
+    return value.bool;
 }
 
 fn writeMountedCorpusAskRequest(writer: anytype, question: []const u8, s: *const state.SessionState) !void {

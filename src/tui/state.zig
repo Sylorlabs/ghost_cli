@@ -1,5 +1,7 @@
 const std = @import("std");
 const json_contracts = @import("../engine/json_contracts.zig");
+const shell = @import("../engine/shell.zig");
+const diff_viewer = @import("diff_viewer.zig");
 const terminal = @import("terminal.zig");
 
 pub const default_max_history_turns: usize = 500;
@@ -24,6 +26,14 @@ pub const Turn = struct {
 pub const ActiveSessionMount = struct {
     pack_id: []const u8,
     pack_version: []const u8,
+};
+
+pub const EngineTrace = struct {
+    authority: ?[]const u8 = null,
+    engine_state: ?[]const u8 = null,
+    stop_reason: ?[]const u8 = null,
+    source: ?[]const u8 = null,
+    trace_flags: ?[]const u8 = null,
 };
 
 pub const SessionState = struct {
@@ -80,6 +90,10 @@ pub const SessionState = struct {
     daemon_refresh_count: usize,
     typing_turn_index: ?usize,
     typing_output_bytes: usize,
+    yolo_mode: bool,
+    pending_command: ?shell.CommandProposal,
+    pending_patch: ?diff_viewer.PatchProposal,
+    engine_trace: EngineTrace,
 
     pub fn init(allocator: std.mem.Allocator, version: []const u8, engine_root_label: ?[]const u8, compact: bool) SessionState {
         return initWithLimit(allocator, version, engine_root_label, compact, default_max_history_turns);
@@ -140,6 +154,10 @@ pub const SessionState = struct {
             .daemon_refresh_count = 0,
             .typing_turn_index = null,
             .typing_output_bytes = 0,
+            .yolo_mode = false,
+            .pending_command = null,
+            .pending_patch = null,
+            .engine_trace = .{},
         };
     }
 
@@ -158,6 +176,61 @@ pub const SessionState = struct {
         if (self.context_artifact) |ca| self.allocator.free(ca);
         if (self.project_shard) |project_shard| self.allocator.free(project_shard);
         if (self.daemon_context_target) |target| self.allocator.free(target);
+        self.clearPendingCommand();
+        self.clearPendingPatch();
+        self.clearEngineTrace();
+    }
+
+    pub fn setPendingCommand(self: *SessionState, proposal: shell.CommandProposal) void {
+        self.clearPendingCommand();
+        self.pending_command = proposal;
+    }
+
+    pub fn clearPendingCommand(self: *SessionState) void {
+        if (self.pending_command) |proposal| proposal.deinit();
+        self.pending_command = null;
+    }
+
+    pub fn takePendingCommand(self: *SessionState) ?shell.CommandProposal {
+        const proposal = self.pending_command;
+        self.pending_command = null;
+        return proposal;
+    }
+
+    pub fn setPendingPatch(self: *SessionState, proposal: diff_viewer.PatchProposal) void {
+        self.clearPendingPatch();
+        self.pending_patch = proposal;
+    }
+
+    pub fn clearPendingPatch(self: *SessionState) void {
+        if (self.pending_patch) |proposal| proposal.deinit();
+        self.pending_patch = null;
+    }
+
+    pub fn takePendingPatch(self: *SessionState) ?diff_viewer.PatchProposal {
+        const proposal = self.pending_patch;
+        self.pending_patch = null;
+        return proposal;
+    }
+
+    pub fn setEngineTrace(self: *SessionState, trace: EngineTrace) !void {
+        self.clearEngineTrace();
+        self.engine_trace = .{
+            .authority = if (trace.authority) |v| try self.allocator.dupe(u8, v) else null,
+            .engine_state = if (trace.engine_state) |v| try self.allocator.dupe(u8, v) else null,
+            .stop_reason = if (trace.stop_reason) |v| try self.allocator.dupe(u8, v) else null,
+            .source = if (trace.source) |v| try self.allocator.dupe(u8, v) else null,
+            .trace_flags = if (trace.trace_flags) |v| try self.allocator.dupe(u8, v) else null,
+        };
+    }
+
+    pub fn clearEngineTrace(self: *SessionState) void {
+        if (self.engine_trace.authority) |v| self.allocator.free(v);
+        if (self.engine_trace.engine_state) |v| self.allocator.free(v);
+        if (self.engine_trace.stop_reason) |v| self.allocator.free(v);
+        if (self.engine_trace.source) |v| self.allocator.free(v);
+        if (self.engine_trace.trace_flags) |v| self.allocator.free(v);
+        self.engine_trace = .{};
     }
 
     pub fn setDaemonContextTarget(self: *SessionState, target: ?[]const u8) !void {
@@ -243,7 +316,20 @@ pub const SessionState = struct {
         }
     }
 
-    fn freeTurn(self: *SessionState, turn: Turn) void {
+    pub fn getContextWindowText(self: *SessionState, turns: usize) ![]u8 {
+        var out = std.ArrayList(u8).init(self.allocator);
+        errdefer out.deinit();
+        const start = if (self.history.items.len > turns) self.history.items.len - turns else 0;
+        for (self.history.items[start..]) |turn| {
+            try out.writer().print("user: {s}\n", .{turn.input});
+            if (turn.response) |res| {
+                try out.writer().print("engine: {s}\n", .{res.answer_draft orelse ""});
+            }
+        }
+        return out.toOwnedSlice();
+    }
+
+    pub fn freeTurn(self: *SessionState, turn: Turn) void {
         self.allocator.free(turn.input);
         self.allocator.free(turn.raw_output);
         self.allocator.free(turn.rendered_output);

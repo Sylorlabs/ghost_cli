@@ -30,22 +30,22 @@ pub fn executeFromArgs(allocator: std.mem.Allocator, engine_root: ?[]const u8, a
         try std.io.getStdErr().writer().writeAll(usage);
         std.process.exit(1);
     };
-    if (std.mem.eql(u8, sub, "start")) return start(allocator, engine_root, debug);
-    if (std.mem.eql(u8, sub, "status")) return status(allocator);
-    if (std.mem.eql(u8, sub, "stop")) return stop(allocator);
+    if (std.mem.eql(u8, sub, "start")) return startWithWriter(allocator, engine_root, debug, std.io.getStdOut().writer());
+    if (std.mem.eql(u8, sub, "status")) return statusWithWriter(allocator, std.io.getStdOut().writer());
+    if (std.mem.eql(u8, sub, "stop")) return stopWithWriter(allocator, std.io.getStdOut().writer());
     try std.io.getStdErr().writer().print("Unknown daemon command: {s}\n{s}", .{ sub, usage });
     std.process.exit(1);
 }
 
-fn start(allocator: std.mem.Allocator, engine_root: ?[]const u8, debug: bool) !void {
+pub fn startWithWriter(allocator: std.mem.Allocator, engine_root: ?[]const u8, debug: bool, writer: anytype) !void {
     if (daemon_client.isActive()) {
-        try std.io.getStdOut().writer().print("ghostd already active socket={s}\n", .{daemon_client.socketPath()});
+        try writer.print("ghostd already active socket={s}\n", .{daemon_client.socketPath()});
         return;
     }
 
     const bin_path = locator.findEngineBinary(allocator, engine_root, .ghostd) catch |err| {
         try locator.printLocatorError(std.io.getStdErr().writer(), .ghostd, engine_root, err);
-        std.process.exit(1);
+        return err;
     };
     defer allocator.free(bin_path);
 
@@ -58,13 +58,13 @@ fn start(allocator: std.mem.Allocator, engine_root: ?[]const u8, debug: bool) !v
     var timer = try std.time.Timer.start();
     while (timer.read() < START_TIMEOUT_NS) {
         if (daemonReady(allocator)) {
-            try std.io.getStdOut().writer().print("ghostd active socket={s}\n", .{daemon_client.socketPath()});
+            try writer.print("ghostd active socket={s}\n", .{daemon_client.socketPath()});
             return;
         }
         std.Thread.sleep(25 * std.time.ns_per_ms);
     }
     try std.io.getStdErr().writer().print("ghostd start timed out waiting for heartbeat={s}\n", .{daemon_client.heartbeatPath()});
-    std.process.exit(1);
+    return error.DaemonStartTimedOut;
 }
 
 fn daemonReady(allocator: std.mem.Allocator) bool {
@@ -74,24 +74,24 @@ fn daemonReady(allocator: std.mem.Allocator) bool {
     return true;
 }
 
-fn status(allocator: std.mem.Allocator) !void {
+pub fn statusWithWriter(allocator: std.mem.Allocator, writer: anytype) !void {
     const payload = "{\"kind\":\"daemon.status\"}";
     const response = daemon_client.request(allocator, payload) catch {
-        try std.io.getStdOut().writer().print("ghostd inactive socket={s}\n", .{daemon_client.socketPath()});
+        try writer.print("ghostd inactive socket={s}\n", .{daemon_client.socketPath()});
         return;
     };
     defer allocator.free(response);
-    try std.io.getStdOut().writer().writeAll(response);
-    try std.io.getStdOut().writer().writeByte('\n');
+    try writer.writeAll(response);
+    try writer.writeByte('\n');
 }
 
-fn stop(allocator: std.mem.Allocator) !void {
+pub fn stopWithWriter(allocator: std.mem.Allocator, writer: anytype) !void {
     const payload = "{\"kind\":\"daemon.stop\"}";
     const response = daemon_client.request(allocator, payload) catch {
-        try std.io.getStdOut().writer().print("ghostd inactive socket={s}\n", .{daemon_client.socketPath()});
+        try writer.print("ghostd inactive socket={s}\n", .{daemon_client.socketPath()});
         return;
     };
     defer allocator.free(response);
-    try std.io.getStdOut().writer().writeAll(response);
-    try std.io.getStdOut().writer().writeByte('\n');
+    try writer.writeAll(response);
+    try writer.writeByte('\n');
 }

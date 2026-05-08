@@ -223,6 +223,13 @@ prompts plus `/doctor` and `/autopsy` are blocked locally. The blocked-command
 message is `Read-only mode: command blocked: /name`, and the status bar shows
 `read_only=on`.
 
+Command and patch proposals are interactive operator actions in the TUI.
+Command proposals pause at `[Ghost requests to run: \`...\`] - (y/N)` unless
+YOLO mode is active. `Ctrl+Y` toggles YOLO mode; while active, the prompt bar is
+red and command proposals auto-execute. Patch proposals open a blue diff review
+pane with red deletions and green additions; `Shift+Tab` applies the diff and
+`Esc` rejects it.
+
 Typing `/` shows lightweight native slash-command suggestions. Prefix matches
 stay first, and compact fuzzy fragments such as `/rsn`, `/dbg`, `/ast`, and
 `/ctx` suggest `/reasoning`, `/debug`, `/autopsy`, and `/context`. Invalid slash
@@ -238,8 +245,11 @@ picked up without another keypress, command-panel rows are clipped to the
 current width, and very small terminals hide suggestions rather than overlapping
 the footer/input rows.
 
-Engine prompt/response turns are retained in bounded TUI session history and rendered
-with `YOU` and `GHOST` labels. `SYSTEM`, `COMMAND`, and `ERROR` labels are
+Engine prompt/response turns are retained in bounded TUI session history and
+rendered with a strict chat boundary: the left pane shows only `YOU`, the user
+input, `GHOST`, and the answer draft with a compact source tag. Engine status,
+authority, stop reasons, trace flags, and counters are routed to the right-side
+telemetry / `ENGINE TRACE` area. `SYSTEM`, `COMMAND`, and `ERROR` labels are
 render-only local messages for session status, local command output, and local
 errors; they are not persisted as structured turn history entries. The default
 retained history limit is 500 turns and can be changed with

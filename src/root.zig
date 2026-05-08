@@ -746,6 +746,10 @@ test "TUI slash command parser covers operator commands" {
     try testing.expectEqual(tui_app.SlashKind.status, tui_app.parseSlashCommand("/status\r\n").kind);
     try testing.expectEqual(tui_app.SlashKind.status, tui_app.parseSlashCommand("  /status  ").kind);
     try testing.expectEqual(tui_app.SlashKind.clear, tui_app.parseSlashCommand("/clear").kind);
+    try testing.expectEqual(tui_app.SlashKind.daemon, tui_app.parseSlashCommand("/daemon").kind);
+    const daemon_status = tui_app.parseSlashCommand("/daemon status");
+    try testing.expectEqual(tui_app.SlashKind.daemon, daemon_status.kind);
+    try testing.expectEqualStrings("status", daemon_status.arg.?);
     try testing.expectEqual(tui_app.SlashKind.doctor, tui_app.parseSlashCommand("/doctor").kind);
     try testing.expectEqual(tui_app.SlashKind.debug, tui_app.parseSlashCommand("/debug").kind);
     try testing.expectEqual(tui_app.SlashKind.details, tui_app.parseSlashCommand("/details").kind);
@@ -770,6 +774,7 @@ test "TUI slash command parser covers operator commands" {
 
 test "TUI read-only mode blocks engine-invoking slash commands and prompts" {
     try testing.expect(tui_app.isReadOnlyBlockedCommand(tui_app.parseSlashCommand("/autopsy .")));
+    try testing.expect(tui_app.isReadOnlyBlockedCommand(tui_app.parseSlashCommand("/daemon")));
     try testing.expect(tui_app.isReadOnlyBlockedCommand(tui_app.parseSlashCommand("/doctor")));
     try testing.expect(!tui_app.isReadOnlyBlockedCommand(tui_app.parseSlashCommand("/help")));
     try testing.expect(!tui_app.isReadOnlyBlockedCommand(tui_app.parseSlashCommand("/status")));
@@ -877,7 +882,7 @@ test "TUI slash status handles terminal newline" {
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "Not a valid command") == null);
 }
 
-test "TUI details are explicit and quiet by default" {
+test "TUI chat stays conversational and routes details to trace state" {
     var s = state.SessionState.init(testing.allocator, "test", null, false);
     defer s.deinit();
     s.terminal_size = .{ .rows = 24, .cols = 80 };
@@ -900,6 +905,8 @@ test "TUI details are explicit and quiet by default" {
     try testing.expect(std.mem.indexOf(u8, s.history.items[0].rendered_output, "quiet reply") != null);
     try testing.expect(std.mem.indexOf(u8, s.history.items[0].rendered_output, "Pending Obligations:") == null);
     try testing.expect(std.mem.indexOf(u8, s.history.items[0].rendered_output, "missing retained evidence") == null);
+    try testing.expectEqualStrings("unresolved", s.engine_trace.authority.?);
+    try testing.expectEqualStrings("missing retained evidence", s.engine_trace.stop_reason.?);
 
     out_buf.clearRetainingCapacity();
     _ = try tui_app.handleSlash(testing.allocator, mock_root, &s, "/details on", out_buf.writer(), .{ .color = false });
@@ -908,14 +915,17 @@ test "TUI details are explicit and quiet by default" {
     out_buf.clearRetainingCapacity();
     try tui_app.handleSubmit(testing.allocator, mock_root, &s, "hello", out_buf.writer(), .{ .color = false });
     try testing.expectEqual(@as(usize, 2), s.history.items.len);
-    try testing.expect(std.mem.indexOf(u8, s.history.items[1].rendered_output, "Pending Obligations:") != null);
-    try testing.expect(std.mem.indexOf(u8, s.history.items[1].rendered_output, "missing retained evidence") != null);
+    try testing.expect(std.mem.indexOf(u8, s.history.items[1].rendered_output, "quiet reply") != null);
+    try testing.expect(std.mem.indexOf(u8, s.history.items[1].rendered_output, "Pending Obligations:") == null);
+    try testing.expect(std.mem.indexOf(u8, s.history.items[1].rendered_output, "missing retained evidence") == null);
+    try testing.expectEqualStrings("unresolved", s.engine_trace.authority.?);
+    try testing.expectEqualStrings("missing retained evidence", s.engine_trace.stop_reason.?);
 }
 
 test "TUI slash command suggestions use prefix and fuzzy matching" {
     try testing.expectEqual(@as(usize, tui_slash.commands.len), tui_slash.matchingCount("/"));
     try testing.expectEqual(@as(usize, 1), tui_slash.matchingCount("/r"));
-    try testing.expectEqual(@as(usize, 3), tui_slash.matchingCount("/d"));
+    try testing.expectEqual(@as(usize, 4), tui_slash.matchingCount("/d"));
     try testing.expectEqualStrings("/reasoning", tui_slash.findFirstMatch("/r").?);
     try testing.expectEqualStrings("/reasoning", tui_slash.findFirstMatch("/rsn").?);
     try testing.expectEqualStrings("/debug", tui_slash.findFirstMatch("/dbg").?);
@@ -935,8 +945,8 @@ test "TUI slash command suggestions use prefix and fuzzy matching" {
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "+-- slash commands ") != null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "/help") != null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "/context") != null);
-    try testing.expectEqual(@as(u16, 14), session.previous_suggestion_height);
-    try testing.expectEqual(@as(u16, 14), tui_render.suggestionHeight("/", .{ .rows = 24, .cols = 80 }, false));
+    try testing.expectEqual(@as(u16, 15), session.previous_suggestion_height);
+    try testing.expectEqual(@as(u16, 15), tui_render.suggestionHeight("/", .{ .rows = 24, .cols = 80 }, false));
     try testing.expectEqual(@as(u16, 3), tui_render.suggestionHeight("/r", .{ .rows = 24, .cols = 80 }, false));
     try testing.expectEqual(@as(u16, 3), tui_render.suggestionHeight("/notreal", .{ .rows = 24, .cols = 80 }, false));
     try testing.expectEqual(@as(u16, 0), tui_render.suggestionHeight("normal prompt", .{ .rows = 24, .cols = 80 }, false));

@@ -52,6 +52,14 @@ pub const Style = struct {
     pub fn red(self: Style) []const u8 {
         return self.code("\x1b[31m");
     }
+
+    pub fn green(self: Style) []const u8 {
+        return self.code("\x1b[32m");
+    }
+
+    pub fn blue(self: Style) []const u8 {
+        return self.code("\x1b[34m");
+    }
 };
 
 pub fn getTerminalSize() TerminalSize {
@@ -115,13 +123,16 @@ fn renderDashboardWithSize(writer: anytype, s: *state.SessionState, style: Style
     const divider_col: u16 = @min(left_width + 1, size.cols);
     const right_col: u16 = @min(divider_col + 1, size.cols);
     const right_width: u16 = if (right_col <= size.cols) size.cols - right_col + 1 else 0;
+    const left_content_width: u16 = if (left_width > 1) left_width - 1 else left_width;
+    const right_content_col: u16 = @min(right_col + 1, size.cols);
+    const right_content_width: u16 = if (right_content_col <= size.cols) size.cols - right_content_col + 1 else right_width;
     const content_height: u16 = if (content_bottom >= content_top) content_bottom - content_top + 1 else 0;
     const right_split: u16 = content_top + @max(@as(u16, 4), content_height / 2);
 
     try writer.writeAll("\x1b[r");
     try clearRows(writer, size.rows);
     try writeFmtAt(writer, 1, 1, size.cols, "{s} Ghost TUI {s} shard={s} | daemon={s} | {s}{s}", .{
-        style.header(),
+        if (s.yolo_mode) style.red() else style.header(),
         style.reset(),
         s.project_shard orelse "all",
         if (s.daemon_active) "hot" else "off",
@@ -134,10 +145,14 @@ fn renderDashboardWithSize(writer: anytype, s: *state.SessionState, style: Style
         while (row <= content_bottom) : (row += 1) {
             try writeAt(writer, row, divider_col, 1, "|");
         }
-        try renderConversationPane(writer, s, style, content_top, content_bottom, 1, if (left_width > 1) left_width - 1 else left_width);
-        try renderTelemetryPane(writer, s, style, content_top, @min(content_bottom, right_split - 1), right_col + 1, if (right_width > 2) right_width - 2 else right_width);
+        if (s.pending_patch != null) {
+            try renderDiffPane(writer, s, style, content_top, content_bottom, 1, left_content_width);
+        } else {
+            try renderConversationPane(writer, s, style, content_top, content_bottom, 1, left_content_width);
+        }
+        try renderTelemetryPane(writer, s, style, content_top, @min(content_bottom, right_split - 1), right_content_col, right_content_width);
         if (right_split <= content_bottom) {
-            try renderSessionHotPane(writer, s, style, right_split, content_bottom, right_col + 1, if (right_width > 2) right_width - 2 else right_width);
+            try renderSessionHotPane(writer, s, style, right_split, content_bottom, right_content_col, right_content_width);
         }
     }
 
@@ -153,11 +168,14 @@ fn renderConversationPane(writer: anytype, s: *state.SessionState, style: Style,
     var row = top + 1;
     if (row > bottom) return;
     const rows_available = bottom - row + 1;
-    const max_turns: usize = @max(@as(usize, 1), rows_available / 4 + 1);
+    const max_turns: usize = @max(@as(usize, 1), rows_available / 5 + 1);
     const start = if (s.history.items.len > max_turns) s.history.items.len - max_turns else 0;
     for (s.history.items[start..]) |turn| {
         if (row > bottom) break;
-        try writeFmtAt(writer, row, col, width, "{s}YOU{s} {s}", .{ style.userText(), style.reset(), turn.input });
+        try writeFmtAt(writer, row, col, width, "{s}YOU{s}", .{ style.userText(), style.reset() });
+        row += 1;
+        if (row > bottom) break;
+        try writeAt(writer, row, col, width, turn.input);
         row += 1;
         if (row > bottom) break;
         try writeFmtAt(writer, row, col, width, "{s}GHOST{s}", .{ style.ghostText(), style.reset() });
@@ -168,10 +186,38 @@ fn renderConversationPane(writer: anytype, s: *state.SessionState, style: Style,
             if (row > bottom) break;
             const trimmed = std.mem.trimRight(u8, line, "\r");
             if (trimmed.len == 0) continue;
-            try writeAt(writer, row, col + 2, if (width > 2) width - 2 else width, trimmed);
+            try writeAt(writer, row, col, width, trimmed);
             row += 1;
         }
         if (row <= bottom) row += 1;
+    }
+}
+
+fn renderDiffPane(writer: anytype, s: *state.SessionState, style: Style, top: u16, bottom: u16, col: u16, width: u16) !void {
+    if (top > bottom or width == 0) return;
+    try writeFmtAt(writer, top, col, width, "{s}+-- ACCEPT EDITS / DIFF REVIEW --+{s}", .{ style.blue(), style.reset() });
+    if (top + 1 <= bottom) {
+        try writeFmtAt(writer, top + 1, col, width, "{s}[Press Shift+Tab to Accept Edits, or ESC to Reject]{s}", .{ style.blue(), style.reset() });
+    }
+    var row = top + 2;
+    const proposal = s.pending_patch orelse return;
+    var it = std.mem.splitScalar(u8, proposal.diff, '\n');
+    while (it.next()) |line| {
+        if (row > bottom) break;
+        const trimmed = std.mem.trimRight(u8, line, "\r");
+        const color = if (std.mem.startsWith(u8, trimmed, "+") and !std.mem.startsWith(u8, trimmed, "+++"))
+            style.green()
+        else if (std.mem.startsWith(u8, trimmed, "-") and !std.mem.startsWith(u8, trimmed, "---"))
+            style.red()
+        else if (std.mem.startsWith(u8, trimmed, "@@"))
+            style.cyan()
+        else
+            "";
+        try writeFmtAt(writer, row, col, width, "{s}{s}{s}", .{ color, trimmed, style.reset() });
+        row += 1;
+    }
+    if (row <= bottom) {
+        try writeFmtAt(writer, row, col, width, "{s}+{s}", .{ style.blue(), style.reset() });
     }
 }
 
@@ -247,6 +293,30 @@ fn renderSessionHotPane(writer: anytype, s: *state.SessionState, style: Style, t
         try writeFmtAt(writer, row, col, width, "last: {s}", .{s.last_command_status});
         row += 1;
     }
+    if (row <= bottom) {
+        try writeFmtAt(writer, row, col, width, "{s}ENGINE TRACE{s}", .{ style.cyan(), style.reset() });
+        row += 1;
+    }
+    if (row <= bottom) {
+        try writeFmtAt(writer, row, col, width, "authority: {s}", .{s.engine_trace.authority orelse "unknown"});
+        row += 1;
+    }
+    if (row <= bottom) {
+        try writeFmtAt(writer, row, col, width, "state: {s}", .{s.engine_trace.engine_state orelse s.last_command_status});
+        row += 1;
+    }
+    if (row <= bottom) {
+        try writeFmtAt(writer, row, col, width, "source: {s}", .{s.engine_trace.source orelse "none"});
+        row += 1;
+    }
+    if (row <= bottom) {
+        try writeFmtAt(writer, row, col, width, "stop: {s}", .{s.engine_trace.stop_reason orelse "none"});
+        row += 1;
+    }
+    if (row <= bottom) {
+        try writeFmtAt(writer, row, col, width, "trace: {s}", .{s.engine_trace.trace_flags orelse "none"});
+        row += 1;
+    }
 }
 
 fn clearRows(writer: anytype, rows: u16) !void {
@@ -281,14 +351,41 @@ fn formatBytes(buf: *[32]u8, bytes: usize) []const u8 {
 }
 
 fn renderInputLine(writer: anytype, s: *state.SessionState, row: u16, style: Style) !void {
-    try writer.print("\x1b[{d};1H\x1b[K{s}ghost>{s} {s}", .{
-        row,
-        style.cyan(),
-        style.reset(),
-        s.current_input.items,
-    });
+    if (s.pending_command) |proposal| {
+        try writer.print("\x1b[{d};1H\x1b[K{s}[Ghost requests to run: `{s}`] - (y/N){s}", .{
+            row,
+            style.yellow(),
+            proposal.command_display,
+            style.reset(),
+        });
+        return;
+    }
+    if (s.pending_patch != null) {
+        try writer.print("\x1b[{d};1H\x1b[K{s}[Press Shift+Tab to Accept Edits, or ESC to Reject]{s}", .{
+            row,
+            style.blue(),
+            style.reset(),
+        });
+        return;
+    }
+    const prompt_cols: usize = if (s.yolo_mode) 16 else 8;
+    if (s.yolo_mode) {
+        try writer.print("\x1b[{d};1H\x1b[K{s}[! YOLO] ghost>{s} {s}", .{
+            row,
+            style.red(),
+            style.reset(),
+            s.current_input.items,
+        });
+    } else {
+        try writer.print("\x1b[{d};1H\x1b[K{s}ghost>{s} {s}", .{
+            row,
+            style.cyan(),
+            style.reset(),
+            s.current_input.items,
+        });
+    }
 
-    if (std.mem.indexOfAny(u8, s.current_input.items, " \t") == null) {
+    if (!s.yolo_mode and std.mem.indexOfAny(u8, s.current_input.items, " \t") == null) {
         if (slash.findNthMatch(s.current_input.items, s.suggestion_index)) |matched| {
             if (slash.isPrefixMatch(s.current_input.items, matched) and matched.len > s.current_input.items.len) {
                 try writer.print("{s}{s}{s}", .{
@@ -297,7 +394,7 @@ fn renderInputLine(writer: anytype, s: *state.SessionState, row: u16, style: Sty
                     style.reset(),
                 });
                 // Move cursor back to the end of actual input
-                try writer.print("\x1b[{d};{d}H", .{ row, @as(u16, @intCast(8 + s.current_input.items.len)) });
+                try writer.print("\x1b[{d};{d}H", .{ row, @as(u16, @intCast(prompt_cols + s.current_input.items.len)) });
             }
         }
     }
@@ -327,6 +424,7 @@ pub fn renderHelpWithSize(writer: anytype, style: Style, size: TerminalSize) !vo
     }
     try writer.print(
         \\  keys                 Ctrl+C quit | Ctrl+L clear | Ctrl+R reasoning | Ctrl+D debug | Esc quit
+        \\                       Ctrl+Y toggle YOLO | Shift+Tab accept pending diff | y/N approve command
         \\
     , .{});
 }
@@ -577,7 +675,7 @@ fn renderTiny(writer: anytype, s: *state.SessionState, style: Style, size: Termi
     });
     if (size.rows >= 2) {
         try writer.print("\x1b[2;1H{s}\x1b[K read_only={s} retained={d} total={d} pruned={d}{s}", .{
-            style.dim(),
+            if (s.yolo_mode) style.red() else style.dim(),
             if (s.read_only) "on" else "off",
             s.history.items.len,
             s.total_turns,
@@ -658,6 +756,9 @@ fn commandDisplay(command: slash.SlashCommandSpec) []const u8 {
 }
 
 fn systemIndicator(s: *const state.SessionState) []const u8 {
+    if (s.yolo_mode) return "YOLO MODE";
+    if (s.pending_command != null) return "Command approval pending";
+    if (s.pending_patch != null) return "Patch approval pending";
     if (std.mem.eql(u8, s.last_command_status, "thinking")) return "Thinking...";
     return "System Ready";
 }
@@ -746,4 +847,42 @@ test "resize repaint clears screen and replays stored turns" {
     try testing.expectEqual(@as(u16, 100), session.previous_render_cols);
     try testing.expectEqual(@as(u16, 33), session.previous_panel_bottom);
     try testing.expectEqual(@as(u16, 0), session.previous_suggestion_height);
+}
+
+test "right telemetry pane remains anchored after long chat render" {
+    const testing = std.testing;
+    var session = state.SessionState.init(testing.allocator, "test", null, false);
+    defer session.deinit();
+    session.daemon_active = true;
+    session.daemon_l1_concept_index_bytes = 4096;
+    session.daemon_hot_page_bytes = 8192;
+    try session.setEngineTrace(.{
+        .authority = "NON-AUTHORIZING",
+        .engine_state = "concept_void",
+        .source = "Resident Omni-Codex",
+        .trace_flags = "l1Hit=storage",
+    });
+    try session.history.append(.{
+        .index = 1,
+        .input = try testing.allocator.dupe(u8, "what is a gigabyte"),
+        .reasoning = .balanced,
+        .context_artifact = null,
+        .response = null,
+        .raw_output = try testing.allocator.dupe(u8, "{}"),
+        .rendered_output = try testing.allocator.dupe(u8, "A gigabyte is a unit of digital storage equal to about one billion bytes.\nThis intentionally long line should truncate before the right telemetry pane and never push it away from the right side."),
+        .elapsed_ms = 7,
+        .input_runes = 18,
+        .output_runes = 32,
+        .json_ok = true,
+    });
+
+    var out = std.ArrayList(u8).init(testing.allocator);
+    defer out.deinit();
+
+    try renderWithSize(out.writer(), &session, .{ .color = false }, .{ .rows = 30, .cols = 100 });
+
+    try testing.expect(std.mem.indexOf(u8, out.items, "\x1b[2;63HDAEMON TELEMETRY") != null);
+    try testing.expect(std.mem.indexOf(u8, out.items, "\x1b[6;63Hhot-page: 8.0 KiB") != null);
+    try testing.expect(std.mem.indexOf(u8, out.items, "\x1b[23;63Hauthority: NON-AUTHORIZING") != null);
+    try testing.expect(std.mem.indexOf(u8, out.items, "A gigabyte is a unit of digital storage") != null);
 }
