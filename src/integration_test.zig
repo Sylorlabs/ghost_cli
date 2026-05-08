@@ -4214,6 +4214,39 @@ test "corpus ask human suppressed answer explains reviewed negative knowledge in
     try testing.expect(std.mem.indexOf(u8, res.stdout, "Answer Draft:") == null);
 }
 
+test "corpus ask human ledger rejection renders internal rerouting" {
+    const mock_root = "/tmp/ghost-cli-corpus-ledger-rejected";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_gip",
+        "#!/bin/sh\n" ++
+            "cat >/dev/null\n" ++
+            "printf '%s' '{\"corpusAsk\":{\"status\":\"unknown\",\"state\":\"unresolved\",\"permission\":\"unresolved\",\"evidenceUsed\":[],\"negativeKnowledgeLedger\":{\"checked\":true,\"matches\":1,\"answerSuppressed\":true,\"message\":\"Initial synthesis rejected internally due to historical Axiom violation. Re-routing.\",\"rejections\":[{\"failedAstHash\":\"sha256:abc\",\"axiomViolation\":\"std::vector does not declare push_front\",\"message\":\"Initial synthesis rejected internally due to historical Axiom violation. Re-routing.\",\"ledgerPath\":\"/tmp/negative_knowledge_ledger.jsonl\",\"nonAuthorizing\":true,\"treatedAsProof\":false,\"usedAsEvidence\":false}]},\"negativeKnowledgeTelemetry\":{\"recordsRead\":0,\"acceptedRecords\":0,\"rejectedRecords\":0,\"malformedLines\":0,\"warnings\":0,\"influencesLoaded\":0,\"influencesApplied\":0,\"answerSuppressed\":false,\"truncated\":false,\"sameShardOnly\":true,\"ledgerChecks\":1,\"ledgerMatches\":1,\"mutationPerformed\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false},\"unknowns\":[{\"kind\":\"insufficient_evidence\",\"reason\":\"Initial synthesis rejected internally due to historical Axiom violation. Re-routing.\"}],\"candidateFollowups\":[{\"kind\":\"synthesis_reroute\",\"detail\":\"generate a different code draft whose hash is not present in the Negative Knowledge Ledger\"}],\"learningCandidates\":[],\"trace\":{\"corpusMutation\":false,\"packMutation\":false,\"negativeKnowledgeMutation\":false,\"commandsExecuted\":false,\"verifiersExecuted\":false}}}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "corpus",
+        "ask",
+        "--engine-root=" ++ mock_root,
+        "draft the same failed patch",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "NEGATIVE KNOWLEDGE LEDGER / INTERNAL REJECTION") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Initial synthesis rejected internally due to historical Axiom violation. Re-routing.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "No answer was produced.") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "std::vector does not declare push_front") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "matches: 1") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "Answer Draft:") == null);
+}
+
 test "corpus ask human capacity telemetry renders coverage warning with answer and evidence" {
     const mock_root = "/tmp/ghost-cli-corpus-capacity";
     try std.fs.cwd().makePath(mock_root);

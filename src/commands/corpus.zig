@@ -1159,6 +1159,7 @@ pub fn printCorpusAskResult(writer: anytype, value: std.json.Value) !void {
     const accepted_nk_warnings = corpus.get("acceptedNegativeKnowledgeWarnings");
     const nk_influences = corpus.get("negativeKnowledgeInfluences");
     const nk_telemetry = corpus.get("negativeKnowledgeTelemetry");
+    const nk_ledger = corpus.get("negativeKnowledgeLedger");
     const future_behavior_candidates = corpus.get("futureBehaviorCandidates");
     const influence_telemetry = corpus.get("influenceTelemetry");
     const has_answer = corpus.get("answerDraft") != null;
@@ -1204,13 +1205,20 @@ pub fn printCorpusAskResult(writer: anytype, value: std.json.Value) !void {
             nk_telemetry,
         );
     }
+    if (nk_ledger) |ledger| {
+        if (hasNegativeKnowledgeLedgerRejection(ledger)) {
+            try printNegativeKnowledgeLedgerRejection(writer, ledger);
+        }
+    }
     if (corpus.get("answerDraft")) |answer| {
         try writer.print("\nAnswer Draft:\n", .{});
         try printJsonValue(writer, answer, 2);
         try writer.print("\n", .{});
     } else {
         try writer.print("\nNo answer was produced.\n", .{});
-        if (answer_suppressed_by_nk) {
+        if (if (nk_ledger) |ledger| hasNegativeKnowledgeLedgerSuppression(ledger) else false) {
+            try writer.print("Initial synthesis rejected internally due to historical Axiom violation. Re-routing.\n", .{});
+        } else if (answer_suppressed_by_nk) {
             try writer.print("The answer draft was suppressed by reviewed negative knowledge influence from an exact repeated known-bad answer pattern.\n", .{});
         } else if (answer_suppressed_by_correction) {
             try writer.print("The answer draft was suppressed by accepted correction influence from an exact repeated wrong_answer pattern.\n", .{});
@@ -1439,6 +1447,34 @@ fn printReviewedNegativeKnowledgeInfluence(
             try printFutureBehaviorCandidates(writer, value);
         }
     }
+}
+
+fn hasNegativeKnowledgeLedgerRejection(value: std.json.Value) bool {
+    const obj = switch (value) {
+        .object => |obj| obj,
+        else => return jsonContainsAny(value, &.{ "failedAstHash", "failed_ast_hash", "Axiom violation" }),
+    };
+    if (hasPressureField(obj, "matches")) return true;
+    if (hasPressureField(obj, "answerSuppressed")) return true;
+    if (obj.get("rejections")) |rejections| return !isEmptyJsonList(rejections);
+    return obj.get("message") != null;
+}
+
+fn hasNegativeKnowledgeLedgerSuppression(value: std.json.Value) bool {
+    const obj = switch (value) {
+        .object => |obj| obj,
+        else => return false,
+    };
+    return hasPressureField(obj, "answerSuppressed") or hasPressureField(obj, "matches");
+}
+
+fn printNegativeKnowledgeLedgerRejection(writer: anytype, value: std.json.Value) !void {
+    try writer.print("\nNEGATIVE KNOWLEDGE LEDGER / INTERNAL REJECTION\n", .{});
+    try writer.print("- Initial synthesis rejected internally due to historical Axiom violation. Re-routing.\n", .{});
+    try writer.print("- Historical failed code hashes are non-authorizing rejection signals, not proof.\n", .{});
+    try writer.print("- No verifier/check executed during this corpus ask.\n", .{});
+    try writer.print("negativeKnowledgeLedger:\n", .{});
+    try printJsonValue(writer, value, 2);
 }
 
 fn hasInfluenceTelemetrySignal(value: std.json.Value) bool {
