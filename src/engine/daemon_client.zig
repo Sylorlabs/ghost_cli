@@ -5,7 +5,7 @@ pub const HEARTBEAT_PATH = "/dev/shm/ghostd.hot";
 const MAX_FRAME_BYTES: usize = 10 * 1024 * 1024;
 
 pub fn isActive() bool {
-    return readHeartbeatHot();
+    return readHeartbeatHot() and probeSocket();
 }
 
 pub fn request(allocator: std.mem.Allocator, payload: []const u8) ![]u8 {
@@ -31,6 +31,12 @@ fn readHeartbeatHot() bool {
     var byte: [1]u8 = undefined;
     const n = file.read(&byte) catch return false;
     return n == 1 and byte[0] == '1';
+}
+
+fn probeSocket() bool {
+    var stream = std.net.connectUnixSocket(socketPath()) catch return false;
+    stream.close();
+    return true;
 }
 
 fn writeFrame(stream: std.net.Stream, payload: []const u8) !void {

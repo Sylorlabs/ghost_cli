@@ -499,30 +499,34 @@ fn runAsk(allocator: std.mem.Allocator, root: ?[]const u8, parsed: *ParsedCli) !
         .debug = parsed.options.debug_mode,
     });
 
-    _ = daemon_cmd.ensureActiveQuiet(allocator, root, parsed.options.debug_mode);
-    if (daemon_client.request(allocator, request.items)) |response| {
-        defer allocator.free(response);
-        if (parsed.options.debug_mode) {
-            try std.io.getStdErr().writer().print("[DEBUG] Daemon Socket: {s}\n", .{daemon_client.socketPath()});
-            try std.io.getStdErr().writer().print("[DEBUG] GIP Kind: corpus.ask\n", .{});
-        }
-        if (parsed.options.json_out) {
-            try std.io.getStdOut().writer().writeAll(response);
-            try std.io.getStdOut().writer().writeByte('\n');
-            return;
-        }
+    const daemon_available_for_root = daemon_cmd.ensureActiveQuiet(allocator, root, parsed.options.debug_mode);
+    if (daemon_available_for_root) {
+        if (daemon_client.request(allocator, request.items)) |response| {
+            defer allocator.free(response);
+            if (parsed.options.debug_mode) {
+                try std.io.getStdErr().writer().print("[DEBUG] Daemon Socket: {s}\n", .{daemon_client.socketPath()});
+                try std.io.getStdErr().writer().print("[DEBUG] GIP Kind: corpus.ask\n", .{});
+            }
+            if (parsed.options.json_out) {
+                try std.io.getStdOut().writer().writeAll(response);
+                try std.io.getStdOut().writer().writeByte('\n');
+                return;
+            }
 
-        var parsed_json = std.json.parseFromSlice(std.json.Value, allocator, response, .{}) catch |err| {
-            try std.io.getStdErr().writer().print("Error: Failed to parse daemon response as corpus.ask JSON ({s}).\n", .{@errorName(err)});
-            try std.io.getStdErr().writer().print("Raw output:\n{s}\n", .{response});
+            var parsed_json = std.json.parseFromSlice(std.json.Value, allocator, response, .{}) catch |err| {
+                try std.io.getStdErr().writer().print("Error: Failed to parse daemon response as corpus.ask JSON ({s}).\n", .{@errorName(err)});
+                try std.io.getStdErr().writer().print("Raw output:\n{s}\n", .{response});
+                return;
+            };
+            defer parsed_json.deinit();
+            if (try printDaemonVoice(std.io.getStdOut().writer(), parsed_json.value, parsed.options.color_mode != .never)) return;
+            try corpus.printCorpusAskResult(std.io.getStdOut().writer(), parsed_json.value);
             return;
-        };
-        defer parsed_json.deinit();
-        if (try printDaemonVoice(std.io.getStdOut().writer(), parsed_json.value, parsed.options.color_mode != .never)) return;
-        try corpus.printCorpusAskResult(std.io.getStdOut().writer(), parsed_json.value);
-        return;
-    } else |_| {
-        if (parsed.options.debug_mode) try std.io.getStdErr().writer().print("Daemon inactive; slow-path engaged\n", .{});
+        } else |_| {}
+    }
+
+    {
+        if (parsed.options.debug_mode) try std.io.getStdErr().writer().print("Daemon inactive or unavailable for engine root; slow-path engaged\n", .{});
         try chat.execute(allocator, root, .{
             .message = question,
             .reasoning = parsed.options.reasoning_level orelse .balanced,
@@ -805,9 +809,10 @@ fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
             \\  Shift+Tab accepts a pending patch diff; Esc rejects it.
             \\
             \\Safety:
-            \\  Launching or idling in the TUI does not start daemon/doctor/status, context/project autopsy,
-            \\  verifiers, scans, pack mutation, negative-knowledge mutation, or reviewed NK review/list/get.
-            \\  Explicit slash commands and submitted prompts may invoke engine binaries.
+            \\  Launching the TUI starts or reconnects ghostd by default unless --read-only is set.
+            \\  Idling in the TUI does not start doctor/status, context/project autopsy, verifiers, scans,
+            \\  pack mutation, negative-knowledge mutation, or reviewed NK review/list/get.
+            \\  Explicit slash commands and submitted prompts may invoke additional engine binaries.
             \\
         , .{}),
         .doctor => try writer.print(

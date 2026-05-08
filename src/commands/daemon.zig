@@ -68,10 +68,10 @@ pub fn startWithWriter(allocator: std.mem.Allocator, engine_root: ?[]const u8, d
 }
 
 pub fn ensureActiveQuiet(allocator: std.mem.Allocator, engine_root: ?[]const u8, debug: bool) bool {
-    if (daemon_client.isActive()) return true;
-
     const bin_path = locator.findEngineBinary(allocator, engine_root, .ghostd) catch return false;
     defer allocator.free(bin_path);
+
+    if (daemon_client.isActive()) return true;
 
     var child = std.process.Child.init(&.{ "setsid", "-f", bin_path, "run" }, allocator);
     child.stdin_behavior = .Ignore;

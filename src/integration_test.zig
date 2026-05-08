@@ -106,7 +106,7 @@ test "subcommand help works without resolving engine" {
     try testing.expect(std.mem.indexOf(u8, tui_res.stderr, "--read-only") != null);
     try testing.expect(std.mem.indexOf(u8, tui_res.stderr, "--max-history-turns=<n>") != null);
     try testing.expect(std.mem.indexOf(u8, tui_res.stderr, "prefix-first fuzzy suggestions") != null);
-    try testing.expect(std.mem.indexOf(u8, tui_res.stderr, "Explicit slash commands and submitted prompts may invoke engine binaries") != null);
+    try testing.expect(std.mem.indexOf(u8, tui_res.stderr, "Launching the TUI starts or reconnects ghostd by default") != null);
 
     const sigil_res = try runCmd(testing.allocator, &[_][]const u8{ "./zig-out/bin/ghost", "sigil", "--help", "--engine-root=/tmp/ghost-help-missing" });
     defer {
