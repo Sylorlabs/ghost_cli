@@ -503,7 +503,14 @@ pub fn handleSubmit(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *
     defer arena.deinit();
     const aa = arena.allocator();
 
-    const use_daemon = s.daemon_refresh_count != 0 and s.daemon_active;
+    var use_daemon = s.daemon_refresh_count != 0 and s.daemon_active;
+    if (s.active_session_mounts.items.len == 0 and !use_daemon) {
+        if (daemon_cmd.ensureActiveQuiet(allocator, engine_root, s.debug)) {
+            s.last_daemon_refresh_ms = -state.daemon_refresh_interval_ms;
+            try refreshDaemonTelemetry(allocator, s, std.time.milliTimestamp());
+            use_daemon = s.daemon_active;
+        }
+    }
     const res = if (s.active_session_mounts.items.len != 0) blk: {
         const bin_path = locator.findEngineBinary(allocator, engine_root, .ghost_gip) catch |err| {
             try render.renderErrorMessage(writer, style, "Failed to resolve ghost_gip: {}", .{err});
@@ -544,7 +551,12 @@ pub fn handleSubmit(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *
             .allocator = allocator,
         };
     } else blk: {
-        break :blk try runTaskOperatorFallback(allocator, engine_root, aa, cmd_text, s);
+        break :blk runner.RunResult{
+            .stdout = try allocator.dupe(u8, process.OFFLINE_ROUTING_ERROR),
+            .stderr = try allocator.alloc(u8, 0),
+            .exit_code = 1,
+            .allocator = allocator,
+        };
     };
     defer res.deinit();
 

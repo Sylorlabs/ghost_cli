@@ -882,7 +882,7 @@ test "TUI slash status handles terminal newline" {
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "Not a valid command") == null);
 }
 
-test "TUI chat stays conversational and routes details to trace state" {
+test "TUI chat requires daemon and keeps offline errors conversational" {
     var s = state.SessionState.init(testing.allocator, "test", null, false);
     defer s.deinit();
     s.terminal_size = .{ .rows = 24, .cols = 80 };
@@ -902,11 +902,9 @@ test "TUI chat stays conversational and routes details to trace state" {
 
     try tui_app.handleSubmit(testing.allocator, mock_root, &s, "hello", out_buf.writer(), .{ .color = false });
     try testing.expectEqual(@as(usize, 1), s.history.items.len);
-    try testing.expect(std.mem.indexOf(u8, s.history.items[0].rendered_output, "quiet reply") != null);
+    try testing.expect(std.mem.indexOf(u8, s.history.items[0].rendered_output, "System offline. Unable to establish semantic routing.") != null);
     try testing.expect(std.mem.indexOf(u8, s.history.items[0].rendered_output, "Pending Obligations:") == null);
     try testing.expect(std.mem.indexOf(u8, s.history.items[0].rendered_output, "missing retained evidence") == null);
-    try testing.expectEqualStrings("unresolved", s.engine_trace.authority.?);
-    try testing.expectEqualStrings("missing retained evidence", s.engine_trace.stop_reason.?);
 
     out_buf.clearRetainingCapacity();
     _ = try tui_app.handleSlash(testing.allocator, mock_root, &s, "/details on", out_buf.writer(), .{ .color = false });
@@ -915,11 +913,9 @@ test "TUI chat stays conversational and routes details to trace state" {
     out_buf.clearRetainingCapacity();
     try tui_app.handleSubmit(testing.allocator, mock_root, &s, "hello", out_buf.writer(), .{ .color = false });
     try testing.expectEqual(@as(usize, 2), s.history.items.len);
-    try testing.expect(std.mem.indexOf(u8, s.history.items[1].rendered_output, "quiet reply") != null);
+    try testing.expect(std.mem.indexOf(u8, s.history.items[1].rendered_output, "System offline. Unable to establish semantic routing.") != null);
     try testing.expect(std.mem.indexOf(u8, s.history.items[1].rendered_output, "Pending Obligations:") == null);
     try testing.expect(std.mem.indexOf(u8, s.history.items[1].rendered_output, "missing retained evidence") == null);
-    try testing.expectEqualStrings("unresolved", s.engine_trace.authority.?);
-    try testing.expectEqualStrings("missing retained evidence", s.engine_trace.stop_reason.?);
 }
 
 test "TUI slash command suggestions use prefix and fuzzy matching" {
