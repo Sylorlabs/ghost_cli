@@ -4,10 +4,12 @@ const process = @import("../engine/process.zig");
 
 pub const CorpusOptions = struct {
     question: ?[]const u8 = null,
+    workspace: ?[]const u8 = null,
     corpus_path: ?[]const u8 = null,
     project_shard: ?[]const u8 = null,
     trust_class: ?[]const u8 = null,
     source_label: ?[]const u8 = null,
+    axioms: bool = false,
     deep_research: bool = false,
     deep_research_root: ?[]const u8 = null,
     max_results: ?u64 = null,
@@ -56,6 +58,7 @@ const usage =
     \\Usage: ghost corpus <ingest|apply-staged|ask> [options]
     \\
     \\  ghost corpus ingest <path> --project-shard=<id> --trust-class=<class> --source-label=<label>
+    \\  ghost corpus ingest --axioms <std-path>
     \\  ghost corpus ingest <path> --deep-research
     \\  ghost corpus apply-staged --project-shard=<id>
     \\  ghost corpus ask [--json] [--debug] [--project-shard=<id>] <question>
@@ -112,7 +115,7 @@ fn printIngestHelp(writer: anytype) !void {
     try writer.print(
         \\corpus ingest
         \\
-        \\Usage: ghost corpus ingest <path> [--project-shard=<id>] [--trust-class=<class>] [--source-label=<label>] [--deep-research] [--deep-research-root=<path>] [--json] [--debug]
+        \\Usage: ghost corpus ingest <path> [--project-shard=<id>] [--trust-class=<class>] [--source-label=<label>] [--axioms] [--deep-research] [--deep-research-root=<path>] [--json] [--debug]
         \\
         \\Stages corpus data through ghost_corpus_ingest. Staged corpus is not live
         \\and cannot be read by corpus.ask until `ghost corpus apply-staged` is run.
@@ -121,6 +124,7 @@ fn printIngestHelp(writer: anytype) !void {
         \\  --project-shard <id>       Target shard id
         \\  --trust-class <class>      exploratory|project|promoted|core
         \\  --source-label <label>     Source label recorded by the engine
+        \\  --axioms                   Stage std libraries as Tier 0 Axiom Vectors in the core shard
         \\  --deep-research            Build a local forever_shard research corpus first
         \\  --deep-research-root <path> Secondary drive vault root for forever_shard
         \\  --json                     Preserve raw engine stdout exactly
@@ -221,6 +225,8 @@ pub fn executeFromArgs(
                 options.source_label = args[i];
             } else if (std.mem.startsWith(u8, arg, "--source-label=")) {
                 options.source_label = arg["--source-label=".len..];
+            } else if (std.mem.eql(u8, arg, "--axioms")) {
+                options.axioms = true;
             } else if (std.mem.eql(u8, arg, "--deep-research")) {
                 options.deep_research = true;
             } else if (std.mem.eql(u8, arg, "--deep-research-root")) {
@@ -238,6 +244,11 @@ pub fn executeFromArgs(
                 try std.io.getStdErr().writer().print("Unexpected extra corpus ingest argument: {s}\n", .{arg});
                 std.process.exit(1);
             }
+        }
+        if (options.axioms) {
+            options.project_shard = null;
+            options.trust_class = "core";
+            options.source_label = "axioms";
         }
         try executeIngest(allocator, engine_root, options);
         return;
@@ -532,6 +543,10 @@ pub fn executeIngest(allocator: std.mem.Allocator, engine_root: ?[]const u8, opt
         try std.io.getStdErr().writer().print("corpus ingest path must be non-empty\n", .{});
         std.process.exit(1);
     }
+    if (options.axioms and options.deep_research) {
+        try std.io.getStdErr().writer().print("--axioms and --deep-research cannot be combined\n", .{});
+        std.process.exit(1);
+    }
     const corpus_path = if (options.deep_research) blk: {
         deep_path = try buildDeepResearchShard(allocator, input_path, options.deep_research_root);
         effective_options.trust_class = options.trust_class orelse "exploratory";
@@ -573,6 +588,8 @@ pub fn executeUserVaultIngestShortcutFromArgs(
             options.source_label = args[i];
         } else if (std.mem.startsWith(u8, arg, "--source-label=")) {
             options.source_label = arg["--source-label=".len..];
+        } else if (std.mem.eql(u8, arg, "--axioms")) {
+            options.axioms = true;
         } else if (std.mem.eql(u8, arg, "--deep-research")) {
             options.deep_research = true;
         } else if (std.mem.eql(u8, arg, "--deep-research-root")) {
@@ -591,10 +608,16 @@ pub fn executeUserVaultIngestShortcutFromArgs(
             std.process.exit(1);
         }
     }
+    if (options.axioms) {
+        options.project_shard = null;
+        options.trust_class = "core";
+        options.source_label = "axioms";
+    }
 
     try executeIngest(allocator, engine_root, options);
     try executeApplyStaged(allocator, engine_root, .{
         .project_shard = options.project_shard,
+        .axioms = options.axioms,
         .json = options.json,
         .debug = options.debug,
     });
@@ -773,6 +796,7 @@ fn runCorpusIngest(
     if (mode == .ingest) {
         if (options.trust_class) |value| try argv_list.append(try std.fmt.allocPrint(allocator, "--trust-class={s}", .{value}));
         if (options.source_label) |value| try argv_list.append(try std.fmt.allocPrint(allocator, "--source-label={s}", .{value}));
+        if (options.axioms) try argv_list.append("--axioms");
     }
     defer {
         for (argv_list.items[2..]) |arg| {
@@ -792,7 +816,10 @@ fn runCorpusIngest(
         if (options.json) try std.io.getStdErr().writer().print("[DEBUG] JSON Flag: not forwarded; ghost_corpus_ingest emits JSON without --json at engine 707ae0c\n", .{});
     }
 
-    const result = process.runEngineCommand(allocator, argv_list.items) catch |err| {
+    const result = (if (options.axioms or (mode == .apply_staged and options.project_shard == null))
+        process.runEngineCommandWithTimeout(allocator, argv_list.items, 180_000)
+    else
+        process.runEngineCommand(allocator, argv_list.items)) catch |err| {
         try std.io.getStdErr().writer().print("\x1b[31m[!] Error:\x1b[0m Failed to execute corpus {s}: {}\n", .{ if (mode == .ingest) "ingest" else "apply-staged", err });
         try std.io.getStdErr().writer().print("\x1b[33mHint:\x1b[0m Run `ghost status` to verify your environment.\n", .{});
         std.process.exit(1);
@@ -999,6 +1026,10 @@ pub fn writeCorpusAskRequest(writer: anytype, question: []const u8, options: Cor
         try writer.writeAll(",\"projectShard\":");
         try std.json.stringify(project_shard, .{}, writer);
     }
+    if (options.workspace) |workspace| {
+        try writer.writeAll(",\"workspace\":");
+        try std.json.stringify(workspace, .{}, writer);
+    }
     if (options.max_results) |max_results| try writer.print(",\"maxResults\":{d}", .{max_results});
     if (options.max_snippet_bytes) |max_snippet_bytes| try writer.print(",\"maxSnippetBytes\":{d}", .{max_snippet_bytes});
     if (options.mounted_packs.len != 0) {
@@ -1040,6 +1071,13 @@ fn printCorpusIngestResult(writer: anytype, value: std.json.Value) !void {
     try printTopLevelInt(writer, value, "fileCount", "Files Staged");
     try printTopLevelInt(writer, value, "itemCount", "Items Staged");
     try printTopLevelInt(writer, value, "bytesRead", "Bytes Read");
+    if (topObject(value)) |obj| {
+        if (obj.get("axioms")) |axiom_value| {
+            try writer.print("\nAxiom Matrix:\n", .{});
+            try printJsonValue(writer, axiom_value, 2);
+            try writer.print("\n", .{});
+        }
+    }
     try writer.print("\nNotice: staged corpus is not visible to `ghost corpus ask` until apply-staged.\n", .{});
 }
 

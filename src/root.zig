@@ -3,6 +3,7 @@ const testing = std.testing;
 
 const paths = @import("config/paths.zig");
 const locator = @import("engine/locator.zig");
+const process = @import("engine/process.zig");
 const json_contracts = @import("engine/json_contracts.zig");
 const terminal = @import("render/terminal.zig");
 const tui_input = @import("tui/input.zig");
@@ -16,6 +17,7 @@ const tui_terminal = @import("tui/terminal.zig");
 comptime {
     _ = tui_input;
     _ = tui_terminal;
+    _ = process;
 }
 
 fn renderEngineJson(allocator: std.mem.Allocator, json: []const u8) ![]u8 {

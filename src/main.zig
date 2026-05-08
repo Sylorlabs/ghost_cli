@@ -76,12 +76,12 @@ const CommandDef = struct {
 };
 
 const command_registry = [_]CommandDef{
-    .{ .name = "ask", .kind = .ask, .group = .core, .help = "Short one-shot question", .usage = "ghost ask [options] <message>" },
+    .{ .name = "ask", .kind = .ask, .group = .core, .help = "Auto-routed general or verifier question", .usage = "ghost ask [options] <message>" },
     .{ .name = "chat", .kind = .chat, .group = .core, .help = "Conversational interface to task operator", .usage = "ghost chat [options] --message=\"...\"" },
     .{ .name = "fix", .kind = .fix, .group = .core, .help = "Ask Ghost for a fix-oriented response", .usage = "ghost fix [options] <message>" },
     .{ .name = "verify", .kind = .verify, .group = .core, .help = "Verify workspace state or promote corpus license rank", .usage = "ghost verify [options] | ghost verify <path> --rank=<rank>" },
     .{ .name = "trash", .kind = .trash, .group = .core, .help = "Move a corpus root to vault .trash and blacklist its license", .usage = "ghost trash <path>" },
-    .{ .name = "ingest", .kind = .ingest, .group = .core, .help = "Index a text file into user_vault", .usage = "ghost ingest <path>" },
+    .{ .name = "ingest", .kind = .ingest, .group = .core, .help = "Index corpus text or Tier 0 stdlib axioms", .usage = "ghost ingest [--axioms] <path>" },
     .{ .name = "autopsy", .kind = .autopsy, .group = .inspection, .help = "Project Autopsy pass (explicit scan only)", .usage = "ghost autopsy [--json] [--debug] [path]" },
     .{ .name = "artifact", .kind = .artifact, .group = .inspection, .help = "Artifact Autopsy pass (explicit GIP request only)", .usage = "ghost artifact autopsy inspect --file <request.json> [--json] [--debug]" },
     .{ .name = "context", .kind = .context, .group = .inspection, .help = "Context Autopsy pass (explicit GIP request only)", .usage = "ghost context autopsy [--json] [--debug] [--input-file <path>] <description>" },
@@ -477,8 +477,11 @@ fn runAsk(allocator: std.mem.Allocator, root: ?[]const u8, parsed: *ParsedCli) !
 
     var request = std.ArrayList(u8).init(allocator);
     defer request.deinit();
+    const workspace = try std.fs.cwd().realpathAlloc(allocator, ".");
+    defer allocator.free(workspace);
     try corpus.writeCorpusAskRequest(request.writer(), question, .{
         .question = question,
+        .workspace = workspace,
         .project_shard = parsed.options.project_shard,
         .json = parsed.options.json_out,
         .debug = parsed.options.debug_mode,
@@ -801,10 +804,11 @@ fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
         , .{}),
         .ingest => try writer.print(
             \\
-            \\Usage: ghost ingest <path> [--project-shard=<id>] [--trust-class=<class>] [--source-label=<label>] [--engine-root=<path>]
+            \\Usage: ghost ingest <path> [--project-shard=<id>] [--trust-class=<class>] [--source-label=<label>] [--axioms] [--engine-root=<path>]
             \\
             \\Indexes .txt/.md corpus text into the selected project shard and immediately applies it.
             \\Defaults: --project-shard=user_vault --trust-class=project --source-label=user_vault.
+            \\With --axioms, stages standard library sources as Tier 0 Axiom Vectors in the core shard.
             \\
         , .{}),
         .autopsy => try writer.print(
