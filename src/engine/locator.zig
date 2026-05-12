@@ -9,6 +9,7 @@ pub const EngineBinaries = enum {
     ghostd,
     ghost_project_autopsy,
     ghost_corpus_ingest,
+    ghost_swe_harness,
 
     pub fn toStr(self: EngineBinaries) []const u8 {
         return switch (self) {
@@ -20,6 +21,7 @@ pub const EngineBinaries = enum {
             .ghostd => "ghostd",
             .ghost_project_autopsy => "ghost_project_autopsy",
             .ghost_corpus_ingest => "ghost_corpus_ingest",
+            .ghost_swe_harness => "ghost_swe_harness",
         };
     }
 
@@ -34,6 +36,7 @@ pub const EngineBinaries = enum {
             .ghostd,
             .ghost_project_autopsy,
             .ghost_corpus_ingest,
+            .ghost_swe_harness,
             => false,
         };
     }
@@ -115,6 +118,7 @@ pub fn allBinaries() []const EngineBinaries {
         .ghostd,
         .ghost_project_autopsy,
         .ghost_corpus_ingest,
+        .ghost_swe_harness,
     };
 }
 

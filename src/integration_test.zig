@@ -5726,6 +5726,42 @@ test "verify command argument parsing still works" {
     try testing.expect(std.mem.indexOf(u8, res.stderr, "Unknown command: verify") == null);
 }
 
+test "swe command routes cluster batch args to ghost_swe_harness" {
+    const mock_root = "/tmp/ghost-cli-swe-command";
+    const argv_path = mock_root ++ "/argv.txt";
+    try std.fs.cwd().makePath(mock_root);
+    defer std.fs.cwd().deleteTree(mock_root) catch {};
+
+    try writeMockExecutable(
+        mock_root ++ "/ghost_swe_harness",
+        "#!/bin/sh\n" ++
+            "printf '%s\\n' \"$@\" > '" ++ argv_path ++ "'\n" ++
+            "printf '%s' '{\"totalRows\":731,\"attempted\":50,\"verified\":1,\"invalidEnvironment\":0,\"failed\":49,\"truthDensityPerMille\":1,\"results\":[{\"instanceId\":\"instance_qutebrowser\",\"status\":\"verified\",\"buildRootRelative\":\".\",\"reprioritizationDistance\":0}]}'\n",
+    );
+
+    const res = try runCmd(testing.allocator, &[_][]const u8{
+        "./zig-out/bin/ghost",
+        "swe",
+        "--engine-root=" ++ mock_root,
+        "--json",
+        "--batch-size",
+        "50",
+        "--cluster-seed",
+        "qutebrowser",
+    });
+    defer {
+        testing.allocator.free(res.stdout);
+        testing.allocator.free(res.stderr);
+    }
+
+    try testing.expectEqual(@as(u32, 0), res.term.Exited);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "\"attempted\":50") != null);
+    const argv = try std.fs.cwd().readFileAlloc(testing.allocator, argv_path, 1024 * 1024);
+    defer testing.allocator.free(argv);
+    try testing.expect(std.mem.indexOf(u8, argv, "--batch-size") != null);
+    try testing.expect(std.mem.indexOf(u8, argv, "qutebrowser") != null);
+}
+
 test "no project autopsy auto-scan in CLI" {
     // ghost_project_autopsy is a legitimately tracked engine binary.
     // The safety boundary being tested here is that ghost_cli does NOT contain

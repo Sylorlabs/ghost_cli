@@ -10,6 +10,8 @@ const corpus = @import("commands/corpus.zig");
 const rules = @import("commands/rules.zig");
 const policy = @import("commands/policy.zig");
 const sigil = @import("commands/sigil.zig");
+const omni = @import("commands/omni.zig");
+const swe = @import("commands/swe.zig");
 const correction = @import("commands/correction.zig");
 const nk = @import("commands/nk.zig");
 const verify = @import("commands/verify.zig");
@@ -36,6 +38,8 @@ const CommandKind = enum {
     policy,
     rules,
     sigil,
+    omni,
+    swe,
     correction,
     nk,
     learn,
@@ -86,7 +90,7 @@ const command_registry = [_]CommandDef{
     .{ .name = "artifact", .kind = .artifact, .group = .inspection, .help = "Artifact Autopsy pass (explicit GIP request only)", .usage = "ghost artifact autopsy inspect --file <request.json> [--json] [--debug]" },
     .{ .name = "context", .kind = .context, .group = .inspection, .help = "Context Autopsy pass (explicit GIP request only)", .usage = "ghost context autopsy [--json] [--debug] [--input-file <path>] <description>" },
     .{ .name = "status", .kind = .status, .group = .inspection, .help = "Show engine availability/status", .usage = "ghost status [--debug]" },
-    .{ .name = "doctor", .kind = .doctor, .group = .inspection, .help = "Run read-only environment diagnostics", .usage = "ghost doctor [--json|--report] [--debug] [--full] [--run-build-check]" },
+    .{ .name = "doctor", .kind = .doctor, .group = .inspection, .help = "Run read-only environment diagnostics", .usage = "ghost doctor [--json|--report|--gaps] [--debug] [--full] [--run-build-check]" },
     .{ .name = "packs", .kind = .packs, .group = .knowledge, .help = "Manage knowledge packs", .usage = "ghost packs <list|inspect|mount|unmount|validate-autopsy-guidance> [options]" },
     .{ .name = "corpus", .kind = .corpus, .group = .knowledge, .help = "Ingest, apply, and ask from shard corpus", .usage = "ghost corpus <ingest|apply-staged|ask> [options]" },
     .{ .name = "policy", .kind = .policy, .group = .knowledge, .help = "Describe artifact/domain policy metadata", .usage = "ghost policy describe --file <request.json> [--json] [--debug]" },
@@ -95,6 +99,8 @@ const command_registry = [_]CommandDef{
     .{ .name = "learn", .kind = .learn, .group = .knowledge, .help = "Feedback/distillation and read-only learning plans/status", .usage = "ghost learn <candidates|show|export|status|plan> [options]" },
     .{ .name = "rules", .kind = .rules, .group = .advanced, .help = "Evaluate bounded non-authorizing rules", .usage = "ghost rules evaluate --file <request.json> [--json] [--debug]" },
     .{ .name = "sigil", .kind = .sigil, .group = .advanced, .help = "Inspect Sigil bytecode read-only", .usage = "ghost sigil inspect --file <request.json> [--json] [--debug]" },
+    .{ .name = "omni", .kind = .omni, .group = .advanced, .help = "Explicit Phase 4/5/6 oracle, curiosity, hive, and recursive boot surfaces", .usage = "ghost omni <status|oracle|curiosity|hive|recursive> [options]" },
+    .{ .name = "swe", .kind = .swe, .group = .advanced, .help = "Run explicit native SWE benchmark provisioning batches", .usage = "ghost swe [--batch-size <n>] [--cluster-seed <text>] [--json]" },
     .{ .name = "debug", .kind = .debug, .group = .advanced, .help = "Advanced raw engine diagnostics", .usage = "ghost debug raw <engine-binary> [args...]" },
     .{ .name = "tui", .kind = .tui, .group = .interface, .help = "Interactive Ghost operator console", .usage = "ghost tui [options]" },
     .{ .name = "daemon", .kind = .daemon, .group = .interface, .help = "Control resident ghostd process", .usage = "ghost daemon <start|status|stop>" },
@@ -128,6 +134,7 @@ const CliOptions = struct {
     report: bool = false,
     full: bool = false,
     run_build_check: bool = false,
+    gaps: bool = false,
 };
 
 const ParsedCli = struct {
@@ -190,6 +197,14 @@ pub fn main() !void {
             try sigil.printHelpForArgs(std.io.getStdErr().writer(), parsed.leftover_args.items);
             return;
         }
+        if (parsed.command.? == .omni) {
+            try omni.printHelpForArgs(std.io.getStdErr().writer(), parsed.leftover_args.items);
+            return;
+        }
+        if (parsed.command.? == .swe) {
+            try swe.printHelp(std.io.getStdErr().writer());
+            return;
+        }
         if (parsed.command.? == .correction) {
             try correction.printHelpForArgs(std.io.getStdErr().writer(), parsed.leftover_args.items);
             return;
@@ -222,7 +237,7 @@ pub fn main() !void {
     defer if (engine_paths) |*ep| ep.deinit(allocator);
     const root = if (engine_paths) |ep| ep.root else null;
 
-    if (parsed.command.? != .daemon) {
+    if (parsed.command.? != .daemon and parsed.command.? != .swe) {
         _ = daemon_cmd.ensureActiveQuiet(allocator, root, parsed.options.debug_mode);
     }
 
@@ -273,6 +288,14 @@ pub fn main() !void {
             .json = parsed.options.json_out,
             .debug = parsed.options.debug_mode,
         }),
+        .omni => try omni.executeFromArgs(allocator, root, parsed.leftover_args.items, .{
+            .json = parsed.options.json_out,
+            .debug = parsed.options.debug_mode,
+        }),
+        .swe => try swe.executeFromArgs(allocator, root, parsed.leftover_args.items, .{
+            .json = parsed.options.json_out,
+            .debug = parsed.options.debug_mode,
+        }),
         .correction => try correction.executeFromArgs(allocator, root, parsed.leftover_args.items, .{
             .project_shard = parsed.options.project_shard,
             .json = parsed.options.json_out,
@@ -306,6 +329,7 @@ pub fn main() !void {
             .report = parsed.options.report,
             .full = parsed.options.full,
             .run_build_check = parsed.options.run_build_check,
+            .gaps = parsed.options.gaps,
             .version = build_version,
         }),
         .debug => try debug_cmd.execute(allocator, root, parsed.leftover_args.items, parsed.options.json_out),
@@ -393,6 +417,8 @@ fn parseFlag(args: *std.process.ArgIterator, arg: []const u8, options: *CliOptio
         options.full = true;
     } else if (std.mem.eql(u8, arg, "--run-build-check")) {
         options.run_build_check = true;
+    } else if (std.mem.eql(u8, arg, "--gaps")) {
+        options.gaps = true;
     } else if (std.mem.eql(u8, arg, "--version")) {
         options.version_flag = true;
     } else if (std.mem.startsWith(u8, arg, "--reasoning=")) {
@@ -737,6 +763,7 @@ fn printHelp(writer: anytype) !void {
         \\  --report               Print copy-paste tester report for doctor
         \\  --full                 Include optional doctor checks
         \\  --run-build-check      Let doctor run `zig build --help`
+        \\  --gaps                 Emit provision.sh candidate from SWE environment gaps
         \\  --debug                Show debug information
         \\  --verbose              Alias for --debug
         \\
@@ -753,6 +780,8 @@ fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
     if (kind == .policy) return policy.printHelp(writer);
     if (kind == .rules) return rules.printHelp(writer);
     if (kind == .sigil) return sigil.printHelp(writer);
+    if (kind == .omni) return omni.printHelp(writer);
+    if (kind == .swe) return swe.printHelp(writer);
     if (kind == .correction) return correction.printHelp(writer);
     if (kind == .nk) return nk.printHelp(writer);
     if (kind == .verify) return verify.printHelp(writer);
@@ -822,6 +851,7 @@ fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
             \\  --report               Copy-paste tester report
             \\  --full                 Include optional probes
             \\  --run-build-check      Run `zig build --help` only
+            \\  --gaps                 Emit provision.sh candidate from SWE environment gaps
             \\  --debug                Include candidate resolution detail
             \\
         , .{}),
@@ -852,7 +882,7 @@ fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
             \\  This scan runs only when this command is explicitly invoked.
             \\
         , .{}),
-        .artifact, .context, .packs, .corpus, .policy, .rules, .sigil, .correction, .nk, .daemon => unreachable,
+        .artifact, .context, .packs, .corpus, .policy, .rules, .sigil, .omni, .swe, .correction, .nk, .daemon => unreachable,
         .learn => try writer.print(
             \\
             \\Subcommands:

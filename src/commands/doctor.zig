@@ -9,6 +9,7 @@ pub const Options = struct {
     report: bool = false,
     full: bool = false,
     run_build_check: bool = false,
+    gaps: bool = false,
     version: []const u8,
 };
 
@@ -81,6 +82,17 @@ const DoctorReport = struct {
 };
 
 pub fn execute(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: Options) !void {
+    if (options.gaps) {
+        var gaps = try collectGapProvisionReport(allocator, engine_root);
+        defer gaps.deinit(allocator);
+        if (options.json) {
+            try printGapProvisionJson(gaps);
+        } else {
+            try printGapProvisionScript(gaps);
+        }
+        return;
+    }
+
     var report = try collectReport(allocator, engine_root, options);
     defer report.deinit(allocator);
 
@@ -91,6 +103,161 @@ pub fn execute(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: 
     } else {
         try printHuman(report, options.debug, options.full, options.run_build_check);
     }
+}
+
+const GapProvisionReport = struct {
+    gap_path: []u8,
+    gaps_read: usize,
+    packages: [][]u8,
+    notes: [][]u8,
+
+    fn deinit(self: *GapProvisionReport, allocator: std.mem.Allocator) void {
+        allocator.free(self.gap_path);
+        freeStringList(allocator, self.packages);
+        freeStringList(allocator, self.notes);
+        self.* = undefined;
+    }
+};
+
+fn collectGapProvisionReport(allocator: std.mem.Allocator, engine_root: ?[]const u8) !GapProvisionReport {
+    const root = engine_root orelse ".";
+    const gap_path = try std.fs.path.join(allocator, &.{ root, ".ghost/knowledge/swe_bench_pro/environment_gaps.gkpack" });
+    errdefer allocator.free(gap_path);
+
+    var package_set = std.StringHashMap(void).init(allocator);
+    defer package_set.deinit();
+    var notes = std.ArrayList([]u8).init(allocator);
+    errdefer {
+        for (notes.items) |note| allocator.free(note);
+        notes.deinit();
+    }
+
+    const bytes = std.fs.cwd().readFileAlloc(allocator, gap_path, 8 * 1024 * 1024) catch |err| switch (err) {
+        error.FileNotFound => {
+            return .{
+                .gap_path = gap_path,
+                .gaps_read = 0,
+                .packages = try allocator.alloc([]u8, 0),
+                .notes = try allocator.alloc([]u8, 0),
+            };
+        },
+        else => return err,
+    };
+    defer allocator.free(bytes);
+
+    var gaps_read: usize = 0;
+    var lines = std.mem.splitScalar(u8, bytes, '\n');
+    while (lines.next()) |line_raw| {
+        const line = std.mem.trim(u8, line_raw, " \t\r\n");
+        if (line.len == 0) continue;
+        gaps_read += 1;
+        var parsed = std.json.parseFromSlice(std.json.Value, allocator, line, .{}) catch continue;
+        defer parsed.deinit();
+        if (parsed.value != .object) continue;
+        const reason = stringValue(parsed.value.object.get("reason")) orelse "";
+        const fix_detail = stringValue(parsed.value.object.get("fixDetail")) orelse "";
+        try inferProvisionPackages(allocator, &package_set, &notes, reason);
+        try inferProvisionPackages(allocator, &package_set, &notes, fix_detail);
+    }
+
+    var packages = std.ArrayList([]u8).init(allocator);
+    errdefer {
+        for (packages.items) |pkg| allocator.free(pkg);
+        packages.deinit();
+    }
+    var it = package_set.iterator();
+    while (it.next()) |entry| {
+        try packages.append(try allocator.dupe(u8, entry.key_ptr.*));
+    }
+    std.mem.sort([]u8, packages.items, {}, lessThanString);
+
+    return .{
+        .gap_path = gap_path,
+        .gaps_read = gaps_read,
+        .packages = try packages.toOwnedSlice(),
+        .notes = try notes.toOwnedSlice(),
+    };
+}
+
+fn inferProvisionPackages(
+    allocator: std.mem.Allocator,
+    package_set: *std.StringHashMap(void),
+    notes: *std.ArrayList([]u8),
+    text: []const u8,
+) !void {
+    if (text.len == 0) return;
+    if (containsIgnoreCase(text, "ffi.h") or containsIgnoreCase(text, "_ctypes")) try addPackage(package_set, "libffi-dev");
+    if (containsIgnoreCase(text, "Python.h")) try addPackage(package_set, "python3-dev");
+    if (containsIgnoreCase(text, "openssl/ssl.h") or containsIgnoreCase(text, "OpenSSL")) try addPackage(package_set, "libssl-dev");
+    if (containsIgnoreCase(text, "pg_config") or containsIgnoreCase(text, "psycopg2")) try addPackage(package_set, "libpq-dev");
+    if (containsIgnoreCase(text, "mysql_config")) try addPackage(package_set, "default-libmysqlclient-dev");
+    if (containsIgnoreCase(text, "xml2-config") or containsIgnoreCase(text, "libxml/xmlversion.h")) {
+        try addPackage(package_set, "libxml2-dev");
+        try addPackage(package_set, "libxslt1-dev");
+    }
+    if (containsIgnoreCase(text, "PyQt") or containsIgnoreCase(text, "QtWebKit") or containsIgnoreCase(text, "xcb") or containsIgnoreCase(text, "qapp")) {
+        try addPackage(package_set, "qtbase5-dev");
+        try addPackage(package_set, "libqt5webkit5-dev");
+        try addPackage(package_set, "libxkbcommon-x11-0");
+        try addPackage(package_set, "libxcb-cursor0");
+    }
+    if (containsIgnoreCase(text, "jpeg") or containsIgnoreCase(text, "zlib")) {
+        try addPackage(package_set, "libjpeg-dev");
+        try addPackage(package_set, "zlib1g-dev");
+    }
+    if (containsIgnoreCase(text, "npm error Missing script") or containsIgnoreCase(text, "jest: not found")) {
+        try appendUniqueNote(allocator, notes, "JavaScript gap: package test runner/script was missing; prefer harness/package-root repair over host apt packages.");
+    }
+    if (containsIgnoreCase(text, "babel._compat") or containsIgnoreCase(text, "TerminalWriter")) {
+        try appendUniqueNote(allocator, notes, "Python compatibility gap: old package API on current Python; pin/venv strategy required, not a host header.");
+    }
+}
+
+fn addPackage(package_set: *std.StringHashMap(void), package: []const u8) !void {
+    try package_set.put(package, {});
+}
+
+fn appendUniqueNote(allocator: std.mem.Allocator, notes: *std.ArrayList([]u8), note: []const u8) !void {
+    for (notes.items) |existing| {
+        if (std.mem.eql(u8, existing, note)) return;
+    }
+    try notes.append(try allocator.dupe(u8, note));
+}
+
+fn printGapProvisionScript(report: GapProvisionReport) !void {
+    const out = std.io.getStdOut().writer();
+    try out.print("#!/usr/bin/env bash\n", .{});
+    try out.print("# provision.sh generated from {s}\n", .{report.gap_path});
+    try out.print("# gaps_read={d}; candidate only; commands not executed by ghost doctor\n", .{report.gaps_read});
+    try out.print("set -euo pipefail\n\n", .{});
+    if (report.packages.len == 0) {
+        try out.print("echo 'No host apt packages inferred from environment_gaps.gkpack.'\n", .{});
+    } else {
+        try out.print("sudo apt-get update\nsudo apt-get install -y", .{});
+        for (report.packages) |package| try out.print(" {s}", .{package});
+        try out.print("\n", .{});
+    }
+    if (report.notes.len != 0) {
+        try out.print("\n# Non-apt gaps requiring harness or dependency pinning:\n", .{});
+        for (report.notes) |note| try out.print("# - {s}\n", .{note});
+    }
+}
+
+fn printGapProvisionJson(report: GapProvisionReport) !void {
+    const out = std.io.getStdOut().writer();
+    try out.writeAll("{\"schema\":\"ghost.doctor.gaps.v1\",\"commandsExecuted\":false,\"gapPath\":");
+    try std.json.stringify(report.gap_path, .{}, out);
+    try out.print(",\"gapsRead\":{d},\"aptPackages\":[", .{report.gaps_read});
+    for (report.packages, 0..) |package, idx| {
+        if (idx != 0) try out.writeByte(',');
+        try std.json.stringify(package, .{}, out);
+    }
+    try out.writeAll("],\"notes\":[");
+    for (report.notes, 0..) |note, idx| {
+        if (idx != 0) try out.writeByte(',');
+        try std.json.stringify(note, .{}, out);
+    }
+    try out.writeAll("]}\n");
 }
 
 fn collectReport(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: Options) !DoctorReport {
@@ -481,6 +648,29 @@ fn detectGpu(allocator: std.mem.Allocator) ![]u8 {
         allocator.free(out);
     }
     return allocator.dupe(u8, "unknown");
+}
+
+fn stringValue(value: ?std.json.Value) ?[]const u8 {
+    const v = value orelse return null;
+    return if (v == .string) v.string else null;
+}
+
+fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
+    if (needle.len == 0 or needle.len > haystack.len) return false;
+    var idx: usize = 0;
+    while (idx + needle.len <= haystack.len) : (idx += 1) {
+        if (std.ascii.eqlIgnoreCase(haystack[idx .. idx + needle.len], needle)) return true;
+    }
+    return false;
+}
+
+fn lessThanString(_: void, a: []u8, b: []u8) bool {
+    return std.mem.lessThan(u8, a, b);
+}
+
+fn freeStringList(allocator: std.mem.Allocator, list: [][]u8) void {
+    for (list) |item| allocator.free(item);
+    allocator.free(list);
 }
 
 fn yesNo(value: bool) []const u8 {

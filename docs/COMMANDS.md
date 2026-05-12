@@ -5,7 +5,7 @@ Top-level help is organized around Ghost operator workflows:
 - **Core**: `ask`, `chat`, `fix`, `verify`
 - **Inspection**: `autopsy`, `context`, `status`, `doctor`
 - **Knowledge**: `packs`, `corpus`, `policy`, `correction`, `nk`, `learn`
-- **Advanced**: `rules`, `debug`
+- **Advanced**: `rules`, `sigil`, `omni`, `swe`, `debug`
 - **Interface**: `tui`
 
 Every top-level command supports `ghost <command> --help` without resolving or
@@ -322,6 +322,70 @@ commands, NK commands, or pack validation.
 `--json` preserves raw GIP stdout exactly. `--debug` writes diagnostics to
 stderr only, including engine path, GIP kind, input file path, stdin byte count,
 exit code, and parse status.
+
+### `ghost omni`
+Explicit Phase 4/5/6 control surfaces for Ghost Engine.
+
+Usage: `ghost omni status`
+Usage: `ghost omni oracle --test-file src/oracle/auto_fix.zig`
+Usage: `ghost omni curiosity --concept "low pass filter" --concept "high pass filter"`
+Usage: `ghost omni hive`
+Usage: `ghost omni recursive --iterations 4096`
+
+This command group routes only to explicit GIP operations:
+`oracle.auto_fix`, `curiosity.status`, `hive.status`, and
+`recursive_boot.status`.
+
+Safety contract:
+
+- `oracle.auto_fix` captures Zig stderr and may verify temp-buffer candidate
+  repairs; it does not mutate the source target.
+- `curiosity.status` reports guard state and speculative candidates; it does not
+  start a background daemon worker.
+- `hive.status` reports the local UDP gossip/rune protocol contract; it does
+  not join a network or send packets.
+- `recursive_boot.status` measures the VSA bind hot path; it does not generate,
+  compile, execve, or hot-swap a replacement binary.
+
+Human output is labeled **NON-AUTHORIZING**. `ghost omni <single-operation>
+--json` preserves raw `ghost_gip --stdin` stdout. `ghost omni status --json`
+emits a CLI aggregate envelope over three explicit read-only GIP calls.
+
+### `ghost swe`
+Explicit native SWE benchmark provisioning batches.
+
+Usage: `ghost swe --batch-size 50 --cluster-seed qutebrowser`
+Usage: `ghost swe --limit 50 --cluster-seed qutebrowser-c580eb --max-environment-attempts 5`
+Usage: `ghost swe --limit 5 --linear --json`
+
+This command resolves and runs `ghost_swe_harness`. It forwards harness options
+unchanged, including `--rows`, `--workspace-root`, `--knowledge-dir`,
+`--keep-workspaces`, `--no-bootstrap`, `--no-ephemeral-venv`, and
+`--no-preflight-pip`, `--no-preflight-npm`, and
+`--include-unsupported-languages`. Cluster batches use GIP
+`GIP_OP_LATTICE_QUERY` (`0x86`) for VSA Hamming reprioritization when the
+engine Vulkan backend is available; otherwise the harness reports a visible CPU
+fallback in the JSON/human summary.
+
+Patch application uses GIP `GIP_OP_PATCH_INTEGRITY` (`0x87`) telemetry. The
+harness runs `git apply --check` before mutation, attempts line-ending
+normalization / three-way application when needed, and reports patch mode,
+changed files, and diff stat for the gold patch. Test selectors are rebased
+against the resolved build root and physical workspace files before invoking the
+runner. Fail-to-pass tests are always run before the gold patch; if they already
+pass, the row is reported as a false positive instead of verified.
+
+By default, reprioritized strikes attempt Python and JS/TS rows only and count
+unsupported languages as skipped. Use `--include-unsupported-languages` to
+restore the older behavior.
+
+Safety contract:
+
+- Explicit invocation only; normal chat, ask, status, doctor, and TUI idle paths
+  do not run SWE batches.
+- The harness is native-only and rejects Docker/Podman argv.
+- Human output is benchmark telemetry labeled **NON-AUTHORIZING**.
+- `--json` preserves the raw `ghost_swe_harness` JSON summary.
 
 ### `ghost correction`
 Explicit correction proposal and review commands.
@@ -1074,6 +1138,8 @@ Usage: `ghost doctor --debug`
 Usage: `ghost doctor --report`
 Usage: `ghost doctor --full`
 Usage: `ghost doctor --run-build-check`
+Usage: `ghost doctor --gaps`
+Usage: `ghost doctor --gaps --json`
 
 Default doctor is fast and non-mutating. It does not build the engine, run
 expensive tests, execute verifiers, run validation, mutate packs, or change negative knowledge.
@@ -1112,6 +1178,13 @@ warning with an upgrade/rebuild suggestion; it does not make doctor fail hard
 unless normal binary availability checks already fail.
 
 `ghost doctor --report` prints a copy-paste tester report with OS, arch, cheap CPU/RAM/GPU probes, Zig version, Ghost version, engine root, resolved binaries, doctor result, and suggested next commands.
+
+`ghost doctor --gaps` reads
+`.ghost/knowledge/swe_bench_pro/environment_gaps.gkpack` and emits a candidate
+`provision.sh` body derived from observed native dependency gaps. It does not run
+`apt`, does not install packages, and labels non-apt gaps such as old Python API
+pinning or missing JS test scripts as harness/dependency work instead of host
+packages. `--json` emits the same package/notes plan as structured diagnostics.
 
 ### `ghost autopsy`
 Run an explicit Project Autopsy scan using `ghost_project_autopsy`. This command
