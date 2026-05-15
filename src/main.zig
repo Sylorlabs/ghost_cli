@@ -7,10 +7,12 @@ const status = @import("commands/status.zig");
 const daemon_cmd = @import("commands/daemon.zig");
 const packs = @import("commands/packs.zig");
 const corpus = @import("commands/corpus.zig");
+const invent = @import("commands/invent.zig");
 const rules = @import("commands/rules.zig");
 const policy = @import("commands/policy.zig");
 const sigil = @import("commands/sigil.zig");
 const omni = @import("commands/omni.zig");
+const gemma = @import("commands/gemma.zig");
 const swe = @import("commands/swe.zig");
 const correction = @import("commands/correction.zig");
 const nk = @import("commands/nk.zig");
@@ -35,10 +37,12 @@ const CommandKind = enum {
     ingest,
     packs,
     corpus,
+    invent,
     policy,
     rules,
     sigil,
     omni,
+    gemma,
     swe,
     correction,
     nk,
@@ -93,6 +97,7 @@ const command_registry = [_]CommandDef{
     .{ .name = "doctor", .kind = .doctor, .group = .inspection, .help = "Run read-only environment diagnostics", .usage = "ghost doctor [--json|--report|--gaps] [--debug] [--full] [--run-build-check]" },
     .{ .name = "packs", .kind = .packs, .group = .knowledge, .help = "Manage knowledge packs", .usage = "ghost packs <list|inspect|mount|unmount|validate-autopsy-guidance> [options]" },
     .{ .name = "corpus", .kind = .corpus, .group = .knowledge, .help = "Ingest, apply, and ask from shard corpus", .usage = "ghost corpus <ingest|apply-staged|ask> [options]" },
+    .{ .name = "invent", .kind = .invent, .group = .knowledge, .help = "Non-authorizing cross-domain architecture synthesis", .usage = "ghost invent --project-shard=<s> --message=\"...\"" },
     .{ .name = "policy", .kind = .policy, .group = .knowledge, .help = "Describe artifact/domain policy metadata", .usage = "ghost policy describe --file <request.json> [--json] [--debug]" },
     .{ .name = "correction", .kind = .correction, .group = .knowledge, .help = "Propose, review, and inspect correction records", .usage = "ghost correction <propose|review|reviewed> [options]" },
     .{ .name = "nk", .kind = .nk, .group = .knowledge, .help = "Review and inspect reviewed negative knowledge", .usage = "ghost nk <review|reviewed> [options]" },
@@ -100,6 +105,7 @@ const command_registry = [_]CommandDef{
     .{ .name = "rules", .kind = .rules, .group = .advanced, .help = "Evaluate bounded non-authorizing rules", .usage = "ghost rules evaluate --file <request.json> [--json] [--debug]" },
     .{ .name = "sigil", .kind = .sigil, .group = .advanced, .help = "Inspect Sigil bytecode read-only", .usage = "ghost sigil inspect --file <request.json> [--json] [--debug]" },
     .{ .name = "omni", .kind = .omni, .group = .advanced, .help = "Explicit Phase 4/5/6 oracle, curiosity, hive, and recursive boot surfaces", .usage = "ghost omni <status|oracle|curiosity|hive|recursive> [options]" },
+    .{ .name = "gemma", .kind = .gemma, .group = .advanced, .help = "Inspect Ghost-native Gemma weight inventory", .usage = "ghost gemma weights inspect [options]" },
     .{ .name = "swe", .kind = .swe, .group = .advanced, .help = "Run explicit native SWE benchmark provisioning batches", .usage = "ghost swe [--batch-size <n>] [--cluster-seed <text>] [--json]" },
     .{ .name = "debug", .kind = .debug, .group = .advanced, .help = "Advanced raw engine diagnostics", .usage = "ghost debug raw <engine-binary> [args...]" },
     .{ .name = "tui", .kind = .tui, .group = .interface, .help = "Interactive Ghost operator console", .usage = "ghost tui [options]" },
@@ -189,6 +195,10 @@ pub fn main() !void {
             try rules.printHelpForArgs(std.io.getStdErr().writer(), parsed.leftover_args.items);
             return;
         }
+        if (parsed.command.? == .invent) {
+            try invent.printHelp(std.io.getStdErr().writer());
+            return;
+        }
         if (parsed.command.? == .policy) {
             try policy.printHelpForArgs(std.io.getStdErr().writer(), parsed.leftover_args.items);
             return;
@@ -199,6 +209,10 @@ pub fn main() !void {
         }
         if (parsed.command.? == .omni) {
             try omni.printHelpForArgs(std.io.getStdErr().writer(), parsed.leftover_args.items);
+            return;
+        }
+        if (parsed.command.? == .gemma) {
+            try gemma.printHelpForArgs(std.io.getStdErr().writer(), parsed.leftover_args.items);
             return;
         }
         if (parsed.command.? == .swe) {
@@ -237,7 +251,7 @@ pub fn main() !void {
     defer if (engine_paths) |*ep| ep.deinit(allocator);
     const root = if (engine_paths) |ep| ep.root else null;
 
-    if (parsed.command.? != .daemon and parsed.command.? != .swe) {
+    if (parsed.command.? != .daemon and parsed.command.? != .swe and parsed.command.? != .invent and parsed.command.? != .gemma) {
         _ = daemon_cmd.ensureActiveQuiet(allocator, root, parsed.options.debug_mode);
     }
 
@@ -276,6 +290,13 @@ pub fn main() !void {
             .json = parsed.options.json_out,
             .debug = parsed.options.debug_mode,
         }),
+        .invent => try invent.execute(allocator, root, .{
+            .message = parsed.options.message orelse if (parsed.leftover_args.items.len > 0) parsed.leftover_args.items[0] else null,
+            .project_shard = parsed.options.project_shard,
+            .extra_args = parsed.leftover_args.items,
+            .json = parsed.options.json_out,
+            .debug = parsed.options.debug_mode,
+        }),
         .rules => try rules.executeFromArgs(allocator, root, parsed.leftover_args.items, .{
             .json = parsed.options.json_out,
             .debug = parsed.options.debug_mode,
@@ -289,6 +310,10 @@ pub fn main() !void {
             .debug = parsed.options.debug_mode,
         }),
         .omni => try omni.executeFromArgs(allocator, root, parsed.leftover_args.items, .{
+            .json = parsed.options.json_out,
+            .debug = parsed.options.debug_mode,
+        }),
+        .gemma => try gemma.executeFromArgs(allocator, root, parsed.leftover_args.items, .{
             .json = parsed.options.json_out,
             .debug = parsed.options.debug_mode,
         }),
@@ -580,7 +605,7 @@ fn printDaemonVoice(writer: anytype, value: std.json.Value, color: bool) !bool {
     if (is_void) {
         try writer.writeAll("[Concept Void: Triggering Local Web Scrape...]\n\n");
     } else {
-        try writer.writeAll("[Source: Resident Omni-Codex]\n\n");
+        try writer.writeAll("[Source: Neuro-Symbolic Engine]\n\n");
     }
 
     if (color) try writer.writeAll("\x1b[34m");
@@ -777,10 +802,12 @@ fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
     if (kind == .context) return context_cmd.printHelp(writer);
     if (kind == .packs) return packs.printHelp(writer);
     if (kind == .corpus) return corpus.printHelp(writer);
+    if (kind == .invent) return invent.printHelp(writer);
     if (kind == .policy) return policy.printHelp(writer);
     if (kind == .rules) return rules.printHelp(writer);
     if (kind == .sigil) return sigil.printHelp(writer);
     if (kind == .omni) return omni.printHelp(writer);
+    if (kind == .gemma) return gemma.printHelp(writer);
     if (kind == .swe) return swe.printHelp(writer);
     if (kind == .correction) return correction.printHelp(writer);
     if (kind == .nk) return nk.printHelp(writer);
@@ -832,6 +859,7 @@ fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
             \\Slash commands:
             \\  /help, /quit, /status, /reasoning <level>, /debug on|off, /details on|off, /json on|off
             \\  /clear, /daemon [start|status|stop], /doctor, /autopsy <path>, /context <path>, /mount <pack[@version]>
+            \\  /conversations, /resume <name>, /save <name>
             \\  Typing / shows prefix-first fuzzy suggestions. Invalid slash commands are rejected locally.
             \\  In --read-only mode, /daemon, /doctor, /autopsy, and submitted prompts are blocked locally.
             \\  Ctrl+Y toggles YOLO mode. When active, command proposals auto-execute and the prompt bar turns red.
@@ -882,7 +910,7 @@ fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
             \\  This scan runs only when this command is explicitly invoked.
             \\
         , .{}),
-        .artifact, .context, .packs, .corpus, .policy, .rules, .sigil, .omni, .swe, .correction, .nk, .daemon => unreachable,
+        .artifact, .context, .packs, .corpus, .invent, .policy, .rules, .sigil, .omni, .gemma, .swe, .correction, .nk, .daemon => unreachable,
         .learn => try writer.print(
             \\
             \\Subcommands:

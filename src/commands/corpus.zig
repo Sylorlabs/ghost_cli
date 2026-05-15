@@ -150,6 +150,32 @@ fn printApplyStagedHelp(writer: anytype) !void {
     , .{});
 }
 
+fn printMedicIngestHelp(writer: anytype) !void {
+    try writer.print(
+        \\corpus medic-ingest
+        \\
+        \\Usage: ghost corpus medic-ingest <path> [--json] [--debug]
+        \\
+        \\Parses a pytest log and maps failures into Diagnostic Runes (Rank 4).
+        \\These are pushed directly to the RuneLattice to serve as Causal Links
+        \\for the Medic Loop.
+        \\
+    , .{});
+}
+
+fn printMedicSolveHelp(writer: anytype) !void {
+    try writer.print(
+        \\corpus medic-solve
+        \\
+        \\Usage: ghost corpus medic-solve <test-command...> [--json] [--debug]
+        \\
+        \\Scans the RuneLattice for Rank 4 Causal Links, simulates a code fix by
+        \\binding a Candidate Rune, and runs the provided test command to verify
+        \\the fix. If successful, the Candidate Rune is promoted to Rank 1 (Verified).
+        \\
+    , .{});
+}
+
 fn printAskHelp(writer: anytype) !void {
     try writer.print(
         \\corpus ask
@@ -274,6 +300,55 @@ pub fn executeFromArgs(
             }
         }
         try executeApplyStaged(allocator, engine_root, options);
+        return;
+    }
+
+    if (std.mem.eql(u8, sub, "medic-ingest")) {
+        var options = base;
+        var i: usize = 1;
+        while (i < args.len) : (i += 1) {
+            const arg = args[i];
+            if (std.mem.startsWith(u8, arg, "--")) {
+                try std.io.getStdErr().writer().print("Unknown corpus medic-ingest option: {s}\n", .{arg});
+                std.process.exit(1);
+            } else if (options.corpus_path == null) {
+                options.corpus_path = arg;
+            } else {
+                try std.io.getStdErr().writer().print("Unexpected extra corpus medic-ingest argument: {s}\n", .{arg});
+                std.process.exit(1);
+            }
+        }
+        if (options.corpus_path == null) {
+            try std.io.getStdErr().writer().print("Missing <path> for medic-ingest\n", .{});
+            std.process.exit(1);
+        }
+        try executeMedicIngest(allocator, engine_root, options);
+        return;
+    }
+
+    if (std.mem.eql(u8, sub, "medic-solve")) {
+        const options = base;
+        var test_args = std.ArrayList([]const u8).init(allocator);
+        defer test_args.deinit();
+
+        var i: usize = 1;
+        while (i < args.len) : (i += 1) {
+            const arg = args[i];
+            if (std.mem.startsWith(u8, arg, "--")) {
+                if (std.mem.eql(u8, arg, "--json") or std.mem.eql(u8, arg, "--debug")) {
+                    // these are parsed globally or handled as flags, ignore here
+                } else {
+                    try test_args.append(arg);
+                }
+            } else {
+                try test_args.append(arg);
+            }
+        }
+        if (test_args.items.len == 0) {
+            try std.io.getStdErr().writer().print("Missing <test-command...> for medic-solve\n", .{});
+            std.process.exit(1);
+        }
+        try executeMedicSolve(allocator, engine_root, options, test_args.items);
         return;
     }
 
@@ -766,6 +841,120 @@ fn indexOfIgnoreCase(haystack: []const u8, needle: []const u8) ?usize {
     return null;
 }
 
+pub fn executeMedicIngest(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: CorpusOptions) !void {
+    const bin_path = locator.findEngineBinary(allocator, engine_root, .ghost_medic_ingest) catch |err| {
+        try locator.printLocatorError(std.io.getStdErr().writer(), .ghost_medic_ingest, engine_root, err);
+        std.process.exit(1);
+    };
+    defer allocator.free(bin_path);
+
+    var argv_list = std.ArrayList([]const u8).init(allocator);
+    defer argv_list.deinit();
+    try argv_list.append(bin_path);
+    try argv_list.append(options.corpus_path.?);
+
+    if (options.debug) {
+        try std.io.getStdErr().writer().print("[DEBUG] Engine Binary: {s}\n", .{bin_path});
+        try std.io.getStdErr().writer().print("[DEBUG] Corpus Operation: medic-ingest\n", .{});
+        try printDebugArgv(std.io.getStdErr().writer(), argv_list.items);
+    }
+
+    const result = process.runEngineCommand(allocator, argv_list.items) catch |err| {
+        try std.io.getStdErr().writer().print("\x1b[31m[!] Error:\x1b[0m Failed to execute corpus medic-ingest: {}\n", .{ err });
+        std.process.exit(1);
+    };
+    defer {
+        allocator.free(result.stdout);
+        allocator.free(result.stderr);
+    }
+
+    if (options.json) {
+        try std.io.getStdOut().writer().writeAll(result.stdout);
+        if (result.stderr.len > 0) try std.io.getStdErr().writer().writeAll(result.stderr);
+        if (result.exit_code != 0) std.process.exit(result.exit_code);
+        return;
+    }
+
+    if (result.exit_code != 0) {
+        try std.io.getStdErr().writer().print("\x1b[31m[!] Engine Error (Exit Code {d}):\x1b[0m\n", .{result.exit_code});
+        if (result.stderr.len > 0) {
+            try std.io.getStdErr().writer().writeAll(result.stderr);
+            if (result.stderr[result.stderr.len - 1] != '\n') try std.io.getStdErr().writer().writeByte('\n');
+        } else if (result.stdout.len > 0) {
+            try std.io.getStdErr().writer().writeAll(result.stdout);
+            if (result.stdout[result.stdout.len - 1] != '\n') try std.io.getStdErr().writer().writeByte('\n');
+        }
+        std.process.exit(result.exit_code);
+    } else {
+        if (result.stdout.len > 0) {
+            try std.io.getStdOut().writer().writeAll(result.stdout);
+            if (result.stdout[result.stdout.len - 1] != '\n') try std.io.getStdOut().writer().writeByte('\n');
+        }
+        if (result.stderr.len > 0) {
+            try std.io.getStdErr().writer().writeAll(result.stderr);
+            if (result.stderr[result.stderr.len - 1] != '\n') try std.io.getStdErr().writer().writeByte('\n');
+        }
+    }
+}
+
+pub fn executeMedicSolve(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: CorpusOptions, test_cmd_args: []const []const u8) !void {
+    const bin_path = locator.findEngineBinary(allocator, engine_root, .ghost_medic_solve) catch |err| {
+        try locator.printLocatorError(std.io.getStdErr().writer(), .ghost_medic_solve, engine_root, err);
+        std.process.exit(1);
+    };
+    defer allocator.free(bin_path);
+
+    var argv_list = std.ArrayList([]const u8).init(allocator);
+    defer argv_list.deinit();
+    try argv_list.append(bin_path);
+    for (test_cmd_args) |arg| {
+        try argv_list.append(arg);
+    }
+
+    if (options.debug) {
+        try std.io.getStdErr().writer().print("[DEBUG] Engine Binary: {s}\n", .{bin_path});
+        try std.io.getStdErr().writer().print("[DEBUG] Corpus Operation: medic-solve\n", .{});
+        try printDebugArgv(std.io.getStdErr().writer(), argv_list.items);
+    }
+
+    const result = process.runEngineCommand(allocator, argv_list.items) catch |err| {
+        try std.io.getStdErr().writer().print("\x1b[31m[!] Error:\x1b[0m Failed to execute corpus medic-solve: {}\n", .{ err });
+        std.process.exit(1);
+    };
+    defer {
+        allocator.free(result.stdout);
+        allocator.free(result.stderr);
+    }
+
+    if (options.json) {
+        try std.io.getStdOut().writer().writeAll(result.stdout);
+        if (result.stderr.len > 0) try std.io.getStdErr().writer().writeAll(result.stderr);
+        if (result.exit_code != 0) std.process.exit(result.exit_code);
+        return;
+    }
+
+    if (result.exit_code != 0) {
+        try std.io.getStdErr().writer().print("\x1b[31m[!] Engine Error (Exit Code {d}):\x1b[0m\n", .{result.exit_code});
+        if (result.stderr.len > 0) {
+            try std.io.getStdErr().writer().writeAll(result.stderr);
+            if (result.stderr[result.stderr.len - 1] != '\n') try std.io.getStdErr().writer().writeByte('\n');
+        } else if (result.stdout.len > 0) {
+            try std.io.getStdErr().writer().writeAll(result.stdout);
+            if (result.stdout[result.stdout.len - 1] != '\n') try std.io.getStdErr().writer().writeByte('\n');
+        }
+        std.process.exit(result.exit_code);
+    } else {
+        if (result.stdout.len > 0) {
+            try std.io.getStdOut().writer().writeAll(result.stdout);
+            if (result.stdout[result.stdout.len - 1] != '\n') try std.io.getStdOut().writer().writeByte('\n');
+        }
+        if (result.stderr.len > 0) {
+            try std.io.getStdErr().writer().writeAll(result.stderr);
+            if (result.stderr[result.stderr.len - 1] != '\n') try std.io.getStdErr().writer().writeByte('\n');
+        }
+    }
+}
+
 pub fn executeApplyStaged(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: CorpusOptions) !void {
     try runCorpusIngest(allocator, engine_root, .apply_staged, null, options);
 }
@@ -1141,11 +1330,11 @@ pub fn printCorpusAskResult(writer: anytype, value: std.json.Value) !void {
         if (std.mem.eql(u8, state, "concept void fallback")) {
             try writer.writeAll("[Concept Void: Triggering Local Web Scrape...]\n\n");
         } else if (corpus.get("answerDraft") != null) {
-            try writer.writeAll("[Source: Resident Omni-Codex]\n\n");
+            try writer.writeAll("[Source: Neuro-Symbolic Engine]\n\n");
         }
         try writer.print("Engine State: {s}\n", .{state});
     } else if (corpus.get("answerDraft") != null) {
-        try writer.writeAll("[Source: Resident Omni-Codex]\n\n");
+        try writer.writeAll("[Source: Neuro-Symbolic Engine]\n\n");
     }
     if (getString(corpus, "permission")) |permission| try writer.print("Permission: {s}\n", .{permission});
 

@@ -1,10 +1,86 @@
 const std = @import("std");
 const state = @import("state.zig");
+const input_controller = @import("input_controller.zig");
 const slash = @import("slash.zig");
 const stats = @import("stats.zig");
 const terminal = @import("terminal.zig");
 
 pub const TerminalSize = terminal.TerminalSize;
+
+pub const BoundingBox = struct {
+    x: u16,
+    y: u16,
+    width: u16,
+    height: u16,
+};
+
+pub const TelemetryPane = struct {
+    bounds: BoundingBox,
+};
+
+const DashboardLayout = struct {
+    chat: BoundingBox,
+    telemetry: TelemetryPane,
+    session_hot: BoundingBox,
+    divider_col: u16,
+    input_row: u16,
+    suggestion_row: u16,
+};
+
+const PaneBuffer = struct {
+    allocator: std.mem.Allocator,
+    lines: std.ArrayList([]u8),
+
+    fn init(allocator: std.mem.Allocator) PaneBuffer {
+        return .{
+            .allocator = allocator,
+            .lines = std.ArrayList([]u8).init(allocator),
+        };
+    }
+
+    fn deinit(self: *PaneBuffer) void {
+        for (self.lines.items) |line| self.allocator.free(line);
+        self.lines.deinit();
+    }
+
+    fn appendLine(self: *PaneBuffer, text: []const u8) !void {
+        try self.lines.append(try self.allocator.dupe(u8, text));
+    }
+
+    fn appendFmt(self: *PaneBuffer, comptime fmt: []const u8, args: anytype) !void {
+        const text = try std.fmt.allocPrint(self.allocator, fmt, args);
+        defer self.allocator.free(text);
+        try self.appendLine(text);
+    }
+
+    fn appendWrapped(self: *PaneBuffer, text: []const u8, width: u16) !void {
+        if (width == 0) return;
+        if (text.len == 0) {
+            try self.appendLine("");
+            return;
+        }
+        const wrap_width: usize = width;
+        var start: usize = 0;
+        while (start < text.len) {
+            const remaining = text[start..];
+            const take = @min(remaining.len, wrap_width);
+            try self.appendLine(remaining[0..take]);
+            start += take;
+        }
+    }
+
+    fn flushScrolled(self: *const PaneBuffer, writer: anytype, bounds: BoundingBox) !void {
+        if (bounds.width == 0 or bounds.height == 0) return;
+        const visible: usize = bounds.height;
+        const start: usize = if (self.lines.items.len > visible) self.lines.items.len - visible else 0;
+        var row: u16 = 0;
+        while (row < bounds.height) : (row += 1) {
+            const idx = start + row;
+            if (idx >= self.lines.items.len) break;
+            try writeAtBox(writer, bounds, row, self.lines.items[idx]);
+        }
+    }
+};
 
 pub const Style = struct {
     color: bool,
@@ -27,6 +103,10 @@ pub const Style = struct {
 
     pub fn dim(self: Style) []const u8 {
         return self.code("\x1b[2m");
+    }
+
+    pub fn pulse(self: Style) []const u8 {
+        return self.code("\x1b[5m");
     }
 
     pub fn cyan(self: Style) []const u8 {
@@ -57,8 +137,16 @@ pub const Style = struct {
         return self.code("\x1b[32m");
     }
 
+    pub fn brightGreen(self: Style) []const u8 {
+        return self.code("\x1b[92m");
+    }
+
     pub fn blue(self: Style) []const u8 {
         return self.code("\x1b[34m");
+    }
+
+    pub fn brightRed(self: Style) []const u8 {
+        return self.code("\x1b[91m");
     }
 };
 
@@ -113,21 +201,7 @@ pub fn renderCompactWithSize(writer: anytype, s: *state.SessionState, style: Sty
 }
 
 fn renderDashboardWithSize(writer: anytype, s: *state.SessionState, style: Style, size: TerminalSize, compact: bool) !void {
-    const suggestion_height = suggestionHeight(s.current_input.items, size, compact);
-    const input_row = size.rows;
-    const content_top: u16 = 2;
-    const content_bottom: u16 = if (size.rows > 2 + suggestion_height) size.rows - 1 - suggestion_height else 2;
-    const desired_left: u16 = @as(u16, @intCast((@as(usize, size.cols) * 60) / 100));
-    const max_left: u16 = if (size.cols > 18) size.cols - 18 else size.cols - 2;
-    const left_width: u16 = @min(@max(@as(u16, 24), @min(desired_left, max_left)), if (size.cols > 2) size.cols - 2 else 1);
-    const divider_col: u16 = @min(left_width + 1, size.cols);
-    const right_col: u16 = @min(divider_col + 1, size.cols);
-    const right_width: u16 = if (right_col <= size.cols) size.cols - right_col + 1 else 0;
-    const left_content_width: u16 = if (left_width > 1) left_width - 1 else left_width;
-    const right_content_col: u16 = @min(right_col + 1, size.cols);
-    const right_content_width: u16 = if (right_content_col <= size.cols) size.cols - right_content_col + 1 else right_width;
-    const content_height: u16 = if (content_bottom >= content_top) content_bottom - content_top + 1 else 0;
-    const right_split: u16 = content_top + @max(@as(u16, 4), content_height / 2);
+    const layout = dashboardLayoutFor(size, s.current_input.items, compact);
 
     try writer.writeAll("\x1b[r");
     try clearRows(writer, size.rows);
@@ -140,57 +214,99 @@ fn renderDashboardWithSize(writer: anytype, s: *state.SessionState, style: Style
         style.reset(),
     });
 
-    if (content_height != 0) {
-        var row = content_top;
-        while (row <= content_bottom) : (row += 1) {
-            try writeAt(writer, row, divider_col, 1, "|");
+    if (layout.chat.height != 0) {
+        var row: u16 = 0;
+        while (row < layout.chat.height) : (row += 1) {
+            try writeAt(writer, contentOriginRow() + row, layout.divider_col, 1, "|");
         }
         if (s.pending_patch != null) {
-            try renderDiffPane(writer, s, style, content_top, content_bottom, 1, left_content_width);
+            try renderDiffPane(writer, s, style, contentOriginRow() + layout.chat.y, contentOriginRow() + layout.chat.y + layout.chat.height - 1, layout.chat.x + 1, layout.chat.width);
         } else {
-            try renderConversationPane(writer, s, style, content_top, content_bottom, 1, left_content_width);
+            try renderConversationPane(writer, s, style, layout.chat);
         }
-        try renderTelemetryPane(writer, s, style, content_top, @min(content_bottom, right_split - 1), right_content_col, right_content_width);
-        if (right_split <= content_bottom) {
-            try renderSessionHotPane(writer, s, style, right_split, content_bottom, right_content_col, right_content_width);
-        }
+        try renderTelemetryPane(writer, s, style, layout.telemetry);
+        try renderSessionHotPane(writer, s, style, layout.session_hot);
     }
 
-    try renderSlashSuggestionsWithSize(writer, s, size.rows - 1, style, size);
-    try renderInputLine(writer, s, input_row, style);
+    try renderSlashSuggestionsWithSize(writer, s, layout.suggestion_row, style, size);
+    try renderInputLine(writer, s, layout.input_row, style);
+    try renderCommandCenterOverlay(writer, s, style, size, layout.input_row);
 
     s.previous_render_rows = size.rows;
     s.previous_render_cols = size.cols;
 }
 
-fn renderConversationPane(writer: anytype, s: *state.SessionState, style: Style, top: u16, bottom: u16, col: u16, width: u16) !void {
-    try writeFmtAt(writer, top, col, width, "{s}CHAT{s}", .{ style.cyan(), style.reset() });
-    var row = top + 1;
-    if (row > bottom) return;
-    const rows_available = bottom - row + 1;
+pub fn dashboardLayoutFor(size: TerminalSize, input_text: []const u8, compact: bool) DashboardLayout {
+    const suggestion_height = suggestionHeight(input_text, size, compact);
+    const input_row = size.rows;
+    const content_height: u16 = if (size.rows > 2 + suggestion_height) size.rows - 2 - suggestion_height else 1;
+    const desired_left: u16 = @as(u16, @intCast((@as(usize, size.cols) * 60) / 100));
+    const max_left: u16 = if (size.cols > 18) size.cols - 18 else size.cols - 2;
+    const left_width: u16 = @min(@max(@as(u16, 24), @min(desired_left, max_left)), if (size.cols > 2) size.cols - 2 else 1);
+    const divider_col: u16 = @min(left_width + 1, size.cols);
+    const right_col: u16 = @min(divider_col + 1, size.cols);
+    const right_content_col: u16 = @min(right_col + 1, size.cols);
+    const right_content_width: u16 = if (right_content_col <= size.cols) size.cols - right_content_col + 1 else 0;
+    const telemetry_height: u16 = @min(content_height, @max(@as(u16, 4), content_height / 2));
+    const session_y: u16 = telemetry_height;
+
+    return .{
+        .chat = .{
+            .x = 0,
+            .y = 0,
+            .width = if (left_width > 1) left_width - 1 else left_width,
+            .height = content_height,
+        },
+        .telemetry = .{
+            .bounds = .{
+                .x = if (right_content_col > 0) right_content_col - 1 else 0,
+                .y = 0,
+                .width = right_content_width,
+                .height = telemetry_height,
+            },
+        },
+        .session_hot = .{
+            .x = if (right_content_col > 0) right_content_col - 1 else 0,
+            .y = session_y,
+            .width = right_content_width,
+            .height = content_height - telemetry_height,
+        },
+        .divider_col = divider_col,
+        .input_row = input_row,
+        .suggestion_row = size.rows - 1,
+    };
+}
+
+fn contentOriginRow() u16 {
+    return 2;
+}
+
+fn renderConversationPane(writer: anytype, s: *state.SessionState, style: Style, bounds: BoundingBox) !void {
+    var pane = PaneBuffer.init(s.allocator);
+    defer pane.deinit();
+
+    try pane.appendFmt("{s}CONSOLE{s}", .{ style.cyan(), style.reset() });
+    if (bounds.height <= 1) {
+        try pane.flushScrolled(writer, bounds);
+        return;
+    }
+    const rows_available = bounds.height - 1;
     const max_turns: usize = @max(@as(usize, 1), rows_available / 5 + 1);
     const start = if (s.history.items.len > max_turns) s.history.items.len - max_turns else 0;
     for (s.history.items[start..]) |turn| {
-        if (row > bottom) break;
-        try writeFmtAt(writer, row, col, width, "{s}YOU{s}", .{ style.userText(), style.reset() });
-        row += 1;
-        if (row > bottom) break;
-        try writeAt(writer, row, col, width, turn.input);
-        row += 1;
-        if (row > bottom) break;
-        try writeFmtAt(writer, row, col, width, "{s}GHOST{s}", .{ style.ghostText(), style.reset() });
-        row += 1;
+        try pane.appendFmt("{s}YOU{s}", .{ style.userText(), style.reset() });
+        try pane.appendWrapped(turn.input, bounds.width);
+        try pane.appendFmt("{s}GHOST{s}", .{ style.ghostText(), style.reset() });
         const output = visibleTurnOutput(s, turn);
         var it = std.mem.splitScalar(u8, output, '\n');
         while (it.next()) |line| {
-            if (row > bottom) break;
             const trimmed = std.mem.trimRight(u8, line, "\r");
             if (trimmed.len == 0) continue;
-            try writeAt(writer, row, col, width, trimmed);
-            row += 1;
+            try pane.appendWrapped(trimmed, bounds.width);
         }
-        if (row <= bottom) row += 1;
+        try pane.appendLine("");
     }
+    try pane.flushScrolled(writer, bounds);
 }
 
 fn renderDiffPane(writer: anytype, s: *state.SessionState, style: Style, top: u16, bottom: u16, col: u16, width: u16) !void {
@@ -228,95 +344,69 @@ fn visibleTurnOutput(s: *const state.SessionState, turn: state.Turn) []const u8 
     return turn.rendered_output;
 }
 
-fn renderTelemetryPane(writer: anytype, s: *state.SessionState, style: Style, top: u16, bottom: u16, col: u16, width: u16) !void {
-    if (top > bottom or width == 0) return;
-    var row = top;
-    try writeFmtAt(writer, row, col, width, "{s}DAEMON TELEMETRY{s}", .{ style.cyan(), style.reset() });
-    row += 1;
-    if (row <= bottom) {
-        try writeFmtAt(writer, row, col, width, "heartbeat: {s}", .{if (s.daemon_active) "hot" else "off"});
-        row += 1;
-    }
+fn renderTelemetryPane(writer: anytype, s: *state.SessionState, style: Style, pane: TelemetryPane) !void {
+    const bounds = pane.bounds;
+    if (bounds.width == 0 or bounds.height == 0) return;
+    var buf = PaneBuffer.init(s.allocator);
+    defer buf.deinit();
+
+    try buf.appendFmt("{s}DAEMON TELEMETRY{s}", .{ style.cyan(), style.reset() });
+    try appendProofMatrix(&buf, s, style);
+    try buf.appendFmt("heartbeat: {s}", .{if (s.daemon_active) "hot" else "off"});
+    try buf.appendFmt("domain: {s}", .{s.daemon_pipeline_domain orelse "none"});
+    try buf.appendFmt("z3: {s}", .{s.daemon_pipeline_z3_status orelse "idle"});
+    try buf.appendFmt("confidence: {s}", .{s.daemon_pipeline_confidence_band orelse "yellow_heuristic"});
     var vram_buf: [32]u8 = undefined;
-    if (row <= bottom) {
-        try writeFmtAt(writer, row, col, width, "VRAM resident: {s}", .{formatBytes(&vram_buf, s.daemon_vram_resident_bytes)});
-        row += 1;
-    }
+    try buf.appendFmt("VRAM resident: {s}", .{formatBytes(&vram_buf, s.daemon_vram_resident_bytes)});
     var l1_buf: [32]u8 = undefined;
-    if (row <= bottom) {
-        try writeFmtAt(writer, row, col, width, "L1 index: {s}", .{formatBytes(&l1_buf, s.daemon_l1_concept_index_bytes)});
-        row += 1;
-    }
+    try buf.appendFmt("L1 index: {s}", .{formatBytes(&l1_buf, s.daemon_l1_concept_index_bytes)});
     var hot_buf: [32]u8 = undefined;
-    if (row <= bottom) {
-        try writeFmtAt(writer, row, col, width, "hot-page: {s}", .{formatBytes(&hot_buf, s.daemon_hot_page_bytes)});
-        row += 1;
-    }
+    try buf.appendFmt("hot-page: {s}", .{formatBytes(&hot_buf, s.daemon_hot_page_bytes)});
     var raw_buf: [32]u8 = undefined;
-    if (row <= bottom) {
-        try writeFmtAt(writer, row, col, width, "raw shard VRAM: {s}", .{formatBytes(&raw_buf, s.daemon_raw_shard_vram_bytes)});
-        row += 1;
-    }
-    if (row <= bottom) {
-        try writeFmtAt(writer, row, col, width, "vault ingest: {s}", .{if (s.daemon_vault_ingest_active) "active" else if (s.daemon_vault_ingest_recent) "recent" else "idle"});
-        row += 1;
-    }
-    if (row <= bottom) {
-        try writeFmtAt(writer, row, col, width, "vault files/errors: {d}/{d}", .{ s.daemon_vault_ingested_files, s.daemon_vault_ingest_errors });
-        row += 1;
-    }
+    try buf.appendFmt("raw shard VRAM: {s}", .{formatBytes(&raw_buf, s.daemon_raw_shard_vram_bytes)});
+    try buf.appendFmt("vault ingest: {s}", .{if (s.daemon_vault_ingest_active) "active" else if (s.daemon_vault_ingest_recent) "recent" else "idle"});
+    try buf.appendFmt("vault files/errors: {d}/{d}", .{ s.daemon_vault_ingested_files, s.daemon_vault_ingest_errors });
+    try buf.flushScrolled(writer, bounds);
 }
 
-fn renderSessionHotPane(writer: anytype, s: *state.SessionState, style: Style, top: u16, bottom: u16, col: u16, width: u16) !void {
-    if (top > bottom or width == 0) return;
-    var row = top;
-    try writeFmtAt(writer, row, col, width, "{s}SESSION HOT{s}", .{ style.cyan(), style.reset() });
-    row += 1;
-    if (row <= bottom) {
-        try writeFmtAt(writer, row, col, width, "target: {s}", .{s.daemon_context_target orelse "none"});
-        row += 1;
+fn appendProofMatrix(buf: *PaneBuffer, s: *state.SessionState, style: Style) !void {
+    try buf.appendFmt("{s}PROOF MATRIX{s}", .{ style.cyan(), style.reset() });
+    var line = std.ArrayList(u8).init(s.allocator);
+    defer line.deinit();
+    for (s.proof_slots, 0..) |slot, idx| {
+        const slot_style = switch (slot) {
+            .empty => style.dim(),
+            .pending => try std.fmt.allocPrint(s.allocator, "{s}{s}", .{ style.pulse(), style.yellow() }),
+            .verified => style.brightGreen(),
+            .failed => style.brightRed(),
+        };
+        defer if (slot == .pending) s.allocator.free(slot_style);
+
+        try line.writer().print("{s}█{s}", .{ slot_style, style.reset() });
+        if (idx == 7) try line.append(' ');
     }
+    try buf.appendLine(line.items);
+}
+
+fn renderSessionHotPane(writer: anytype, s: *state.SessionState, style: Style, bounds: BoundingBox) !void {
+    if (bounds.width == 0 or bounds.height == 0) return;
+    var buf = PaneBuffer.init(s.allocator);
+    defer buf.deinit();
+
+    try buf.appendFmt("{s}SESSION HOT{s}", .{ style.cyan(), style.reset() });
+    try buf.appendFmt("target: {s}", .{s.daemon_context_target orelse "none"});
     var session_buf: [32]u8 = undefined;
-    if (row <= bottom) {
-        try writeFmtAt(writer, row, col, width, "working bytes: {s}", .{formatBytes(&session_buf, s.daemon_session_hot_bytes)});
-        row += 1;
-    }
-    if (row <= bottom) {
-        try writeFmtAt(writer, row, col, width, "reasoning: {s}", .{s.reasoning.toStr()});
-        row += 1;
-    }
-    if (row <= bottom) {
-        try writeFmtAt(writer, row, col, width, "mounts: {d}", .{s.active_session_mounts.items.len});
-        row += 1;
-    }
-    if (row <= bottom) {
-        try writeFmtAt(writer, row, col, width, "last: {s}", .{s.last_command_status});
-        row += 1;
-    }
-    if (row <= bottom) {
-        try writeFmtAt(writer, row, col, width, "{s}ENGINE TRACE{s}", .{ style.cyan(), style.reset() });
-        row += 1;
-    }
-    if (row <= bottom) {
-        try writeFmtAt(writer, row, col, width, "authority: {s}", .{s.engine_trace.authority orelse "unknown"});
-        row += 1;
-    }
-    if (row <= bottom) {
-        try writeFmtAt(writer, row, col, width, "state: {s}", .{s.engine_trace.engine_state orelse s.last_command_status});
-        row += 1;
-    }
-    if (row <= bottom) {
-        try writeFmtAt(writer, row, col, width, "source: {s}", .{s.engine_trace.source orelse "none"});
-        row += 1;
-    }
-    if (row <= bottom) {
-        try writeFmtAt(writer, row, col, width, "stop: {s}", .{s.engine_trace.stop_reason orelse "none"});
-        row += 1;
-    }
-    if (row <= bottom) {
-        try writeFmtAt(writer, row, col, width, "trace: {s}", .{s.engine_trace.trace_flags orelse "none"});
-        row += 1;
-    }
+    try buf.appendFmt("working bytes: {s}", .{formatBytes(&session_buf, s.daemon_session_hot_bytes)});
+    try buf.appendFmt("reasoning: {s}", .{s.reasoning.toStr()});
+    try buf.appendFmt("mounts: {d}", .{s.active_session_mounts.items.len});
+    try buf.appendFmt("last: {s}", .{s.last_command_status});
+    try buf.appendFmt("{s}ENGINE TRACE{s}", .{ style.cyan(), style.reset() });
+    try buf.appendFmt("authority: {s}", .{s.engine_trace.authority orelse "unknown"});
+    try buf.appendFmt("state: {s}", .{s.engine_trace.engine_state orelse s.last_command_status});
+    try buf.appendFmt("source: {s}", .{s.engine_trace.source orelse "none"});
+    try buf.appendFmt("stop: {s}", .{s.engine_trace.stop_reason orelse "none"});
+    try buf.appendFmt("trace: {s}", .{s.engine_trace.trace_flags orelse "none"});
+    try buf.flushScrolled(writer, bounds);
 }
 
 fn clearRows(writer: anytype, rows: u16) !void {
@@ -338,6 +428,10 @@ fn writeFmtAt(writer: anytype, row: u16, col: u16, width: u16, comptime fmt: []c
 fn writeAt(writer: anytype, row: u16, col: u16, width: u16, text: []const u8) !void {
     try writer.print("\x1b[{d};{d}H", .{ row, col });
     try writeTruncated(writer, text, width);
+}
+
+fn writeAtBox(writer: anytype, bounds: BoundingBox, row_offset: u16, text: []const u8) !void {
+    try writeAt(writer, contentOriginRow() + bounds.y + row_offset, bounds.x + 1, bounds.width, text);
 }
 
 fn formatBytes(buf: *[32]u8, bytes: usize) []const u8 {
@@ -400,6 +494,43 @@ fn renderInputLine(writer: anytype, s: *state.SessionState, row: u16, style: Sty
     }
 }
 
+fn renderCommandCenterOverlay(writer: anytype, s: *state.SessionState, style: Style, size: TerminalSize, input_row: u16) !void {
+    if (s.file_target_finder.active and s.file_target_finder.count > 0) {
+        try renderFileTargetMenu(writer, s, style, size, input_row);
+        return;
+    }
+    if (input_controller.constraintCandidateCount(s) > 0) {
+        try renderConstraintMenu(writer, s, style, size, input_row);
+    }
+}
+
+fn renderConstraintMenu(writer: anytype, s: *state.SessionState, style: Style, size: TerminalSize, input_row: u16) !void {
+    const count = @min(input_controller.constraintCandidateCount(s), @as(usize, 3));
+    if (count == 0 or input_row <= count + 1) return;
+    const top: u16 = @intCast(input_row - count - 1);
+    const width: u16 = @min(size.cols, 42);
+    try writeFmtAt(writer, top, 1, width, "{s}GIP CONSTRAINTS{s}", .{ style.cyan(), style.reset() });
+    var i: usize = 0;
+    while (i < count) : (i += 1) {
+        const candidate = input_controller.constraintCandidateAt(s, i) orelse continue;
+        const marker = if (i == s.constraint_autocomplete.selected_index) ">" else " ";
+        try writeFmtAt(writer, top + 1 + @as(u16, @intCast(i)), 1, width, "{s} {s}", .{ marker, candidate });
+    }
+}
+
+fn renderFileTargetMenu(writer: anytype, s: *state.SessionState, style: Style, size: TerminalSize, input_row: u16) !void {
+    const count = @min(s.file_target_finder.count, @as(usize, 5));
+    if (count == 0 or input_row <= count + 1) return;
+    const top: u16 = @intCast(input_row - count - 1);
+    const width: u16 = @min(size.cols, 70);
+    try writeFmtAt(writer, top, 1, width, "{s}FILE TARGETS{s}", .{ style.cyan(), style.reset() });
+    var i: usize = 0;
+    while (i < count) : (i += 1) {
+        const marker = if (i == s.file_target_finder.selected_index) ">" else " ";
+        try writeFmtAt(writer, top + 1 + @as(u16, @intCast(i)), 1, width, "{s} {s}", .{ marker, s.file_target_finder.targets[i].text() });
+    }
+}
+
 pub fn renderFrame(writer: anytype, s: *state.SessionState, style: Style) !void {
     try renderFrameWithSize(writer, s, style, getTerminalSize());
 }
@@ -424,7 +555,8 @@ pub fn renderHelpWithSize(writer: anytype, style: Style, size: TerminalSize) !vo
     }
     try writer.print(
         \\  keys                 Ctrl+C quit | Ctrl+L clear | Ctrl+R reasoning | Ctrl+D debug | Esc quit
-        \\                       Ctrl+Y toggle YOLO | Shift+Tab accept pending diff | y/N approve command
+        \\                       Ctrl+T file targets | Tab complete GIP/file target | Ctrl+Y toggle YOLO
+        \\                       Shift+Tab accept pending diff | y/N approve command
         \\
     , .{});
 }
@@ -859,9 +991,15 @@ test "right telemetry pane remains anchored after long chat render" {
     try session.setEngineTrace(.{
         .authority = "NON-AUTHORIZING",
         .engine_state = "concept_void",
-        .source = "Resident Omni-Codex",
+        .source = "Neuro-Symbolic Engine",
         .trace_flags = "l1Hit=storage",
     });
+    var long_output = std.ArrayList(u8).init(testing.allocator);
+    defer long_output.deinit();
+    var line: usize = 0;
+    while (line < 100) : (line += 1) {
+        try long_output.writer().print("proof line {d}: A gigabyte is a unit of digital storage equal to about one billion bytes and this proof output must stay in the left viewport only.\n", .{line});
+    }
     try session.history.append(.{
         .index = 1,
         .input = try testing.allocator.dupe(u8, "what is a gigabyte"),
@@ -869,7 +1007,7 @@ test "right telemetry pane remains anchored after long chat render" {
         .context_artifact = null,
         .response = null,
         .raw_output = try testing.allocator.dupe(u8, "{}"),
-        .rendered_output = try testing.allocator.dupe(u8, "A gigabyte is a unit of digital storage equal to about one billion bytes.\nThis intentionally long line should truncate before the right telemetry pane and never push it away from the right side."),
+        .rendered_output = try testing.allocator.dupe(u8, long_output.items),
         .elapsed_ms = 7,
         .input_runes = 18,
         .output_runes = 32,
@@ -881,8 +1019,13 @@ test "right telemetry pane remains anchored after long chat render" {
 
     try renderWithSize(out.writer(), &session, .{ .color = false }, .{ .rows = 30, .cols = 100 });
 
+    const layout = dashboardLayoutFor(.{ .rows = 30, .cols = 100 }, session.current_input.items, false);
+    try testing.expectEqual(@as(u16, 0), layout.telemetry.bounds.y);
+    try testing.expectEqual(@as(u16, 62), layout.telemetry.bounds.x);
+    try testing.expectEqual(@as(u16, 38), layout.telemetry.bounds.width);
     try testing.expect(std.mem.indexOf(u8, out.items, "\x1b[2;63HDAEMON TELEMETRY") != null);
-    try testing.expect(std.mem.indexOf(u8, out.items, "\x1b[6;63Hhot-page: 8.0 KiB") != null);
+    try testing.expect(std.mem.indexOf(u8, out.items, "\x1b[11;63Hhot-page: 8.0 KiB") != null);
     try testing.expect(std.mem.indexOf(u8, out.items, "\x1b[23;63Hauthority: NON-AUTHORIZING") != null);
-    try testing.expect(std.mem.indexOf(u8, out.items, "A gigabyte is a unit of digital storage") != null);
+    try testing.expect(std.mem.indexOf(u8, out.items, "proof line 99: A gigabyte is a unit") != null);
+    try testing.expect(std.mem.indexOf(u8, out.items, "\x1b[2;63Hproof line") == null);
 }

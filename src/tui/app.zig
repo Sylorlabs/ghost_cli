@@ -2,9 +2,11 @@ const std = @import("std");
 const state = @import("state.zig");
 const render = @import("render.zig");
 const input = @import("input.zig");
+const input_controller = @import("input_controller.zig");
 const slash = @import("slash.zig");
 const stats = @import("stats.zig");
 const terminal = @import("terminal.zig");
+const history = @import("history.zig");
 const runner = @import("../engine/runner.zig");
 const shell = @import("../engine/shell.zig");
 const diff_viewer = @import("diff_viewer.zig");
@@ -143,6 +145,11 @@ pub fn run(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: RunO
                         s.yolo_mode = !s.yolo_mode;
                         s.last_command_status = if (s.yolo_mode) "yolo on" else "yolo off";
                     },
+                    'T' => {
+                        try input_controller.activateFileTargetFinder(&s);
+                        s.constraint_autocomplete = .{};
+                        s.last_command_status = "file target finder";
+                    },
                     else => {},
                 }
             },
@@ -156,19 +163,27 @@ pub fn run(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: RunO
                 } else break;
             },
             .up => {
-                const count = slash.matchingCount(s.current_input.items);
-                if (count > 0) {
-                    if (s.suggestion_index == 0) {
-                        s.suggestion_index = count - 1;
-                    } else {
-                        s.suggestion_index -= 1;
+                if (s.file_target_finder.active or s.constraint_autocomplete.active) {
+                    input_controller.moveSelection(&s, -1);
+                } else {
+                    const count = slash.matchingCount(s.current_input.items);
+                    if (count > 0) {
+                        if (s.suggestion_index == 0) {
+                            s.suggestion_index = count - 1;
+                        } else {
+                            s.suggestion_index -= 1;
+                        }
                     }
                 }
             },
             .down => {
-                const count = slash.matchingCount(s.current_input.items);
-                if (count > 0) {
-                    s.suggestion_index = (s.suggestion_index + 1) % count;
+                if (s.file_target_finder.active or s.constraint_autocomplete.active) {
+                    input_controller.moveSelection(&s, 1);
+                } else {
+                    const count = slash.matchingCount(s.current_input.items);
+                    if (count > 0) {
+                        s.suggestion_index = (s.suggestion_index + 1) % count;
+                    }
                 }
             },
             .right => {
@@ -193,7 +208,9 @@ pub fn run(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: RunO
                 }
             },
             .tab => {
-                if (std.mem.indexOfAny(u8, s.current_input.items, " \t") == null) {
+                if (try input_controller.completeCurrentToken(&s)) {
+                    s.suggestion_index = 0;
+                } else if (std.mem.indexOfAny(u8, s.current_input.items, " \t") == null) {
                     if (slash.findNthMatch(s.current_input.items, s.suggestion_index)) |matched| {
                         if (slash.isPrefixMatch(s.current_input.items, matched) and matched.len > s.current_input.items.len) {
                             try s.current_input.appendSlice(matched[s.current_input.items.len..]);
@@ -231,6 +248,8 @@ pub fn run(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: RunO
                 if (s.current_input.items.len > 0) {
                     _ = s.current_input.pop();
                     s.suggestion_index = 0;
+                    s.file_target_finder.clear();
+                    input_controller.refreshConstraintAutocomplete(&s);
                 }
             },
             .char => |c| {
@@ -247,10 +266,16 @@ pub fn run(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: RunO
                 if (s.current_input.items.len == 0 and c == 'q') break;
                 try s.current_input.append(c);
                 s.suggestion_index = 0;
+                s.file_target_finder.clear();
+                input_controller.refreshConstraintAutocomplete(&s);
             },
             .unsupported => key_changed = false,
         }
         if (key_changed) frame_dirty = true;
+    }
+
+    if (s.history.items.len > 0) {
+        history.saveConversation(allocator, "last_session", s.history.items) catch {};
     }
 }
 
@@ -282,6 +307,13 @@ const DaemonStatusPayload = struct {
     vaultIngestedFiles: ?usize = null,
     vaultIngestErrors: ?usize = null,
     lastVaultIngestMs: ?i64 = null,
+    sovereignPipeline: ?SovereignPipelineStatus = null,
+};
+
+const SovereignPipelineStatus = struct {
+    domain: ?[]const u8 = null,
+    z3Status: ?[]const u8 = null,
+    confidenceBand: ?[]const u8 = null,
 };
 
 const DaemonStatusEnvelope = struct {
@@ -299,6 +331,7 @@ fn refreshDaemonTelemetry(allocator: std.mem.Allocator, s: *state.SessionState, 
         s.daemon_vault_ingest_active = false;
         s.daemon_vault_ingest_recent = false;
         try s.setDaemonContextTarget(null);
+        try s.setDaemonPipelineTelemetry(null, null, null);
         return;
     };
     defer allocator.free(response);
@@ -306,6 +339,7 @@ fn refreshDaemonTelemetry(allocator: std.mem.Allocator, s: *state.SessionState, 
     var parsed = std.json.parseFromSlice(DaemonStatusEnvelope, allocator, response, .{ .ignore_unknown_fields = true }) catch {
         s.daemon_active = false;
         try s.setDaemonContextTarget(null);
+        try s.setDaemonPipelineTelemetry(null, null, null);
         return;
     };
     defer parsed.deinit();
@@ -313,6 +347,7 @@ fn refreshDaemonTelemetry(allocator: std.mem.Allocator, s: *state.SessionState, 
     const payload = parsed.value.daemon orelse {
         s.daemon_active = false;
         try s.setDaemonContextTarget(null);
+        try s.setDaemonPipelineTelemetry(null, null, null);
         return;
     };
     s.daemon_active = std.mem.eql(u8, payload.status, "running");
@@ -327,6 +362,11 @@ fn refreshDaemonTelemetry(allocator: std.mem.Allocator, s: *state.SessionState, 
     s.daemon_vault_ingest_errors = payload.vaultIngestErrors orelse 0;
     s.daemon_last_vault_ingest_ms = payload.lastVaultIngestMs orelse 0;
     try s.setDaemonContextTarget(payload.sessionContextTarget);
+    if (payload.sovereignPipeline) |pipeline| {
+        try s.setDaemonPipelineTelemetry(pipeline.domain, pipeline.z3Status, pipeline.confidenceBand);
+    } else {
+        try s.setDaemonPipelineTelemetry(null, null, null);
+    }
 }
 
 pub fn handleSlash(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *state.SessionState, text: []const u8, writer: anytype, style: render.Style) !?bool {
@@ -463,6 +503,77 @@ pub fn handleSlash(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *s
                 try s.addActiveSessionMount(parsed_mount.pack_id, parsed_mount.pack_version);
                 s.last_counters.mounted_packs = s.active_session_mounts.items.len;
                 s.last_command_status = "mount active";
+            }
+        },
+        .conversations => {
+            s.last_command_status = "list conversations";
+            const list = history.listConversations(allocator) catch |err| {
+                try render.renderErrorMessage(writer, style, "Failed to list conversations: {}", .{err});
+                return false;
+            };
+            defer {
+                for (list) |name| allocator.free(name);
+                allocator.free(list);
+            }
+            if (list.len == 0) {
+                try render.renderCommandMessage(writer, style, "No saved conversations found.", .{});
+            } else {
+                try render.renderCommandMessage(writer, style, "Saved Conversations:", .{});
+                for (list) |name| {
+                    try writer.print("  {s}\n", .{name});
+                }
+            }
+        },
+        .save => {
+            const name = command.arg orelse "";
+            if (name.len == 0) {
+                s.last_command_status = "save name required";
+                try render.renderErrorMessage(writer, style, "/save requires a name", .{});
+            } else {
+                s.last_command_status = "saving...";
+                history.saveConversation(allocator, name, s.history.items) catch |err| {
+                    try render.renderErrorMessage(writer, style, "Failed to save conversation: {}", .{err});
+                    return false;
+                };
+                s.last_command_status = "saved";
+                try render.renderCommandMessage(writer, style, "Conversation saved as: {s}", .{name});
+            }
+        },
+        .resume_session => {
+            const name = command.arg orelse "";
+            if (name.len == 0) {
+                s.last_command_status = "resume name required";
+                try render.renderErrorMessage(writer, style, "/resume requires a name", .{});
+            } else {
+                s.last_command_status = "resuming...";
+                const loaded = history.loadConversation(allocator, name) catch |err| {
+                    try render.renderErrorMessage(writer, style, "Failed to load conversation: {}", .{err});
+                    return false;
+                };
+                // Note: loaded.turns memory is managed by its own allocator/parsed value
+                // In a real app we might want to deep copy or be careful.
+                // For now, let's just clear and append.
+                s.clearHistory();
+                for (loaded.turns) |turn| {
+                    // We need to dupe the strings because s.freeTurn will free them.
+                    const turn_dupe = state.Turn{
+                        .index = turn.index,
+                        .input = try allocator.dupe(u8, turn.input),
+                        .reasoning = turn.reasoning,
+                        .context_artifact = if (turn.context_artifact) |ca| try allocator.dupe(u8, ca) else null,
+                        .response = null, // TODO: deep copy response if needed
+                        .raw_output = try allocator.dupe(u8, turn.raw_output),
+                        .rendered_output = try allocator.dupe(u8, turn.rendered_output),
+                        .elapsed_ms = turn.elapsed_ms,
+                        .input_runes = turn.input_runes,
+                        .output_runes = turn.output_runes,
+                        .json_ok = turn.json_ok,
+                    };
+                    try s.appendTurn(turn_dupe);
+                }
+                s.last_command_status = "resumed";
+                try render.clearHistoryAreaWithSize(writer, s.terminal_size);
+                try render.renderCommandMessage(writer, style, "Resumed conversation: {s}", .{name});
             }
         },
         .unknown => {
@@ -774,7 +885,20 @@ fn writeCorpusAskChat(writer: anytype, corpus_value: std.json.Value) !void {
         try writer.writeByte('\n');
         return;
     }
+    if (firstUnknownReason(obj)) |reason| {
+        try writer.writeAll(reason);
+        try writer.writeByte('\n');
+        return;
+    }
     try writer.writeAll("No answer was produced.\n");
+}
+
+fn firstUnknownReason(obj: std.json.ObjectMap) ?[]const u8 {
+    const unknowns = obj.get("unknowns") orelse return null;
+    if (unknowns != .array or unknowns.array.items.len == 0) return null;
+    const first = unknowns.array.items[0];
+    if (first != .object) return null;
+    return getStringField(first.object, "reason");
 }
 
 fn writeGenericJsonChat(allocator: std.mem.Allocator, writer: anytype, value: std.json.Value, s: *state.SessionState) !bool {
@@ -792,7 +916,7 @@ fn writeGenericJsonChat(allocator: std.mem.Allocator, writer: anytype, value: st
 
 fn writeEngineResponseChat(writer: anytype, response: json_contracts.EngineResponse) !void {
     if (response.answer_draft) |answer| {
-        try writer.print("{s} [Source: Resident Omni-Codex]\n", .{answer});
+        try writer.print("{s} [Source: Neuro-Symbolic Engine]\n", .{answer});
         return;
     }
     if (response.getSummary()) |summary| {
@@ -837,7 +961,7 @@ fn traceFromEngineResponse(response: json_contracts.EngineResponse) state.Engine
         .authority = authorityLabel(response),
         .engine_state = response.getStatus() orelse response.getVerificationState(),
         .stop_reason = response.getStopReason() orelse response.getUnresolvedReason(),
-        .source = if (response.answer_draft != null) "Resident Omni-Codex" else null,
+        .source = if (response.answer_draft != null) "Neuro-Symbolic Engine" else null,
         .trace_flags = null,
     };
 }
@@ -918,9 +1042,9 @@ fn sourceLabelFromCorpusAsk(corpus_value: std.json.Value) ?[]const u8 {
     if (getStringField(obj, "state")) |state_label| {
         if (std.mem.eql(u8, state_label, "concept void fallback")) return "Concept Void";
     }
-    if (getBoolField(obj, "residentDaemon") orelse getBoolFromObjectField(obj, "trace", "residentDaemon") orelse false) return "Resident Omni-Codex";
-    if (getBoolField(obj, "voiceSynthesis") orelse getBoolField(obj, "voice_synthesis") orelse false) return "Resident Omni-Codex";
-    if (obj.get("answerDraft") != null or obj.get("answer_draft") != null) return "Resident Omni-Codex";
+    if (getBoolField(obj, "residentDaemon") orelse getBoolFromObjectField(obj, "trace", "residentDaemon") orelse false) return "Neuro-Symbolic Engine";
+    if (getBoolField(obj, "voiceSynthesis") orelse getBoolField(obj, "voice_synthesis") orelse false) return "Neuro-Symbolic Engine";
+    if (obj.get("answerDraft") != null or obj.get("answer_draft") != null) return "Neuro-Symbolic Engine";
     return null;
 }
 

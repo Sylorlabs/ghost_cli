@@ -6,9 +6,13 @@ pub const EngineBinaries = enum {
     ghost_patch_candidates,
     ghost_knowledge_pack,
     ghost_gip,
+    ghost_gemma,
     ghostd,
     ghost_project_autopsy,
     ghost_corpus_ingest,
+    ghost_invent,
+    ghost_medic_ingest,
+    ghost_medic_solve,
     ghost_swe_harness,
 
     pub fn toStr(self: EngineBinaries) []const u8 {
@@ -18,9 +22,13 @@ pub const EngineBinaries = enum {
             .ghost_patch_candidates => "ghost_patch_candidates",
             .ghost_knowledge_pack => "ghost_knowledge_pack",
             .ghost_gip => "ghost_gip",
+            .ghost_gemma => "ghost_gemma",
             .ghostd => "ghostd",
             .ghost_project_autopsy => "ghost_project_autopsy",
             .ghost_corpus_ingest => "ghost_corpus_ingest",
+            .ghost_invent => "ghost_invent",
+            .ghost_medic_ingest => "ghost_medic_ingest",
+            .ghost_medic_solve => "ghost_medic_solve",
             .ghost_swe_harness => "ghost_swe_harness",
         };
     }
@@ -33,9 +41,13 @@ pub const EngineBinaries = enum {
             .ghost_knowledge_pack,
             => true,
             .ghost_gip,
+            .ghost_gemma,
             .ghostd,
             .ghost_project_autopsy,
             .ghost_corpus_ingest,
+            .ghost_invent,
+            .ghost_medic_ingest,
+            .ghost_medic_solve,
             .ghost_swe_harness,
             => false,
         };
@@ -115,9 +127,13 @@ pub fn allBinaries() []const EngineBinaries {
         .ghost_patch_candidates,
         .ghost_knowledge_pack,
         .ghost_gip,
+        .ghost_gemma,
         .ghostd,
         .ghost_project_autopsy,
         .ghost_corpus_ingest,
+        .ghost_invent,
+        .ghost_medic_ingest,
+        .ghost_medic_solve,
         .ghost_swe_harness,
     };
 }

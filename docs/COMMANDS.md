@@ -5,7 +5,7 @@ Top-level help is organized around Ghost operator workflows:
 - **Core**: `ask`, `chat`, `fix`, `verify`
 - **Inspection**: `autopsy`, `context`, `status`, `doctor`
 - **Knowledge**: `packs`, `corpus`, `policy`, `correction`, `nk`, `learn`
-- **Advanced**: `rules`, `sigil`, `omni`, `swe`, `debug`
+- **Advanced**: `rules`, `sigil`, `omni`, `gemma`, `swe`, `debug`
 - **Interface**: `tui`
 
 Every top-level command supports `ghost <command> --help` without resolving or
@@ -38,6 +38,32 @@ Usage: `ghost ask "what does this config do?"`
 
 ### `ghost corpus`
 Explicit corpus lifecycle commands.
+
+### `ghost gemma`
+Explicit Ghost-native Gemma inspection commands.
+
+Usage: `ghost gemma weights inspect`
+Usage: `ghost gemma weights inspect --path ../ghost_engine/weights/gemma-4-E2B-it-Q8_0.gguf`
+Usage: `ghost gemma weights inspect --json --tensor-prefix blk.0 --limit 8`
+Usage: `ghost gemma matmul calibrate --path ../ghost_engine/weights/gemma-4-E2B-it-Q8_0.gguf --tensor blk.0.attn_q.weight --rows 8 --json`
+Usage: `ghost gemma inference smoke --path ../ghost_engine/weights/gemma-4-E2B-it-Q8_0.gguf --text "memory allocation heap pointer" --top-k 4 --json`
+Usage: `ghost gemma inference plan --path ../ghost_engine/weights/gemma-4-E2B-it-Q8_0.gguf --json --limit 12`
+Usage: `ghost gemma agent route --intent query --subject "memory allocation" --hint memory --confidence high --needs-ghost true --resonance 0.95 --decision-trace --evidence-trace --json`
+
+This command is read-only and non-authorizing. It inventories GGUF metadata and
+tensor shapes, runs deterministic Q8_0 numeric calibration, exposes a
+rune-to-rune inference smoke harness, inspects the Vulkan forward schedule, and
+routes strict agent contracts through `ghost_gemma`. Matmul calibration is
+numeric validation only. Inference smoke is a phase harness, not full model
+inference. Inference plan is scheduler inspection, not numeric output. Agent
+route does not use hidden fallbacks and only returns `supported` when the
+explicit resonance and proof trace gates pass.
+
+The Gemma wrapper does not start llama.cpp, Ollama, a tokenizer path, or a KV
+cache. It does not query/etch the meaning matrix except through explicit future
+engine hooks, and it does not mutate state from weight inspection, matmul
+calibration, inference smoke, inference plan, or query/conversation agent
+routing.
 
 #### `ghost corpus ingest`
 Stage corpus data through `ghost_corpus_ingest`.

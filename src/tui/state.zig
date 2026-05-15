@@ -36,6 +36,46 @@ pub const EngineTrace = struct {
     trace_flags: ?[]const u8 = null,
 };
 
+pub const MAX_PROOF_CONSTRAINTS: usize = 16;
+pub const MAX_FILE_TARGETS: usize = 64;
+pub const MAX_FILE_TARGET_PATH_BYTES: usize = 256;
+
+pub const ProofSlotStatus = enum {
+    empty,
+    pending,
+    verified,
+    failed,
+};
+
+pub const ConstraintAutocomplete = struct {
+    active: bool = false,
+    trigger_start: usize = 0,
+    token_start: usize = 0,
+    selected_index: usize = 0,
+};
+
+pub const FileTarget = struct {
+    path: [MAX_FILE_TARGET_PATH_BYTES]u8 = [_]u8{0} ** MAX_FILE_TARGET_PATH_BYTES,
+    len: usize = 0,
+
+    pub fn text(self: *const FileTarget) []const u8 {
+        return self.path[0..self.len];
+    }
+};
+
+pub const FileTargetFinder = struct {
+    active: bool = false,
+    targets: [MAX_FILE_TARGETS]FileTarget = [_]FileTarget{.{}} ** MAX_FILE_TARGETS,
+    count: usize = 0,
+    selected_index: usize = 0,
+
+    pub fn clear(self: *FileTargetFinder) void {
+        self.active = false;
+        self.count = 0;
+        self.selected_index = 0;
+    }
+};
+
 pub const SessionState = struct {
     allocator: std.mem.Allocator,
     history: std.ArrayList(Turn),
@@ -86,6 +126,9 @@ pub const SessionState = struct {
     daemon_vault_ingest_errors: usize,
     daemon_last_vault_ingest_ms: i64,
     daemon_context_target: ?[]u8,
+    daemon_pipeline_domain: ?[]u8,
+    daemon_pipeline_z3_status: ?[]u8,
+    daemon_pipeline_confidence_band: ?[]u8,
     last_daemon_refresh_ms: i64,
     daemon_refresh_count: usize,
     typing_turn_index: ?usize,
@@ -94,6 +137,9 @@ pub const SessionState = struct {
     pending_command: ?shell.CommandProposal,
     pending_patch: ?diff_viewer.PatchProposal,
     engine_trace: EngineTrace,
+    constraint_autocomplete: ConstraintAutocomplete,
+    file_target_finder: FileTargetFinder,
+    proof_slots: [MAX_PROOF_CONSTRAINTS]ProofSlotStatus,
 
     pub fn init(allocator: std.mem.Allocator, version: []const u8, engine_root_label: ?[]const u8, compact: bool) SessionState {
         return initWithLimit(allocator, version, engine_root_label, compact, default_max_history_turns);
@@ -150,6 +196,9 @@ pub const SessionState = struct {
             .daemon_vault_ingest_errors = 0,
             .daemon_last_vault_ingest_ms = 0,
             .daemon_context_target = null,
+            .daemon_pipeline_domain = null,
+            .daemon_pipeline_z3_status = null,
+            .daemon_pipeline_confidence_band = null,
             .last_daemon_refresh_ms = -daemon_refresh_interval_ms,
             .daemon_refresh_count = 0,
             .typing_turn_index = null,
@@ -158,6 +207,9 @@ pub const SessionState = struct {
             .pending_command = null,
             .pending_patch = null,
             .engine_trace = .{},
+            .constraint_autocomplete = .{},
+            .file_target_finder = .{},
+            .proof_slots = [_]ProofSlotStatus{.empty} ** MAX_PROOF_CONSTRAINTS,
         };
     }
 
@@ -176,6 +228,9 @@ pub const SessionState = struct {
         if (self.context_artifact) |ca| self.allocator.free(ca);
         if (self.project_shard) |project_shard| self.allocator.free(project_shard);
         if (self.daemon_context_target) |target| self.allocator.free(target);
+        if (self.daemon_pipeline_domain) |domain| self.allocator.free(domain);
+        if (self.daemon_pipeline_z3_status) |status| self.allocator.free(status);
+        if (self.daemon_pipeline_confidence_band) |band| self.allocator.free(band);
         self.clearPendingCommand();
         self.clearPendingPatch();
         self.clearEngineTrace();
@@ -238,6 +293,47 @@ pub const SessionState = struct {
         self.daemon_context_target = null;
         if (target) |value| {
             if (value.len != 0) self.daemon_context_target = try self.allocator.dupe(u8, value);
+        }
+    }
+
+    pub fn setDaemonPipelineTelemetry(self: *SessionState, domain: ?[]const u8, z3_status: ?[]const u8, confidence_band: ?[]const u8) !void {
+        if (self.daemon_pipeline_domain) |existing| self.allocator.free(existing);
+        if (self.daemon_pipeline_z3_status) |existing| self.allocator.free(existing);
+        if (self.daemon_pipeline_confidence_band) |existing| self.allocator.free(existing);
+        self.daemon_pipeline_domain = null;
+        self.daemon_pipeline_z3_status = null;
+        self.daemon_pipeline_confidence_band = null;
+        if (domain) |value| {
+            if (value.len != 0) self.daemon_pipeline_domain = try self.allocator.dupe(u8, value);
+        }
+        if (z3_status) |value| {
+            if (value.len != 0) self.daemon_pipeline_z3_status = try self.allocator.dupe(u8, value);
+        }
+        if (confidence_band) |value| {
+            if (value.len != 0) self.daemon_pipeline_confidence_band = try self.allocator.dupe(u8, value);
+        }
+        self.refreshProofSlots();
+    }
+
+    pub fn refreshProofSlots(self: *SessionState) void {
+        const z3 = self.daemon_pipeline_z3_status orelse "";
+        const active = self.daemon_active or z3.len > 0;
+        if (!active) {
+            self.proof_slots = [_]ProofSlotStatus{.empty} ** MAX_PROOF_CONSTRAINTS;
+            return;
+        }
+
+        const slot_status: ProofSlotStatus = if (std.mem.indexOf(u8, z3, "fail") != null or std.mem.indexOf(u8, z3, "unsat") != null)
+            .failed
+        else if (std.mem.indexOf(u8, z3, "verified") != null or std.mem.indexOf(u8, z3, "proved") != null or std.mem.eql(u8, z3, "sat"))
+            .verified
+        else
+            .pending;
+
+        self.proof_slots[0] = slot_status;
+        var i: usize = 1;
+        while (i < self.proof_slots.len) : (i += 1) {
+            self.proof_slots[i] = .empty;
         }
     }
 

@@ -15,6 +15,9 @@ pub const SlashKind = enum {
     autopsy,
     context,
     mount,
+    conversations,
+    resume_session,
+    save,
     unknown,
 };
 
@@ -44,6 +47,9 @@ pub const commands = [_]SlashCommandSpec{
     .{ .name = "/autopsy", .kind = .autopsy, .args = " <path>", .help = "Run explicit Project Autopsy scan" },
     .{ .name = "/context", .kind = .context, .args = " <path>", .help = "Set context artifact path" },
     .{ .name = "/mount", .kind = .mount, .args = " <pack>", .help = "Mount knowledge pack" },
+    .{ .name = "/conversations", .kind = .conversations, .help = "List saved conversations" },
+    .{ .name = "/resume", .kind = .resume_session, .args = " <name>", .help = "Resume a saved conversation" },
+    .{ .name = "/save", .kind = .save, .args = " <name>", .help = "Save current conversation" },
 };
 
 pub fn parse(text: []const u8) SlashCommand {

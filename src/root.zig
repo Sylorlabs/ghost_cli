@@ -920,7 +920,7 @@ test "TUI chat requires daemon and keeps offline errors conversational" {
 
 test "TUI slash command suggestions use prefix and fuzzy matching" {
     try testing.expectEqual(@as(usize, tui_slash.commands.len), tui_slash.matchingCount("/"));
-    try testing.expectEqual(@as(usize, 1), tui_slash.matchingCount("/r"));
+    try testing.expectEqual(@as(usize, 2), tui_slash.matchingCount("/r"));
     try testing.expectEqual(@as(usize, 4), tui_slash.matchingCount("/d"));
     try testing.expectEqualStrings("/reasoning", tui_slash.findFirstMatch("/r").?);
     try testing.expectEqualStrings("/reasoning", tui_slash.findFirstMatch("/rsn").?);
@@ -941,9 +941,10 @@ test "TUI slash command suggestions use prefix and fuzzy matching" {
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "+-- slash commands ") != null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "/help") != null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "/context") != null);
-    try testing.expectEqual(@as(u16, 15), session.previous_suggestion_height);
-    try testing.expectEqual(@as(u16, 15), tui_render.suggestionHeight("/", .{ .rows = 24, .cols = 80 }, false));
-    try testing.expectEqual(@as(u16, 3), tui_render.suggestionHeight("/r", .{ .rows = 24, .cols = 80 }, false));
+    const full_suggestion_height: u16 = @intCast(tui_slash.commands.len + 2);
+    try testing.expectEqual(full_suggestion_height, session.previous_suggestion_height);
+    try testing.expectEqual(full_suggestion_height, tui_render.suggestionHeight("/", .{ .rows = 24, .cols = 80 }, false));
+    try testing.expectEqual(@as(u16, 4), tui_render.suggestionHeight("/r", .{ .rows = 24, .cols = 80 }, false));
     try testing.expectEqual(@as(u16, 3), tui_render.suggestionHeight("/notreal", .{ .rows = 24, .cols = 80 }, false));
     try testing.expectEqual(@as(u16, 0), tui_render.suggestionHeight("normal prompt", .{ .rows = 24, .cols = 80 }, false));
 
@@ -952,8 +953,9 @@ test "TUI slash command suggestions use prefix and fuzzy matching" {
     try session.current_input.appendSlice("/r");
     try tui_render.renderSlashSuggestions(out_buf.writer(), &session, 20, .{ .color = false });
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "/reasoning") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "/resume") != null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "/debug") == null);
-    try testing.expectEqual(@as(u16, 3), session.previous_suggestion_height);
+    try testing.expectEqual(@as(u16, 4), session.previous_suggestion_height);
 
     out_buf.clearRetainingCapacity();
     session.current_input.clearRetainingCapacity();

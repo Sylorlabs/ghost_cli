@@ -69,6 +69,14 @@ ghost corpus ask --project-shard=my-project --max-results=3 --max-snippet-bytes=
 ghost corpus ask --json "What does the corpus say about verifier execution?"
 ghost corpus ask --debug "What does the corpus say about verifier execution?"
 
+# Ghost-native Gemma surfaces (explicit, non-authorizing unless proof-gated)
+ghost gemma weights inspect
+ghost gemma weights inspect --json --tensor-prefix blk.0 --limit 8
+ghost gemma matmul calibrate --path ../ghost_engine/weights/gemma-4-E2B-it-Q8_0.gguf --tensor blk.0.attn_q.weight --rows 8 --json
+ghost gemma inference smoke --path ../ghost_engine/weights/gemma-4-E2B-it-Q8_0.gguf --text "memory allocation heap pointer" --top-k 4 --json
+ghost gemma inference plan --path ../ghost_engine/weights/gemma-4-E2B-it-Q8_0.gguf --json --limit 12
+ghost gemma agent route --intent query --subject "memory allocation" --hint memory --confidence high --needs-ghost true --resonance 0.95 --decision-trace --evidence-trace --json
+
 # Request a fix
 ghost fix "make the failing runtime test pass" --reasoning=deep
 

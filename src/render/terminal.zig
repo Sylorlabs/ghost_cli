@@ -107,10 +107,10 @@ pub fn printBasicEngineOutputWithColor(writer: anytype, response: json_contracts
         if (std.mem.eql(u8, s, "concept void fallback")) {
             try writer.writeAll("[Concept Void: Triggering Local Web Scrape...]\n\n");
         } else if (response.answer_draft != null) {
-            try writer.writeAll("[Source: Resident Omni-Codex]\n\n");
+            try writer.writeAll("[Source: Neuro-Symbolic Engine]\n\n");
         }
     } else if (response.answer_draft != null) {
-        try writer.writeAll("[Source: Resident Omni-Codex]\n\n");
+        try writer.writeAll("[Source: Neuro-Symbolic Engine]\n\n");
     }
     
     if (response.answer_draft) |draft| {
