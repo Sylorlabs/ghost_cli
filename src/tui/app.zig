@@ -85,6 +85,11 @@ pub fn run(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: RunO
     s.read_only = options.read_only;
     s.yolo_mode = options.yolo_mode;
 
+    if (locator.findEngineBinary(allocator, engine_root, .ghost_gemma) catch null) |gemma_bin| {
+        allocator.free(gemma_bin);
+        s.neural_layer_active = true;
+    }
+
     const stdin = std.io.getStdIn();
     const stdout = std.io.getStdOut();
     const writer = stdout.writer();
@@ -614,6 +619,68 @@ pub fn handleSubmit(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *
     defer arena.deinit();
     const aa = arena.allocator();
 
+    // --- GEMMA INTENT PARSER SEAM ---
+    // Pass the message through Gemma's intent parser to get the JSON classification.
+    var routed_cmd_text = try allocator.dupe(u8, cmd_text);
+    defer allocator.free(routed_cmd_text);
+    var is_converse = false;
+    var chat_response: ?[]const u8 = null;
+
+    if (locator.findEngineBinary(allocator, engine_root, .ghost_gemma) catch null) |gemma_bin| {
+        defer allocator.free(gemma_bin);
+        const smoke_argv = &[_][]const u8{ gemma_bin, "inference", "smoke", "--text", cmd_text, "--json" };
+        if (process.runEngineCommand(allocator, smoke_argv) catch null) |smoke_res| {
+            defer allocator.free(smoke_res.stdout);
+            defer allocator.free(smoke_res.stderr);
+            if (smoke_res.exit_code == 0) {
+                if (std.json.parseFromSlice(std.json.Value, allocator, smoke_res.stdout, .{}) catch null) |parsed| {
+                    defer parsed.deinit();
+                    if (parsed.value.object.get("prose")) |prose_val| {
+                        if (prose_val == .string) {
+                            const prose = prose_val.string;
+                            if (std.json.parseFromSlice(std.json.Value, allocator, prose, .{}) catch null) |intent_parsed| {
+                                defer intent_parsed.deinit();
+                                const intent_obj = intent_parsed.value.object;
+                                const intent_str = if (intent_obj.get("intent")) |v| (if (v == .string) v.string else null) else null;
+                                const subject_str = if (intent_obj.get("subject")) |v| (if (v == .string) v.string else null) else null;
+                                const needs_ghost = if (intent_obj.get("needs_ghost")) |v| (if (v == .bool) v.bool else null) else null;
+                                
+                                if (subject_str) |sub| {
+                                    allocator.free(routed_cmd_text);
+                                    routed_cmd_text = try allocator.dupe(u8, sub);
+                                }
+                                
+                                if (intent_str) |int_s| {
+                                    if (std.mem.eql(u8, int_s, "converse") and (needs_ghost == null or needs_ghost.? == false)) {
+                                        is_converse = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        if (is_converse) {
+            const route_argv = &[_][]const u8{ gemma_bin, "agent", "route", "--intent", "converse", "--subject", routed_cmd_text, "--json" };
+            if (process.runEngineCommand(allocator, route_argv) catch null) |route_res| {
+                defer allocator.free(route_res.stdout);
+                defer allocator.free(route_res.stderr);
+                if (route_res.exit_code == 0) {
+                    if (std.json.parseFromSlice(std.json.Value, allocator, route_res.stdout, .{}) catch null) |parsed| {
+                        defer parsed.deinit();
+                        if (parsed.value.object.get("chatResponse")) |cr_val| {
+                            if (cr_val == .string) {
+                                chat_response = try allocator.dupe(u8, cr_val.string);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     var use_daemon = s.daemon_refresh_count != 0 and s.daemon_active;
     if (s.active_session_mounts.items.len == 0 and !use_daemon) {
         if (daemon_cmd.ensureActiveQuiet(allocator, engine_root, s.debug)) {
@@ -622,7 +689,17 @@ pub fn handleSubmit(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *
             use_daemon = s.daemon_active;
         }
     }
-    const res = if (s.active_session_mounts.items.len != 0) blk: {
+    const res = if (chat_response) |cr| blk: {
+        defer allocator.free(cr);
+        var resp_json = std.ArrayList(u8).init(allocator);
+        try resp_json.writer().print("{{\"kind\":\"answerDraft\",\"summary\":{}}}", .{std.json.fmt(cr, .{})});
+        break :blk runner.RunResult{
+            .stdout = try resp_json.toOwnedSlice(),
+            .stderr = try allocator.alloc(u8, 0),
+            .exit_code = 0,
+            .allocator = allocator,
+        };
+    } else if (s.active_session_mounts.items.len != 0) blk: {
         const bin_path = locator.findEngineBinary(allocator, engine_root, .ghost_gip) catch |err| {
             try render.renderErrorMessage(writer, style, "Failed to resolve ghost_gip: {}", .{err});
             return;
@@ -630,7 +707,7 @@ pub fn handleSubmit(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *
         defer allocator.free(bin_path);
 
         var request = std.ArrayList(u8).init(aa);
-        try writeMountedCorpusAskRequest(request.writer(), cmd_text, s);
+        try writeMountedCorpusAskRequest(request.writer(), routed_cmd_text, s);
 
         const gip_argv = &[_][]const u8{ bin_path, "--stdin" };
         const result = process.runEngineCommandWithInput(allocator, gip_argv, request.items) catch |err| {
@@ -645,7 +722,7 @@ pub fn handleSubmit(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *
         };
     } else if (use_daemon) blk: {
         var request = std.ArrayList(u8).init(aa);
-        try writeDaemonCorpusAskRequest(request.writer(), cmd_text, s);
+        try writeDaemonCorpusAskRequest(request.writer(), routed_cmd_text, s);
         const response = daemon_client.request(allocator, request.items) catch {
             s.daemon_active = false;
             break :blk runner.RunResult{

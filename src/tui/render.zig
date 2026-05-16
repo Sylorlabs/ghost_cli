@@ -205,11 +205,12 @@ fn renderDashboardWithSize(writer: anytype, s: *state.SessionState, style: Style
 
     try writer.writeAll("\x1b[r");
     try clearRows(writer, size.rows);
-    try writeFmtAt(writer, 1, 1, size.cols, "{s} Ghost TUI {s} shard={s} | daemon={s} | {s}{s}", .{
+    try writeFmtAt(writer, 1, 1, size.cols, "{s} Ghost TUI {s} shard={s} | daemon={s} | neural={s} | {s}{s}", .{
         if (s.yolo_mode) style.red() else style.header(),
         style.reset(),
         s.project_shard orelse "all",
         if (s.daemon_active) "hot" else "off",
+        if (s.neural_layer_active) "active" else "off",
         systemIndicator(s),
         style.reset(),
     });
