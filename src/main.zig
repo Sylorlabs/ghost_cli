@@ -18,7 +18,6 @@ const correction = @import("commands/correction.zig");
 const nk = @import("commands/nk.zig");
 const verify = @import("commands/verify.zig");
 const learn = @import("commands/learn.zig");
-const autopsy = @import("commands/autopsy.zig");
 const artifact = @import("commands/artifact.zig");
 const context_cmd = @import("commands/context.zig");
 const tui = @import("commands/tui.zig");
@@ -52,7 +51,6 @@ const CommandKind = enum {
     status,
     doctor,
     debug,
-    autopsy,
     artifact,
     context,
 };
@@ -90,12 +88,7 @@ const command_registry = [_]CommandDef{
     .{ .name = "verify", .kind = .verify, .group = .core, .help = "Verify workspace state or promote corpus license rank", .usage = "ghost verify [options] | ghost verify <path> --rank=<rank>" },
     .{ .name = "trash", .kind = .trash, .group = .core, .help = "Move a corpus root to vault .trash and blacklist its license", .usage = "ghost trash <path>" },
     .{ .name = "ingest", .kind = .ingest, .group = .core, .help = "Index corpus text or Tier 0 stdlib axioms", .usage = "ghost ingest [--axioms] <path>" },
-    .{ .name = "autopsy", .kind = .autopsy, .group = .inspection, .help = "Project Autopsy pass (explicit scan only)", .usage = "ghost autopsy [--json] [--debug] [path]" },
-    .{ .name = "artifact", .kind = .artifact, .group = .inspection, .help = "Artifact Autopsy pass (explicit GIP request only)", .usage = "ghost artifact autopsy inspect --file <request.json> [--json] [--debug]" },
-    .{ .name = "context", .kind = .context, .group = .inspection, .help = "Context Autopsy pass (explicit GIP request only)", .usage = "ghost context autopsy [--json] [--debug] [--input-file <path>] <description>" },
-    .{ .name = "status", .kind = .status, .group = .inspection, .help = "Show engine availability/status", .usage = "ghost status [--debug]" },
-    .{ .name = "doctor", .kind = .doctor, .group = .inspection, .help = "Run read-only environment diagnostics", .usage = "ghost doctor [--json|--report|--gaps] [--debug] [--full] [--run-build-check]" },
-    .{ .name = "packs", .kind = .packs, .group = .knowledge, .help = "Manage knowledge packs", .usage = "ghost packs <list|inspect|mount|unmount|validate-autopsy-guidance> [options]" },
+    .{ .name = "packs", .kind = .packs, .group = .knowledge, .help = "Manage knowledge packs", .usage = "ghost packs <list|inspect|mount|unmount> [options]" },
     .{ .name = "corpus", .kind = .corpus, .group = .knowledge, .help = "Ingest, apply, and ask from shard corpus", .usage = "ghost corpus <ingest|apply-staged|ask> [options]" },
     .{ .name = "invent", .kind = .invent, .group = .knowledge, .help = "Non-authorizing cross-domain architecture synthesis", .usage = "ghost invent --project-shard=<s> --message=\"...\"" },
     .{ .name = "policy", .kind = .policy, .group = .knowledge, .help = "Describe artifact/domain policy metadata", .usage = "ghost policy describe --file <request.json> [--json] [--debug]" },
@@ -356,11 +349,6 @@ pub fn main() !void {
             .version = build_version,
         }),
         .debug => try debug_cmd.execute(allocator, root, parsed.leftover_args.items, parsed.options.json_out),
-        .autopsy => try autopsy.execute(allocator, root, .{
-            .path = if (parsed.leftover_args.items.len > 0) parsed.leftover_args.items[0] else null,
-            .json = parsed.options.json_out,
-            .debug = parsed.options.debug_mode,
-        }),
         .artifact => try artifact.executeFromArgs(allocator, root, parsed.leftover_args.items, parsed.options.json_out, parsed.options.debug_mode),
         .context => try context_cmd.executeFromArgs(allocator, root, parsed.leftover_args.items, parsed.options.json_out, parsed.options.debug_mode),
     }
@@ -884,16 +872,6 @@ fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
             \\Indexes .txt/.md corpus text into the selected project shard and immediately applies it.
             \\Defaults: --project-shard=user_vault --trust-class=project --source-label=user_vault.
             \\With --axioms, stages standard library sources as Tier 0 Axiom Vectors in the core shard.
-            \\
-        , .{}),
-        .autopsy => try writer.print(
-            \\
-            \\Options:
-            \\  --json                 Preserve raw autopsy JSON exactly
-            \\  --debug                Diagnostics to stderr
-            \\
-            \\Safety:
-            \\  This scan runs only when this command is explicitly invoked.
             \\
         , .{}),
         .artifact, .context, .packs, .corpus, .invent, .policy, .rules, .sigil, .omni, .gemma, .swe, .correction, .nk, .daemon => unreachable,
