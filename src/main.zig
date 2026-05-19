@@ -120,7 +120,6 @@ const CliOptions = struct {
     color_mode: tui.ColorMode = .auto,
     compact: bool = false,
     read_only: bool = false,
-    yolo_mode: bool = false,
     max_history_turns: usize = tui_state.default_max_history_turns,
     reasoning_level: ?json_contracts.ReasoningLevel = null,
     context_artifact: ?[]const u8 = null,
@@ -340,7 +339,6 @@ pub fn main() !void {
             .color = parsed.options.color_mode,
             .compact = parsed.options.compact,
             .read_only = parsed.options.read_only,
-            .yolo_mode = parsed.options.yolo_mode,
             .max_history_turns = parsed.options.max_history_turns,
             .version = build_version,
             .engine_root_label = root,
@@ -422,8 +420,6 @@ fn parseFlag(args: *std.process.ArgIterator, arg: []const u8, options: *CliOptio
         options.compact = true;
     } else if (std.mem.eql(u8, arg, "--read-only")) {
         options.read_only = true;
-    } else if (std.mem.eql(u8, arg, "--yolo")) {
-        options.yolo_mode = true;
     } else if (std.mem.startsWith(u8, arg, "--max-history-turns=")) {
         const raw = arg["--max-history-turns=".len..];
         options.max_history_turns = std.fmt.parseInt(usize, raw, 10) catch {
@@ -503,7 +499,6 @@ fn runDefaultTui(allocator: std.mem.Allocator, options: CliOptions) !void {
         .color = options.color_mode,
         .compact = options.compact,
         .read_only = options.read_only,
-        .yolo_mode = options.yolo_mode,
         .max_history_turns = options.max_history_turns,
         .version = build_version,
         .engine_root_label = root_tui,
@@ -768,7 +763,6 @@ fn printHelp(writer: anytype) !void {
         \\  --color=<mode>         auto|always|never
         \\  --compact              Use tighter native TUI layout
         \\  --read-only            Launch TUI in local/read-only mode
-        \\  --yolo                 Launch TUI with YOLO auto-execution enabled
         \\  --max-history-turns=<n> Bound retained TUI turns (default 500)
         \\
         \\Advanced/debug options:
@@ -840,33 +834,28 @@ fn printCommandHelp(writer: anytype, kind: CommandKind) !void {
         .tui => try writer.print(
             \\
             \\Options:
-            \\  --reasoning=<level>    quick|balanced|deep|max
-            \\  --context-artifact=<p> Set active context artifact
-            \\  --engine-root=<path>   Resolve engine binaries from path when commands run
+            \\  --engine-root=<path>   Resolve adjacent ghost_sovereign state
             \\  --debug                Start with debug mode on
-            \\  --details              Start with detailed engine sections visible
+            \\  --details              Start with detailed local diagnostics visible
             \\  --no-color             Disable ANSI color
             \\  --color=<mode>         auto|always|never
             \\  --compact              Tighter layout
-            \\  --read-only            Block engine-invoking TUI commands/prompts
-            \\  --yolo                 Start with Ctrl+Y YOLO auto-execution enabled
-            \\  --project-shard=<id>   Narrow TUI prompts to one project shard; default searches all shards
+            \\  --read-only            Block prompt ingestion into the local field
+            \\  --project-shard=<id>   Label the local session with one project shard
             \\  --max-history-turns=<n> Bound retained TUI turns (default 500)
             \\
             \\Slash commands:
-            \\  /help, /quit, /status, /reasoning <level>, /debug on|off, /details on|off, /json on|off
-            \\  /clear, /daemon [start|status|stop], /doctor, /autopsy <path>, /context <path>, /mount <pack[@version]>
+            \\  /help, /quit, /status, /debug on|off, /details on|off, /json on|off
+            \\  /clear
             \\  /conversations, /resume <name>, /save <name>
             \\  Typing / shows prefix-first fuzzy suggestions. Invalid slash commands are rejected locally.
-            \\  In --read-only mode, /daemon, /doctor, /autopsy, and submitted prompts are blocked locally.
-            \\  Ctrl+Y toggles YOLO mode. When active, command proposals auto-execute and the prompt bar turns red.
-            \\  Shift+Tab accepts a pending patch diff; Esc rejects it.
+            \\  In --read-only mode, submitted prompts are blocked locally.
             \\
             \\Safety:
-            \\  Launching the TUI starts or reconnects ghostd by default unless --read-only is set.
-            \\  Idling in the TUI does not start doctor/status, context/project autopsy, verifiers, scans,
-            \\  pack mutation, negative-knowledge mutation, or reviewed NK review/list/get.
-            \\  Explicit slash commands and submitted prompts may invoke additional engine binaries.
+            \\  Launching the TUI opens the local ghost_sovereign absolute field only.
+            \\  Idling in the TUI does not start daemon/status, doctor, context/project autopsy,
+            \\  verifiers, scans, pack mutation, negative-knowledge mutation, or LLM adapters.
+            \\  Submitted prompts mutate only the local absolute field and render its measured mirror.
             \\
         , .{}),
         .doctor => try writer.print(

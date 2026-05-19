@@ -1,6 +1,5 @@
 const std = @import("std");
 const state = @import("state.zig");
-const input_controller = @import("input_controller.zig");
 const slash = @import("slash.zig");
 const stats = @import("stats.zig");
 const terminal = @import("terminal.zig");
@@ -207,7 +206,7 @@ fn renderDashboardWithSize(writer: anytype, s: *state.SessionState, style: Style
     try clearRows(writer, size.rows);
     var field_buf: [32]u8 = undefined;
     try writeFmtAt(writer, 1, 1, size.cols, "{s} Sovereign Interface {s} manifold={s} | local={s} | {s}{s}", .{
-        if (s.yolo_mode) style.red() else style.header(),
+        style.header(),
         style.reset(),
         formatBytes(&field_buf, s.sovereign_mirror.field_bytes),
         if (s.sovereign_mirror.field_bytes == 0) "initializing" else "absolute_final",
@@ -220,11 +219,7 @@ fn renderDashboardWithSize(writer: anytype, s: *state.SessionState, style: Style
         while (row < layout.chat.height) : (row += 1) {
             try writeAt(writer, contentOriginRow() + row, layout.divider_col, 1, "|");
         }
-        if (s.pending_patch != null) {
-            try renderDiffPane(writer, s, style, contentOriginRow() + layout.chat.y, contentOriginRow() + layout.chat.y + layout.chat.height - 1, layout.chat.x + 1, layout.chat.width);
-        } else {
-            try renderConversationPane(writer, s, style, layout.chat);
-        }
+        try renderConversationPane(writer, s, style, layout.chat);
         try renderHardwareMirrorPane(writer, s, style, .{
             .x = layout.telemetry.bounds.x,
             .y = 0,
@@ -235,7 +230,6 @@ fn renderDashboardWithSize(writer: anytype, s: *state.SessionState, style: Style
 
     try renderSlashSuggestionsWithSize(writer, s, layout.suggestion_row, style, size);
     try renderInputLine(writer, s, layout.input_row, style);
-    try renderCommandCenterOverlay(writer, s, style, size, layout.input_row);
 
     s.previous_render_rows = size.rows;
     s.previous_render_cols = size.cols;
@@ -314,64 +308,11 @@ fn renderConversationPane(writer: anytype, s: *state.SessionState, style: Style,
     try pane.flushScrolled(writer, bounds);
 }
 
-fn renderDiffPane(writer: anytype, s: *state.SessionState, style: Style, top: u16, bottom: u16, col: u16, width: u16) !void {
-    if (top > bottom or width == 0) return;
-    try writeFmtAt(writer, top, col, width, "{s}+-- ACCEPT EDITS / DIFF REVIEW --+{s}", .{ style.blue(), style.reset() });
-    if (top + 1 <= bottom) {
-        try writeFmtAt(writer, top + 1, col, width, "{s}[Press Shift+Tab to Accept Edits, or ESC to Reject]{s}", .{ style.blue(), style.reset() });
-    }
-    var row = top + 2;
-    const proposal = s.pending_patch orelse return;
-    var it = std.mem.splitScalar(u8, proposal.diff, '\n');
-    while (it.next()) |line| {
-        if (row > bottom) break;
-        const trimmed = std.mem.trimRight(u8, line, "\r");
-        const color = if (std.mem.startsWith(u8, trimmed, "+") and !std.mem.startsWith(u8, trimmed, "+++"))
-            style.green()
-        else if (std.mem.startsWith(u8, trimmed, "-") and !std.mem.startsWith(u8, trimmed, "---"))
-            style.red()
-        else if (std.mem.startsWith(u8, trimmed, "@@"))
-            style.cyan()
-        else
-            "";
-        try writeFmtAt(writer, row, col, width, "{s}{s}{s}", .{ color, trimmed, style.reset() });
-        row += 1;
-    }
-    if (row <= bottom) {
-        try writeFmtAt(writer, row, col, width, "{s}+{s}", .{ style.blue(), style.reset() });
-    }
-}
-
 fn visibleTurnOutput(s: *const state.SessionState, turn: state.Turn) []const u8 {
     if (s.typing_turn_index) |idx| {
         if (idx == turn.index) return turn.rendered_output[0..@min(s.typing_output_bytes, turn.rendered_output.len)];
     }
     return turn.rendered_output;
-}
-
-fn renderTelemetryPane(writer: anytype, s: *state.SessionState, style: Style, pane: TelemetryPane) !void {
-    const bounds = pane.bounds;
-    if (bounds.width == 0 or bounds.height == 0) return;
-    var buf = PaneBuffer.init(s.allocator);
-    defer buf.deinit();
-
-    try buf.appendFmt("{s}DAEMON TELEMETRY{s}", .{ style.cyan(), style.reset() });
-    try appendProofMatrix(&buf, s, style);
-    try buf.appendFmt("heartbeat: {s}", .{if (s.daemon_active) "hot" else "off"});
-    try buf.appendFmt("domain: {s}", .{s.daemon_pipeline_domain orelse "none"});
-    try buf.appendFmt("z3: {s}", .{s.daemon_pipeline_z3_status orelse "idle"});
-    try buf.appendFmt("confidence: {s}", .{s.daemon_pipeline_confidence_band orelse "yellow_heuristic"});
-    var vram_buf: [32]u8 = undefined;
-    try buf.appendFmt("VRAM resident: {s}", .{formatBytes(&vram_buf, s.daemon_vram_resident_bytes)});
-    var l1_buf: [32]u8 = undefined;
-    try buf.appendFmt("L1 index: {s}", .{formatBytes(&l1_buf, s.daemon_l1_concept_index_bytes)});
-    var hot_buf: [32]u8 = undefined;
-    try buf.appendFmt("hot-page: {s}", .{formatBytes(&hot_buf, s.daemon_hot_page_bytes)});
-    var raw_buf: [32]u8 = undefined;
-    try buf.appendFmt("raw shard VRAM: {s}", .{formatBytes(&raw_buf, s.daemon_raw_shard_vram_bytes)});
-    try buf.appendFmt("vault ingest: {s}", .{if (s.daemon_vault_ingest_active) "active" else if (s.daemon_vault_ingest_recent) "recent" else "idle"});
-    try buf.appendFmt("vault files/errors: {d}/{d}", .{ s.daemon_vault_ingested_files, s.daemon_vault_ingest_errors });
-    try buf.flushScrolled(writer, bounds);
 }
 
 fn renderHardwareMirrorPane(writer: anytype, s: *state.SessionState, style: Style, bounds: BoundingBox) !void {
@@ -388,6 +329,9 @@ fn renderHardwareMirrorPane(writer: anytype, s: *state.SessionState, style: Styl
     try buf.appendFmt("Resonance Density: {d:.3}", .{snap.resonance_density});
     try buf.appendFmt("Active Neologism: {s}", .{word});
     try buf.appendFmt("Spectral Path: {s}", .{path});
+    if (snap.pathfinder_chain_len != 0) {
+        try buf.appendFmt("Pathfinder: {s}", .{snap.pathfinderText()});
+    }
     try buf.appendLine("");
 
     var field_buf: [32]u8 = undefined;
@@ -402,46 +346,6 @@ fn renderHardwareMirrorPane(writer: anytype, s: *state.SessionState, style: Styl
     try buf.appendLine("");
     try buf.appendFmt("Back-map: [{s}] / [{s}]", .{ snap.anchor_a, snap.anchor_b });
     try buf.appendFmt("Source: ghost_sovereign.absolute_final", .{});
-    try buf.flushScrolled(writer, bounds);
-}
-
-fn appendProofMatrix(buf: *PaneBuffer, s: *state.SessionState, style: Style) !void {
-    try buf.appendFmt("{s}PROOF MATRIX{s}", .{ style.cyan(), style.reset() });
-    var line = std.ArrayList(u8).init(s.allocator);
-    defer line.deinit();
-    for (s.proof_slots, 0..) |slot, idx| {
-        const slot_style = switch (slot) {
-            .empty => style.dim(),
-            .pending => try std.fmt.allocPrint(s.allocator, "{s}{s}", .{ style.pulse(), style.yellow() }),
-            .verified => style.brightGreen(),
-            .failed => style.brightRed(),
-        };
-        defer if (slot == .pending) s.allocator.free(slot_style);
-
-        try line.writer().print("{s}█{s}", .{ slot_style, style.reset() });
-        if (idx == 7) try line.append(' ');
-    }
-    try buf.appendLine(line.items);
-}
-
-fn renderSessionHotPane(writer: anytype, s: *state.SessionState, style: Style, bounds: BoundingBox) !void {
-    if (bounds.width == 0 or bounds.height == 0) return;
-    var buf = PaneBuffer.init(s.allocator);
-    defer buf.deinit();
-
-    try buf.appendFmt("{s}SESSION HOT{s}", .{ style.cyan(), style.reset() });
-    try buf.appendFmt("target: {s}", .{s.daemon_context_target orelse "none"});
-    var session_buf: [32]u8 = undefined;
-    try buf.appendFmt("working bytes: {s}", .{formatBytes(&session_buf, s.daemon_session_hot_bytes)});
-    try buf.appendFmt("reasoning: {s}", .{s.reasoning.toStr()});
-    try buf.appendFmt("mounts: {d}", .{s.active_session_mounts.items.len});
-    try buf.appendFmt("last: {s}", .{s.last_command_status});
-    try buf.appendFmt("{s}ENGINE TRACE{s}", .{ style.cyan(), style.reset() });
-    try buf.appendFmt("authority: {s}", .{s.engine_trace.authority orelse "unknown"});
-    try buf.appendFmt("state: {s}", .{s.engine_trace.engine_state orelse s.last_command_status});
-    try buf.appendFmt("source: {s}", .{s.engine_trace.source orelse "none"});
-    try buf.appendFmt("stop: {s}", .{s.engine_trace.stop_reason orelse "none"});
-    try buf.appendFmt("trace: {s}", .{s.engine_trace.trace_flags orelse "none"});
     try buf.flushScrolled(writer, bounds);
 }
 
@@ -481,41 +385,15 @@ fn formatBytes(buf: *[32]u8, bytes: usize) []const u8 {
 }
 
 fn renderInputLine(writer: anytype, s: *state.SessionState, row: u16, style: Style) !void {
-    if (s.pending_command) |proposal| {
-        try writer.print("\x1b[{d};1H\x1b[K{s}[Ghost requests to run: `{s}`] - (y/N){s}", .{
-            row,
-            style.yellow(),
-            proposal.command_display,
-            style.reset(),
-        });
-        return;
-    }
-    if (s.pending_patch != null) {
-        try writer.print("\x1b[{d};1H\x1b[K{s}[Press Shift+Tab to Accept Edits, or ESC to Reject]{s}", .{
-            row,
-            style.blue(),
-            style.reset(),
-        });
-        return;
-    }
-    const prompt_cols: usize = if (s.yolo_mode) 16 else 8;
-    if (s.yolo_mode) {
-        try writer.print("\x1b[{d};1H\x1b[K{s}[! YOLO] ghost>{s} {s}", .{
-            row,
-            style.red(),
-            style.reset(),
-            s.current_input.items,
-        });
-    } else {
-        try writer.print("\x1b[{d};1H\x1b[K{s}ghost>{s} {s}", .{
-            row,
-            style.cyan(),
-            style.reset(),
-            s.current_input.items,
-        });
-    }
+    const prompt_cols: usize = 8;
+    try writer.print("\x1b[{d};1H\x1b[K{s}ghost>{s} {s}", .{
+        row,
+        style.cyan(),
+        style.reset(),
+        s.current_input.items,
+    });
 
-    if (!s.yolo_mode and std.mem.indexOfAny(u8, s.current_input.items, " \t") == null) {
+    if (std.mem.indexOfAny(u8, s.current_input.items, " \t") == null) {
         if (slash.findNthMatch(s.current_input.items, s.suggestion_index)) |matched| {
             if (slash.isPrefixMatch(s.current_input.items, matched) and matched.len > s.current_input.items.len) {
                 try writer.print("{s}{s}{s}", .{
@@ -527,43 +405,6 @@ fn renderInputLine(writer: anytype, s: *state.SessionState, row: u16, style: Sty
                 try writer.print("\x1b[{d};{d}H", .{ row, @as(u16, @intCast(prompt_cols + s.current_input.items.len)) });
             }
         }
-    }
-}
-
-fn renderCommandCenterOverlay(writer: anytype, s: *state.SessionState, style: Style, size: TerminalSize, input_row: u16) !void {
-    if (s.file_target_finder.active and s.file_target_finder.count > 0) {
-        try renderFileTargetMenu(writer, s, style, size, input_row);
-        return;
-    }
-    if (input_controller.constraintCandidateCount(s) > 0) {
-        try renderConstraintMenu(writer, s, style, size, input_row);
-    }
-}
-
-fn renderConstraintMenu(writer: anytype, s: *state.SessionState, style: Style, size: TerminalSize, input_row: u16) !void {
-    const count = @min(input_controller.constraintCandidateCount(s), @as(usize, 3));
-    if (count == 0 or input_row <= count + 1) return;
-    const top: u16 = @intCast(input_row - count - 1);
-    const width: u16 = @min(size.cols, 42);
-    try writeFmtAt(writer, top, 1, width, "{s}GIP CONSTRAINTS{s}", .{ style.cyan(), style.reset() });
-    var i: usize = 0;
-    while (i < count) : (i += 1) {
-        const candidate = input_controller.constraintCandidateAt(s, i) orelse continue;
-        const marker = if (i == s.constraint_autocomplete.selected_index) ">" else " ";
-        try writeFmtAt(writer, top + 1 + @as(u16, @intCast(i)), 1, width, "{s} {s}", .{ marker, candidate });
-    }
-}
-
-fn renderFileTargetMenu(writer: anytype, s: *state.SessionState, style: Style, size: TerminalSize, input_row: u16) !void {
-    const count = @min(s.file_target_finder.count, @as(usize, 5));
-    if (count == 0 or input_row <= count + 1) return;
-    const top: u16 = @intCast(input_row - count - 1);
-    const width: u16 = @min(size.cols, 70);
-    try writeFmtAt(writer, top, 1, width, "{s}FILE TARGETS{s}", .{ style.cyan(), style.reset() });
-    var i: usize = 0;
-    while (i < count) : (i += 1) {
-        const marker = if (i == s.file_target_finder.selected_index) ">" else " ";
-        try writeFmtAt(writer, top + 1 + @as(u16, @intCast(i)), 1, width, "{s} {s}", .{ marker, s.file_target_finder.targets[i].text() });
     }
 }
 
@@ -590,9 +431,8 @@ pub fn renderHelpWithSize(writer: anytype, style: Style, size: TerminalSize) !vo
         try writer.print("  {s:<21} {s}\n", .{ commandDisplay(command), command.help });
     }
     try writer.print(
-        \\  keys                 Ctrl+C quit | Ctrl+L clear | Ctrl+R reasoning | Ctrl+D debug | Esc quit
-        \\                       Ctrl+T file targets | Tab complete GIP/file target | Ctrl+Y toggle YOLO
-        \\                       Shift+Tab accept pending diff | y/N approve command
+        \\  keys                 Ctrl+C quit | Ctrl+L clear | Ctrl+D debug | Esc quit
+        \\                       Tab complete slash command
         \\
     , .{});
 }
@@ -604,12 +444,9 @@ pub fn renderStatus(writer: anytype, s: *state.SessionState, style: Style) !void
         \\  turns={d}
         \\  total_turns={d}
         \\  pruned_turns={d}
-        \\  reasoning={s}
-        \\  mounted_packs={d}
         \\  debug={s}
         \\  json={s}
         \\  read_only={s}
-        \\  context={s}
         \\  engine_root={s}
         \\  last={s}
         \\
@@ -619,12 +456,9 @@ pub fn renderStatus(writer: anytype, s: *state.SessionState, style: Style) !void
         s.history.items.len,
         s.total_turns,
         s.pruned_turns,
-        s.reasoning.toStr(),
-        s.last_counters.mounted_packs,
         if (s.debug) "on" else "off",
         if (s.json_mode) "on" else "off",
         if (s.read_only) "on" else "off",
-        s.context_artifact orelse "none",
         s.engine_root_label orelse "auto",
         s.last_command_status,
     });
@@ -633,19 +467,19 @@ pub fn renderStatus(writer: anytype, s: *state.SessionState, style: Style) !void
 pub fn renderNonTty(writer: anytype) !void {
     try writer.writeAll(
         \\Ghost TUI requires an interactive TTY.
-        \\No CLI-owned TUI command was run. No doctor check, context/project autopsy scan, correction proposal/review/reviewed inspection, reviewed NK review/list/get, verifier, pack mutation, or negative-knowledge mutation was started from this non-TTY fallback.
-        \\Use `ghost --help`, `ghost ask ...`, or run `ghost tui` from a terminal.
+        \\No sovereign interface was started and no local absolute field was mutated.
+        \\Run `ghost tui` from an interactive terminal.
         \\
     );
 }
 
 pub fn renderInputStats(writer: anytype, s: *state.SessionState, style: Style) !void {
     const size = s.terminal_size;
-    try writer.print("\x1b[{d};1H{s}\x1b[K input={d} runes | context={s}{s}", .{
+    try writer.print("\x1b[{d};1H{s}\x1b[K input={d} runes | mirror={s}{s}", .{
         size.rows - 1,
         style.dim(),
         stats.countRunes(s.current_input.items),
-        s.context_artifact orelse "none",
+        if (s.sovereign_mirror.field_bytes == 0) "initializing" else "absolute_final",
         style.reset(),
     });
 }
@@ -843,7 +677,7 @@ fn renderTiny(writer: anytype, s: *state.SessionState, style: Style, size: Termi
     });
     if (size.rows >= 2) {
         try writer.print("\x1b[2;1H{s}\x1b[K read_only={s} retained={d} total={d} pruned={d}{s}", .{
-            if (s.yolo_mode) style.red() else style.dim(),
+            style.dim(),
             if (s.read_only) "on" else "off",
             s.history.items.len,
             s.total_turns,
@@ -913,20 +747,14 @@ fn historyBottomRow(size: TerminalSize, suggestion_height: u16) u16 {
 
 fn commandDisplay(command: slash.SlashCommandSpec) []const u8 {
     return switch (command.kind) {
-        .reasoning => "/reasoning <level>",
         .debug => "/debug on|off",
         .details => "/details on|off",
         .json => "/json on|off",
-        .autopsy => "/autopsy <path>",
-        .context => "/context <path>",
         else => command.name,
     };
 }
 
 fn systemIndicator(s: *const state.SessionState) []const u8 {
-    if (s.yolo_mode) return "YOLO MODE";
-    if (s.pending_command != null) return "Command approval pending";
-    if (s.pending_patch != null) return "Patch approval pending";
     if (std.mem.eql(u8, s.last_command_status, "thinking")) return "Thinking...";
     return "System Ready";
 }
@@ -1021,9 +849,6 @@ test "right hardware mirror pane remains anchored after long chat render" {
     const testing = std.testing;
     var session = state.SessionState.init(testing.allocator, "test", null, false);
     defer session.deinit();
-    session.daemon_active = true;
-    session.daemon_l1_concept_index_bytes = 4096;
-    session.daemon_hot_page_bytes = 8192;
     try session.setEngineTrace(.{
         .authority = "NON-AUTHORIZING",
         .engine_state = "concept_void",

@@ -44,9 +44,7 @@ Binary resolution is explicit: candidates are reported as engine-root, engine-ro
 
 **Running `ghost` with no arguments launches the interactive TUI console.**
 In a non-interactive pipe or script, the TUI path exits cleanly and reports that
-no CLI-owned TUI command, doctor check, context/project autopsy scan, correction
-proposal/review/reviewed inspection, reviewed negative-knowledge review/list/get,
-procedure pack candidate operation, verifier, or pack mutation was started from
+no sovereign interface was started and no local absolute field was mutated from
 that fallback path.
 
 ### Examples
@@ -217,32 +215,26 @@ does not have a safe timeout contract yet.
 
 ### TUI Console
 
-The native TUI is terminal-only Zig code. It has a Ghost status header, engine
-root/context footer, reasoning/debug/json indicators, and draft/verified/
-unresolved counters from parsed engine output. Launching it and leaving it idle
-does not run doctor, status, context/project autopsy, verifiers, scans, pack
-mutation, or negative-knowledge mutation. Explicit slash commands and submitted
-prompts may invoke engine binaries according to their command contract.
+The native TUI is terminal-only Zig code backed by the local
+`ghost_sovereign.absolute_final` core. It opens a 60/40 chat and hardware mirror
+layout, ingests every typed byte into the local absolute field, and reports the
+measured peak voxel, density, neologism, spectral path, Pathfinder chain, field
+size, and write counts. Submitted prompts render the Pathfinder chain directly
+as `ALIEN (Anchor)` links rather than a fixed response sentence. Launching it
+and leaving it idle does not run daemon/status, doctor,
+context/project autopsy, verifiers, scans, pack mutation, negative-knowledge
+mutation, command proposals, patch proposals, Gemma, APIs, or network calls.
 
 `ghost --read-only` and `ghost tui --read-only` launch the TUI in a local
-read-only mode. Local/session commands such as `/help`, `/status`, `/reasoning`,
-`/debug`, `/json`, `/clear`, and `/context` remain available, while submitted
-prompts plus `/doctor` and `/autopsy` are blocked locally. The blocked-command
-message is `Read-only mode: command blocked: /name`, and the status bar shows
-`read_only=on`.
-
-Command and patch proposals are interactive operator actions in the TUI.
-Command proposals pause at `[Ghost requests to run: \`...\`] - (y/N)` unless
-YOLO mode is active. `Ctrl+Y` toggles YOLO mode; while active, the prompt bar is
-red and command proposals auto-execute. Patch proposals open a blue diff review
-pane with red deletions and green additions; `Shift+Tab` applies the diff and
-`Esc` rejects it.
+read-only mode. Local/session commands such as `/help`, `/status`, `/debug`,
+`/details`, `/json`, `/clear`, `/conversations`, `/resume`, and `/save` remain
+available, while submitted prompts are blocked with
+`Read-only mode: local sovereign prompt blocked`.
 
 Typing `/` shows lightweight native slash-command suggestions. Prefix matches
-stay first, and compact fuzzy fragments such as `/rsn`, `/dbg`, `/ast`, and
-`/ctx` suggest `/reasoning`, `/debug`, `/autopsy`, and `/context`. Invalid slash
-commands are rejected in the TUI with a clear `ERROR` message and are not sent
-to the engine as normal prompts.
+stay first, and compact fuzzy fragments such as `/dbg` suggest local session
+commands such as `/debug`. Invalid slash commands are rejected in the TUI with a
+clear `ERROR` message and are not ingested as normal prompts.
 The suggestion area grows upward from the lower command region when more matches
 are visible, shrinks again as matches narrow, and reserves terminal rows so
 history stays separate. Native ANSI color stays restrained: errors are red,
@@ -269,13 +261,13 @@ Slash commands:
 - `/help`
 - `/quit`
 - `/status`
-- `/reasoning quick|balanced|deep|max`
 - `/debug on|off`
+- `/details on|off`
 - `/json on|off`
 - `/clear`
-- `/doctor`
-- `/autopsy <path>`
-- `/context <path>`
+- `/conversations`
+- `/resume <name>`
+- `/save <name>`
 
 ### Output States
 - **Draft / unverified**: Fast output, assumptions are made, no verification steps ran.

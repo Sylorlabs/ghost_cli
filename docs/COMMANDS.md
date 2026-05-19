@@ -973,55 +973,36 @@ pack candidates are not installed packs, not proof, not evidence, and do not
 mutate packs or execute verifiers.
 
 ### `ghost tui`
-Interactive Ghost Console TUI. Provides a live cockpit view for interacting with the engine.
+Interactive Ghost Sovereign TUI. It opens the local
+`ghost_sovereign.absolute_final` field and renders a two-pane interface: the
+left side is chat history, and the right side is the measured hardware mirror.
 
-Usage: `ghost tui [--reasoning=quick|balanced|deep|max] [--context-artifact=<path>] [--no-color|--color=auto|always|never] [--compact] [--read-only] [--yolo] [--max-history-turns=<n>]`
+Usage: `ghost tui [--engine-root=<path>] [--no-color|--color=auto|always|never] [--compact] [--read-only] [--max-history-turns=<n>]`
 
-Engine prompt/response turns are retained in bounded TUI session history and
-rendered with a strict chat boundary: the left pane shows only `YOU`, the user
-input, `GHOST`, and the answer draft with a compact source tag. `SYSTEM`,
-`COMMAND`, and `ERROR` are render-only labels for local session status, local
-command output, and local errors. Verbose engine status, authority, stop
-reasons, trace flags, correction/negative-knowledge counters, verifier
-requirements, suppressions, and routing warnings are kept out of the chat pane
-and routed to the right-side telemetry / `ENGINE TRACE` area.
+Prompt/response turns are retained in bounded TUI session history. The left pane
+shows only `YOU`, the user input, `GHOST`, and the local Pathfinder chain.
+The right pane reports measured local-field values: peak voxel, resonance
+density, active neologism, spectral path, Pathfinder chain, field size, voxel
+count, write count, dominant delta, edge fingerprint, sequence, and
+deterministic back-map anchors. The rendered answer is a dynamic
+`ALIEN (Anchor)` chain; it is not a fixed sentence template.
 
 By default, the TUI retains up to 500 turns. `--max-history-turns=<n>` changes
 that retained-turn bound; older turns are pruned from the local display history.
 The footer reports retained, total, and pruned turn counts.
 
 `--read-only` launches the TUI in local/read-only mode. It allows local/session
-commands such as `/help`, `/status`, `/reasoning`, `/debug`, `/json`, `/clear`,
-and `/context`, but blocks submitted prompts plus slash commands that invoke
-engine operations beyond local session state. `/doctor` and `/autopsy` are
-blocked with `Read-only mode: command blocked: /name`. Read-only mode is visible
-in the TUI status bar.
-
-When an engine response contains a `commandProposal` / `command_proposal`, the
-TUI pauses at the prompt bar with `[Ghost requests to run: \`...\`] - (y/N)`.
-`y` executes the proposed command and records stdout/stderr as a command result
-turn; `n` or `Esc` rejects it. `Ctrl+Y` toggles YOLO mode. In YOLO mode the
-prompt bar turns red, shows `[! YOLO MODE ACTIVE - AUTO-EXECUTION ENABLED]`,
-and command proposals execute immediately.
-
-When an engine response contains a `patchProposal` / `patch_proposal` with a
-unified diff, the chat pane becomes a blue-bordered diff reviewer. Deletions
-render red and additions render green. `Shift+Tab` applies the diff to disk;
-`Esc` rejects it.
+commands such as `/help`, `/status`, `/debug`, `/details`, `/json`, `/clear`,
+`/conversations`, `/resume`, and `/save`, but blocks submitted prompts with
+`Read-only mode: local sovereign prompt blocked`.
 
 If stdin/stdout is not an interactive TTY, `ghost`/`ghost tui` exits gracefully
-with a message. The covered smoke path verifies that no CLI-owned TUI command,
-doctor check, context/project autopsy scan, correction proposal/review/reviewed
-inspection, reviewed negative-knowledge review/list/get, procedure pack
-candidate operation, verifier, pack mutation, or negative-knowledge mutation is
-started from that non-TTY fallback.
+with a message. The covered smoke path verifies that no sovereign interface is
+started and no local absolute field is mutated from that non-TTY fallback.
 
 #### Keybindings
 - `Ctrl+C`: Quit
-- `Ctrl+R`: Cycle reasoning level (quick → balanced → deep → max)
 - `Ctrl+D`: Toggle debug mode
-- `Ctrl+Y`: Toggle YOLO auto-execution mode
-- `Shift+Tab`: Accept pending diff edits
 - `Ctrl+L`: Clear history area
 - `Esc`: Quit
 - `q`: Quit (only when input is empty)
@@ -1031,11 +1012,8 @@ Typing `/` in the TUI shows matching slash commands. Prefix matches remain first
 with lightweight fuzzy matches for compact command fragments:
 
 - `/` shows all commands
-- `/r` shows `/reasoning`
-- `/rsn` shows `/reasoning`
+- `/r` shows `/resume`
 - `/dbg` shows `/debug`
-- `/ast` shows `/autopsy`
-- `/ctx` shows `/context`
 - unknown prefixes show `no matching slash commands`
 
 The suggestion area grows upward from the lower command region as more commands match, shrinks as fewer commands match, and reserves terminal rows so history does not overlap the command list. Errors render red, warnings render yellow, and labels remain plain ASCII when color is disabled.
@@ -1051,13 +1029,13 @@ Invalid slash commands are rejected locally with `Not a valid command: /name` an
 - `/quit`: Exit TUI
 - `/help`: Show help text
 - `/status`: Show session turn count and settings
-- `/reasoning <level>`: Change reasoning level
 - `/debug on|off`: Toggle debug diagnostics
+- `/details on|off`: Toggle detailed local diagnostics
 - `/json on|off`: Toggle raw JSON capture for submitted prompts
 - `/clear`: Clear the local TUI history
-- `/doctor`: Explicitly run read-only doctor diagnostics; blocked by TUI `--read-only`
-- `/autopsy <path>`: Explicitly run Project Autopsy for a path; blocked by TUI `--read-only`
-- `/context <path>`: Set context artifact path
+- `/conversations`: List saved conversations
+- `/resume <name>`: Resume a saved conversation
+- `/save <name>`: Save the current conversation
 
 ### `ghost learn`
 Feedback/distillation surface for managing knowledge growth and read-only
