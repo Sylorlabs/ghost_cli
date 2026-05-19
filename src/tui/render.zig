@@ -160,7 +160,7 @@ pub fn initTerminal(writer: anytype, style: Style) !void {
 
 pub fn initTerminalWithSize(writer: anytype, style: Style, size: TerminalSize) !void {
     try writer.writeAll("\x1b[2J\x1b[H");
-    try writer.print("{s} GHOST OPERATOR CONSOLE {s} native terminal | renderer only | no startup scans{s}\n", .{
+    try writer.print("{s} GHOST SOVEREIGN INTERFACE {s} local absolute core | no daemon | no API{s}\n", .{
         style.header(),
         style.yellow(),
         style.reset(),
@@ -205,12 +205,12 @@ fn renderDashboardWithSize(writer: anytype, s: *state.SessionState, style: Style
 
     try writer.writeAll("\x1b[r");
     try clearRows(writer, size.rows);
-    try writeFmtAt(writer, 1, 1, size.cols, "{s} Ghost TUI {s} shard={s} | daemon={s} | neural={s} | {s}{s}", .{
+    var field_buf: [32]u8 = undefined;
+    try writeFmtAt(writer, 1, 1, size.cols, "{s} Sovereign Interface {s} manifold={s} | local={s} | {s}{s}", .{
         if (s.yolo_mode) style.red() else style.header(),
         style.reset(),
-        s.project_shard orelse "all",
-        if (s.daemon_active) "hot" else "off",
-        if (s.neural_layer_active) "active" else "off",
+        formatBytes(&field_buf, s.sovereign_mirror.field_bytes),
+        if (s.sovereign_mirror.field_bytes == 0) "initializing" else "absolute_final",
         systemIndicator(s),
         style.reset(),
     });
@@ -225,8 +225,12 @@ fn renderDashboardWithSize(writer: anytype, s: *state.SessionState, style: Style
         } else {
             try renderConversationPane(writer, s, style, layout.chat);
         }
-        try renderTelemetryPane(writer, s, style, layout.telemetry);
-        try renderSessionHotPane(writer, s, style, layout.session_hot);
+        try renderHardwareMirrorPane(writer, s, style, .{
+            .x = layout.telemetry.bounds.x,
+            .y = 0,
+            .width = layout.telemetry.bounds.width,
+            .height = layout.chat.height,
+        });
     }
 
     try renderSlashSuggestionsWithSize(writer, s, layout.suggestion_row, style, size);
@@ -286,7 +290,7 @@ fn renderConversationPane(writer: anytype, s: *state.SessionState, style: Style,
     var pane = PaneBuffer.init(s.allocator);
     defer pane.deinit();
 
-    try pane.appendFmt("{s}CONSOLE{s}", .{ style.cyan(), style.reset() });
+    try pane.appendFmt("{s}CHAT{s}", .{ style.cyan(), style.reset() });
     if (bounds.height <= 1) {
         try pane.flushScrolled(writer, bounds);
         return;
@@ -367,6 +371,37 @@ fn renderTelemetryPane(writer: anytype, s: *state.SessionState, style: Style, pa
     try buf.appendFmt("raw shard VRAM: {s}", .{formatBytes(&raw_buf, s.daemon_raw_shard_vram_bytes)});
     try buf.appendFmt("vault ingest: {s}", .{if (s.daemon_vault_ingest_active) "active" else if (s.daemon_vault_ingest_recent) "recent" else "idle"});
     try buf.appendFmt("vault files/errors: {d}/{d}", .{ s.daemon_vault_ingested_files, s.daemon_vault_ingest_errors });
+    try buf.flushScrolled(writer, bounds);
+}
+
+fn renderHardwareMirrorPane(writer: anytype, s: *state.SessionState, style: Style, bounds: BoundingBox) !void {
+    if (bounds.width == 0 or bounds.height == 0) return;
+    var buf = PaneBuffer.init(s.allocator);
+    defer buf.deinit();
+
+    const snap = s.sovereign_mirror;
+    const word = if (snap.active_word_len == 0) "measuring" else snap.activeWord();
+    const path = if (snap.spectral_path_len == 0) "measuring" else snap.spectralPath();
+
+    try buf.appendFmt("{s}HARDWARE MIRROR{s}", .{ style.cyan(), style.reset() });
+    try buf.appendFmt("Peak Voxel: 0x{X}", .{snap.peak_voxel});
+    try buf.appendFmt("Resonance Density: {d:.3}", .{snap.resonance_density});
+    try buf.appendFmt("Active Neologism: {s}", .{word});
+    try buf.appendFmt("Spectral Path: {s}", .{path});
+    try buf.appendLine("");
+
+    var field_buf: [32]u8 = undefined;
+    try buf.appendFmt("Field Bytes: {s}", .{formatBytes(&field_buf, snap.field_bytes)});
+    try buf.appendFmt("Voxel Count: {d}", .{snap.field_count});
+    try buf.appendFmt("Peak Index: {d}", .{snap.peak_index});
+    try buf.appendFmt("Last Input Bytes: {d}", .{snap.input_bytes});
+    try buf.appendFmt("Writes: {d}", .{snap.writes});
+    try buf.appendFmt("Dominant Delta: 0x{X}", .{snap.dominant_delta});
+    try buf.appendFmt("Edge Fingerprint: 0x{X}", .{snap.edge_fingerprint});
+    try buf.appendFmt("Sequence: {d}", .{snap.sequence});
+    try buf.appendLine("");
+    try buf.appendFmt("Back-map: [{s}] / [{s}]", .{ snap.anchor_a, snap.anchor_b });
+    try buf.appendFmt("Source: ghost_sovereign.absolute_final", .{});
     try buf.flushScrolled(writer, bounds);
 }
 
@@ -982,7 +1017,7 @@ test "resize repaint clears screen and replays stored turns" {
     try testing.expectEqual(@as(u16, 0), session.previous_suggestion_height);
 }
 
-test "right telemetry pane remains anchored after long chat render" {
+test "right hardware mirror pane remains anchored after long chat render" {
     const testing = std.testing;
     var session = state.SessionState.init(testing.allocator, "test", null, false);
     defer session.deinit();
@@ -1024,9 +1059,9 @@ test "right telemetry pane remains anchored after long chat render" {
     try testing.expectEqual(@as(u16, 0), layout.telemetry.bounds.y);
     try testing.expectEqual(@as(u16, 62), layout.telemetry.bounds.x);
     try testing.expectEqual(@as(u16, 38), layout.telemetry.bounds.width);
-    try testing.expect(std.mem.indexOf(u8, out.items, "\x1b[2;63HDAEMON TELEMETRY") != null);
-    try testing.expect(std.mem.indexOf(u8, out.items, "\x1b[11;63Hhot-page: 8.0 KiB") != null);
-    try testing.expect(std.mem.indexOf(u8, out.items, "\x1b[23;63Hauthority: NON-AUTHORIZING") != null);
+    try testing.expect(std.mem.indexOf(u8, out.items, "\x1b[2;63HHARDWARE MIRROR") != null);
+    try testing.expect(std.mem.indexOf(u8, out.items, "\x1b[3;63HPeak Voxel: 0x") != null);
+    try testing.expect(std.mem.indexOf(u8, out.items, "\x1b[14;63HEdge Fingerprint: 0x") != null);
     try testing.expect(std.mem.indexOf(u8, out.items, "proof line 99: A gigabyte is a unit") != null);
     try testing.expect(std.mem.indexOf(u8, out.items, "\x1b[2;63Hproof line") == null);
 }

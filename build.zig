@@ -39,6 +39,21 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const absolute_final_mod = b.createModule(.{
+        .root_source_file = b.path("../ghost_engine/ghost_sovereign/src/absolute_final.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const sovereign_interface_mod = b.createModule(.{
+        .root_source_file = b.path("../ghost_engine/ghost_sovereign/src/adapters/sovereign_interface.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    sovereign_interface_mod.addImport("absolute_final", absolute_final_mod);
+    lib_mod.addImport("sovereign_interface", sovereign_interface_mod);
+    exe_mod.addImport("sovereign_interface", sovereign_interface_mod);
+
     // Modules can depend on one another using the `std.Build.Module.addImport` function.
     // This is what allows Zig source code to use `@import("foo")` where 'foo' is not a
     // file path. In this case, we set up `exe_mod` to import `lib_mod`.

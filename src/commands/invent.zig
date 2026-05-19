@@ -2,6 +2,7 @@ const std = @import("std");
 const runner = @import("../engine/runner.zig");
 const json_contracts = @import("../engine/json_contracts.zig");
 const corpus = @import("corpus.zig");
+const void_client = @import("../engine/void_client.zig");
 
 // --- L0 Vibe-Buffer & Triviality Shard ---
 fn isTrivial(message: []const u8) bool {
@@ -64,9 +65,9 @@ fn scalarResolver(message: []const u8, is_json: bool) !void {
 
     if (is_json) {
         try stdout.print(
-            \\{{"type": "triviality_shard", "rank": 1, "input": "{s}", "result": "{s}", "message": "Indexed into omniprogress_lattice as Rank-1 Truth"}}
-            \\
-        , .{ message, result_str });
+            "{{\"type\": \"triviality_shard\", \"rank\": 1, \"input\": \"{s}\", \"result\": \"{s}\", \"message\": \"Indexed into omniprogress_lattice as Rank-1 Truth\"}}\n",
+            .{ message, result_str },
+        );
     } else {
         try stdout.print("[L0 Vibe-Buffer] Common Sense Gateway activated.\n", .{});
         try stdout.print("[Standard Reality] Bypassing Dark Space search.\n", .{});
@@ -92,6 +93,32 @@ pub fn execute(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: 
         }
     }
 
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const aa = arena.allocator();
+
+    const void_res = void_client.request(aa, options.message orelse "") catch |err| {
+        if (options.debug) std.debug.print("[DEBUG] Void Engine failed: {s}\n", .{@errorName(err)});
+        return legacyInvent(allocator, engine_root, options);
+    };
+
+    if (options.json) {
+        try std.io.getStdOut().writer().writeAll(void_res);
+    } else {
+        var parsed = std.json.parseFromSlice(std.json.Value, aa, void_res, .{}) catch |err| {
+            if (options.debug) std.debug.print("[DEBUG] JSON Parse failed: {s}\nRaw: {s}\n", .{ @errorName(err), void_res });
+            try std.io.getStdOut().writer().print("[Ghost Void Phase-Collapse]\n{s}\n", .{void_res});
+            return;
+        };
+        defer parsed.deinit();
+        if (parsed.value.object.get("result")) |res| {
+            // Fix: res.string might contain "Alien Voice Projection" header, strip or just print
+            try std.io.getStdOut().writer().print("[Ghost Alien Voice]\n{s}\n", .{res.string});
+        }
+    }
+}
+
+fn legacyInvent(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: Options) !void {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const aa = arena.allocator();
@@ -122,11 +149,6 @@ pub fn execute(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: 
     if (res.stdout.len > 0) try std.io.getStdOut().writer().writeAll(res.stdout);
     if (res.stderr.len > 0) try std.io.getStdErr().writer().writeAll(res.stderr);
     if (res.exit_code != 0) std.process.exit(res.exit_code);
-
-    if (!options.json and options.debug) {
-        _ = json_contracts;
-        _ = corpus;
-    }
 }
 
 pub fn printHelp(writer: anytype) !void {

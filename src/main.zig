@@ -251,7 +251,7 @@ pub fn main() !void {
     defer if (engine_paths) |*ep| ep.deinit(allocator);
     const root = if (engine_paths) |ep| ep.root else null;
 
-    if (parsed.command.? != .daemon and parsed.command.? != .swe and parsed.command.? != .invent and parsed.command.? != .gemma) {
+    if (parsed.command.? != .daemon and parsed.command.? != .swe and parsed.command.? != .invent and parsed.command.? != .gemma and parsed.command.? != .tui) {
         _ = daemon_cmd.ensureActiveQuiet(allocator, root, parsed.options.debug_mode);
     }
 
@@ -495,9 +495,6 @@ fn runDefaultTui(allocator: std.mem.Allocator, options: CliOptions) !void {
     var engine_paths_tui = try paths.discoverEngineRoot(allocator, options.explicit_engine_root);
     defer if (engine_paths_tui) |*ep| ep.deinit(allocator);
     const root_tui = if (engine_paths_tui) |ep| ep.root else null;
-    if (!options.read_only) {
-        _ = daemon_cmd.ensureActiveQuiet(allocator, root_tui, options.debug_mode);
-    }
     try tui.execute(allocator, root_tui, .{
         .reasoning = options.reasoning_level,
         .context_artifact = options.context_artifact,

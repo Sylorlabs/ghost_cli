@@ -7,18 +7,10 @@ const slash = @import("slash.zig");
 const stats = @import("stats.zig");
 const terminal = @import("terminal.zig");
 const history = @import("history.zig");
-const runner = @import("../engine/runner.zig");
 const shell = @import("../engine/shell.zig");
 const diff_viewer = @import("diff_viewer.zig");
 const json_contracts = @import("../engine/json_contracts.zig");
-const doctor = @import("../commands/doctor.zig");
-const daemon_cmd = @import("../commands/daemon.zig");
-const autopsy = @import("../commands/autopsy.zig");
-const corpus = @import("../commands/corpus.zig");
-const packs = @import("../commands/packs.zig");
-const daemon_client = @import("../engine/daemon_client.zig");
-const locator = @import("../engine/locator.zig");
-const process = @import("../engine/process.zig");
+const sovereign_interface = @import("sovereign_interface");
 
 pub const SlashKind = slash.SlashKind;
 pub const SlashCommand = slash.SlashCommand;
@@ -85,10 +77,15 @@ pub fn run(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: RunO
     s.read_only = options.read_only;
     s.yolo_mode = options.yolo_mode;
 
-    if (locator.findEngineBinary(allocator, engine_root, .ghost_gemma) catch null) |gemma_bin| {
-        allocator.free(gemma_bin);
-        s.neural_layer_active = true;
-    }
+    const sovereign_state_path = try resolveSovereignStatePath(allocator, engine_root);
+    defer allocator.free(sovereign_state_path);
+    var sovereign_core = try sovereign_interface.SovereignCore.init(.{
+        .state_path = sovereign_state_path,
+        .size_bytes = sovereign_interface.default_manifold_bytes,
+    });
+    defer sovereign_core.deinit();
+    s.sovereign_mirror = sovereign_core.snapshot();
+    s.last_command_status = "sovereign ready";
 
     const stdin = std.io.getStdIn();
     const stdout = std.io.getStdOut();
@@ -105,23 +102,14 @@ pub fn run(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: RunO
     try render.initTerminalWithSize(writer, style, s.terminal_size);
     terminal_guard.markTerminalInitialized();
 
-    if (!s.read_only and daemon_cmd.ensureActiveQuiet(allocator, engine_root, s.debug)) {
-        s.last_daemon_refresh_ms = -state.daemon_refresh_interval_ms;
-    }
-
     var frame_dirty = true;
     while (true) {
         const now_ms = std.time.milliTimestamp();
         const previous_size = s.terminal_size;
-        const previous_daemon_active = s.daemon_active;
-        const previous_daemon_vram = s.daemon_vram_resident_bytes;
         s.refreshTerminalSize(now_ms, terminal.getSize);
         s.refreshRam(now_ms, stats.getCliRamRss);
-        try refreshDaemonTelemetry(allocator, &s, now_ms);
         if (previous_size.rows != s.terminal_size.rows or
-            previous_size.cols != s.terminal_size.cols or
-            previous_daemon_active != s.daemon_active or
-            previous_daemon_vram != s.daemon_vram_resident_bytes)
+            previous_size.cols != s.terminal_size.cols)
         {
             frame_dirty = true;
         }
@@ -131,6 +119,10 @@ pub fn run(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: RunO
         }
 
         const key = try input.readKey(stdin.reader());
+        if (keyResonanceByte(key)) |byte| {
+            s.sovereign_mirror = sovereign_core.ingestByte(byte);
+            frame_dirty = true;
+        }
         var key_changed = true;
         switch (key) {
             .ctrl => |c| {
@@ -247,7 +239,7 @@ pub fn run(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: RunO
                     continue;
                 }
 
-                try handleSubmit(allocator, engine_root, &s, cmd_text, writer, style);
+                try handleSovereignSubmit(allocator, &sovereign_core, &s, cmd_text, writer, style);
             },
             .backspace => {
                 if (s.current_input.items.len > 0) {
@@ -284,6 +276,69 @@ pub fn run(allocator: std.mem.Allocator, engine_root: ?[]const u8, options: RunO
     }
 }
 
+fn keyResonanceByte(key: input.Key) ?u8 {
+    return switch (key) {
+        .char => |c| c,
+        .ctrl => |c| c,
+        .enter => '\n',
+        .backspace => 8,
+        .esc => 27,
+        .up => 0x11,
+        .down => 0x12,
+        .left => 0x13,
+        .right => 0x14,
+        .tab => '\t',
+        .shift_tab => 0x0B,
+        .unsupported => null,
+    };
+}
+
+fn resolveSovereignStatePath(allocator: std.mem.Allocator, engine_root: ?[]const u8) ![]u8 {
+    if (std.posix.getenv("GHOST_SOVEREIGN_STATE")) |env_path| {
+        return try allocator.dupe(u8, env_path);
+    }
+
+    if (engine_root) |root| {
+        const engine_repo = try normalizeEngineRoot(allocator, root);
+        defer allocator.free(engine_repo);
+        const sovereign_root = try std.fs.path.join(allocator, &.{ engine_repo, "ghost_sovereign" });
+        defer allocator.free(sovereign_root);
+        var dir = std.fs.cwd().openDir(sovereign_root, .{}) catch null;
+        if (dir) |*d| {
+            d.close();
+            return try std.fs.path.join(allocator, &.{ sovereign_root, "state", "ghost_absolute.bin" });
+        }
+    }
+
+    const cwd_abs = std.fs.cwd().realpathAlloc(allocator, ".") catch {
+        return try allocator.dupe(u8, "state/ghost_absolute.bin");
+    };
+    defer allocator.free(cwd_abs);
+
+    if (std.fs.path.dirname(cwd_abs)) |workspace| {
+        const candidate = try std.fs.path.join(allocator, &.{ workspace, "ghost_engine", "ghost_sovereign", "state", "ghost_absolute.bin" });
+        const candidate_dir = std.fs.path.dirname(candidate) orelse return candidate;
+        var dir = std.fs.cwd().openDir(candidate_dir, .{}) catch null;
+        if (dir) |*d| {
+            d.close();
+            return candidate;
+        }
+        allocator.free(candidate);
+    }
+
+    return try allocator.dupe(u8, "state/ghost_absolute.bin");
+}
+
+fn normalizeEngineRoot(allocator: std.mem.Allocator, root: []const u8) ![]u8 {
+    const trimmed = std.mem.trimRight(u8, root, "/");
+    if (std.mem.endsWith(u8, trimmed, "zig-out/bin")) {
+        const zig_out = std.fs.path.dirname(trimmed) orelse trimmed;
+        const repo = std.fs.path.dirname(zig_out) orelse zig_out;
+        return try allocator.dupe(u8, repo);
+    }
+    return try allocator.dupe(u8, trimmed);
+}
+
 fn colorEnabled(allocator: std.mem.Allocator, mode: ColorMode) !bool {
     return switch (mode) {
         .always => true,
@@ -297,81 +352,6 @@ fn colorEnabled(allocator: std.mem.Allocator, mode: ColorMode) !bool {
             break :blk false;
         },
     };
-}
-
-const DaemonStatusPayload = struct {
-    status: []const u8 = "",
-    vramResidentBytes: ?usize = null,
-    l1ConceptIndexBytes: ?usize = null,
-    hotPageBytes: ?usize = null,
-    rawShardVramBytes: ?usize = null,
-    sessionHotBytes: ?usize = null,
-    sessionContextTarget: ?[]const u8 = null,
-    vaultIngestActive: ?bool = null,
-    vaultIngestRecent: ?bool = null,
-    vaultIngestedFiles: ?usize = null,
-    vaultIngestErrors: ?usize = null,
-    lastVaultIngestMs: ?i64 = null,
-    sovereignPipeline: ?SovereignPipelineStatus = null,
-};
-
-const SovereignPipelineStatus = struct {
-    domain: ?[]const u8 = null,
-    z3Status: ?[]const u8 = null,
-    confidenceBand: ?[]const u8 = null,
-};
-
-const DaemonStatusEnvelope = struct {
-    status: []const u8 = "",
-    daemon: ?DaemonStatusPayload = null,
-};
-
-fn refreshDaemonTelemetry(allocator: std.mem.Allocator, s: *state.SessionState, now_ms: i64) !void {
-    if (s.daemon_refresh_count != 0 and now_ms - s.last_daemon_refresh_ms < state.daemon_refresh_interval_ms) return;
-    s.last_daemon_refresh_ms = now_ms;
-    s.daemon_refresh_count += 1;
-
-    const response = daemon_client.request(allocator, "{\"kind\":\"daemon.status\"}") catch {
-        s.daemon_active = false;
-        s.daemon_vault_ingest_active = false;
-        s.daemon_vault_ingest_recent = false;
-        try s.setDaemonContextTarget(null);
-        try s.setDaemonPipelineTelemetry(null, null, null);
-        return;
-    };
-    defer allocator.free(response);
-
-    var parsed = std.json.parseFromSlice(DaemonStatusEnvelope, allocator, response, .{ .ignore_unknown_fields = true }) catch {
-        s.daemon_active = false;
-        try s.setDaemonContextTarget(null);
-        try s.setDaemonPipelineTelemetry(null, null, null);
-        return;
-    };
-    defer parsed.deinit();
-
-    const payload = parsed.value.daemon orelse {
-        s.daemon_active = false;
-        try s.setDaemonContextTarget(null);
-        try s.setDaemonPipelineTelemetry(null, null, null);
-        return;
-    };
-    s.daemon_active = std.mem.eql(u8, payload.status, "running");
-    s.daemon_vram_resident_bytes = payload.vramResidentBytes orelse 0;
-    s.daemon_l1_concept_index_bytes = payload.l1ConceptIndexBytes orelse 0;
-    s.daemon_hot_page_bytes = payload.hotPageBytes orelse 0;
-    s.daemon_raw_shard_vram_bytes = payload.rawShardVramBytes orelse 0;
-    s.daemon_session_hot_bytes = payload.sessionHotBytes orelse 0;
-    s.daemon_vault_ingest_active = payload.vaultIngestActive orelse false;
-    s.daemon_vault_ingest_recent = payload.vaultIngestRecent orelse false;
-    s.daemon_vault_ingested_files = payload.vaultIngestedFiles orelse 0;
-    s.daemon_vault_ingest_errors = payload.vaultIngestErrors orelse 0;
-    s.daemon_last_vault_ingest_ms = payload.lastVaultIngestMs orelse 0;
-    try s.setDaemonContextTarget(payload.sessionContextTarget);
-    if (payload.sovereignPipeline) |pipeline| {
-        try s.setDaemonPipelineTelemetry(pipeline.domain, pipeline.z3Status, pipeline.confidenceBand);
-    } else {
-        try s.setDaemonPipelineTelemetry(null, null, null);
-    }
 }
 
 pub fn handleSlash(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *state.SessionState, text: []const u8, writer: anytype, style: render.Style) !?bool {
@@ -427,53 +407,6 @@ pub fn handleSlash(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *s
             s.last_command_status = if (s.json_mode) "json on" else "json off";
             try render.renderCommandMessage(writer, style, "json={s}", .{if (s.json_mode) "on" else "off"});
         },
-        .doctor => {
-            s.last_command_status = "doctor requested";
-            try render.renderCommandMessage(writer, style, "doctor: explicit read-only diagnostics", .{});
-            try doctor.execute(allocator, engine_root, .{
-                .json = false,
-                .debug = s.debug,
-                .report = false,
-                .full = false,
-                .run_build_check = false,
-                .version = s.version,
-            });
-        },
-        .daemon => {
-            const sub = command.arg orelse "";
-            const action = if (sub.len == 0) "start" else sub;
-            s.last_command_status = "daemon requested";
-            try render.renderCommandMessage(writer, style, "daemon: {s}", .{action});
-            if (std.mem.eql(u8, action, "start")) {
-                try daemon_cmd.startWithWriter(allocator, engine_root, s.debug, writer);
-                s.last_command_status = "daemon start requested";
-                s.last_daemon_refresh_ms = -state.daemon_refresh_interval_ms;
-                try refreshDaemonTelemetry(allocator, s, std.time.milliTimestamp());
-            } else if (std.mem.eql(u8, action, "status")) {
-                try daemon_cmd.statusWithWriter(allocator, writer);
-                s.last_command_status = "daemon status";
-                s.last_daemon_refresh_ms = -state.daemon_refresh_interval_ms;
-                try refreshDaemonTelemetry(allocator, s, std.time.milliTimestamp());
-            } else if (std.mem.eql(u8, action, "stop")) {
-                try daemon_cmd.stopWithWriter(allocator, writer);
-                s.last_command_status = "daemon stop requested";
-                s.daemon_active = false;
-            } else {
-                s.last_command_status = "invalid daemon command";
-                try render.renderErrorMessage(writer, style, "Invalid daemon command: {s}. Use /daemon, /daemon status, or /daemon stop", .{action});
-            }
-        },
-        .autopsy => {
-            const path = command.arg orelse "";
-            if (path.len == 0) {
-                s.last_command_status = "autopsy path required";
-                try render.renderErrorMessage(writer, style, "/autopsy requires an explicit path", .{});
-            } else {
-                s.last_command_status = "autopsy requested";
-                try render.renderCommandMessage(writer, style, "autopsy: explicit scan: {s}", .{path});
-                try autopsy.execute(allocator, engine_root, .{ .path = path, .json = false, .debug = s.debug });
-            }
-        },
         .context => {
             const path = command.arg orelse "";
             if (path.len == 0) {
@@ -484,30 +417,6 @@ pub fn handleSlash(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *s
                 s.context_artifact = try allocator.dupe(u8, path);
                 s.last_command_status = "context changed";
                 try render.renderCommandMessage(writer, style, "context={s}", .{path});
-            }
-        },
-        .mount => {
-            const pack = command.arg orelse "";
-            if (pack.len == 0) {
-                s.last_command_status = "mount pack required";
-                try render.renderErrorMessage(writer, style, "/mount requires a pack id", .{});
-            } else {
-                const parsed_mount = parseMountArg(pack);
-                s.last_command_status = "mount requested";
-                try render.renderCommandMessage(writer, style, "mount: {s}@{s}", .{ parsed_mount.pack_id, parsed_mount.pack_version });
-                // We use standard executeMount which handles runner.run
-                packs.execute(allocator, engine_root, .{
-                    .subcommand = "mount",
-                    .pack_id = parsed_mount.pack_id,
-                    .version = parsed_mount.pack_version,
-                    .debug = s.debug,
-                }) catch |err| {
-                    try render.renderErrorMessage(writer, style, "Mount failed: {}", .{err});
-                    return false;
-                };
-                try s.addActiveSessionMount(parsed_mount.pack_id, parsed_mount.pack_version);
-                s.last_counters.mounted_packs = s.active_session_mounts.items.len;
-                s.last_command_status = "mount active";
             }
         },
         .conversations => {
@@ -589,229 +498,80 @@ pub fn handleSlash(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *s
     return false;
 }
 
-const ParsedMountArg = struct {
-    pack_id: []const u8,
-    pack_version: []const u8,
-};
-
-fn parseMountArg(raw: []const u8) ParsedMountArg {
-    const trimmed = std.mem.trim(u8, raw, " \r\n\t");
-    if (std.mem.indexOfScalar(u8, trimmed, '@')) |idx| {
-        const pack_id = std.mem.trim(u8, trimmed[0..idx], " \r\n\t");
-        const pack_version = std.mem.trim(u8, trimmed[(idx + 1)..], " \r\n\t");
-        if (pack_id.len != 0 and pack_version.len != 0) return .{ .pack_id = pack_id, .pack_version = pack_version };
-    }
-    return .{ .pack_id = trimmed, .pack_version = "v1" };
-}
-
-pub fn handleSubmit(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *state.SessionState, cmd_text: []const u8, writer: anytype, style: render.Style) !void {
+fn handleSovereignSubmit(
+    allocator: std.mem.Allocator,
+    core: *sovereign_interface.SovereignCore,
+    s: *state.SessionState,
+    cmd_text: []const u8,
+    writer: anytype,
+    style: render.Style,
+) !void {
     if (s.read_only) {
         s.last_command_status = "read-only blocked";
-        try render.renderErrorMessage(writer, style, "Read-only mode: engine prompt blocked", .{});
+        try render.renderErrorMessage(writer, style, "Read-only mode: local sovereign prompt blocked", .{});
         return;
     }
 
     const start_time = std.time.milliTimestamp();
-    s.last_command_status = "thinking";
-    try render.renderFrameWithSize(writer, s, style, s.terminal_size);
+    s.last_command_status = "resonating";
+    s.sovereign_mirror = core.ingestSlice(cmd_text);
+    try s.setEngineTrace(.{
+        .authority = "non-authorizing",
+        .engine_state = "local_absolute_core",
+        .stop_reason = "none",
+        .source = "ghost_sovereign.absolute_final",
+        .trace_flags = "no_llm,no_api,no_daemon",
+    });
 
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-    const aa = arena.allocator();
-
-    // --- GEMMA INTENT PARSER SEAM ---
-    // Pass the message through Gemma's intent parser to get the JSON classification.
-    var routed_cmd_text = try allocator.dupe(u8, cmd_text);
-    defer allocator.free(routed_cmd_text);
-    var is_converse = false;
-    var chat_response: ?[]const u8 = null;
-
-    if (locator.findEngineBinary(allocator, engine_root, .ghost_gemma) catch null) |gemma_bin| {
-        defer allocator.free(gemma_bin);
-        const smoke_argv = &[_][]const u8{ gemma_bin, "inference", "smoke", "--text", cmd_text, "--json" };
-        if (process.runEngineCommand(allocator, smoke_argv) catch null) |smoke_res| {
-            defer allocator.free(smoke_res.stdout);
-            defer allocator.free(smoke_res.stderr);
-            if (smoke_res.exit_code == 0) {
-                if (std.json.parseFromSlice(std.json.Value, allocator, smoke_res.stdout, .{}) catch null) |parsed| {
-                    defer parsed.deinit();
-                    if (parsed.value.object.get("prose")) |prose_val| {
-                        if (prose_val == .string) {
-                            const prose = prose_val.string;
-                            if (std.json.parseFromSlice(std.json.Value, allocator, prose, .{}) catch null) |intent_parsed| {
-                                defer intent_parsed.deinit();
-                                const intent_obj = intent_parsed.value.object;
-                                const intent_str = if (intent_obj.get("intent")) |v| (if (v == .string) v.string else null) else null;
-                                const subject_str = if (intent_obj.get("subject")) |v| (if (v == .string) v.string else null) else null;
-                                const needs_ghost = if (intent_obj.get("needs_ghost")) |v| (if (v == .bool) v.bool else null) else null;
-                                
-                                if (subject_str) |sub| {
-                                    allocator.free(routed_cmd_text);
-                                    routed_cmd_text = try allocator.dupe(u8, sub);
-                                }
-                                
-                                if (intent_str) |int_s| {
-                                    if (std.mem.eql(u8, int_s, "converse") and (needs_ghost == null or needs_ghost.? == false)) {
-                                        is_converse = true;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        if (is_converse) {
-            const route_argv = &[_][]const u8{ gemma_bin, "agent", "route", "--intent", "converse", "--subject", routed_cmd_text, "--json" };
-            if (process.runEngineCommand(allocator, route_argv) catch null) |route_res| {
-                defer allocator.free(route_res.stdout);
-                defer allocator.free(route_res.stderr);
-                if (route_res.exit_code == 0) {
-                    if (std.json.parseFromSlice(std.json.Value, allocator, route_res.stdout, .{}) catch null) |parsed| {
-                        defer parsed.deinit();
-                        if (parsed.value.object.get("chatResponse")) |cr_val| {
-                            if (cr_val == .string) {
-                                chat_response = try allocator.dupe(u8, cr_val.string);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    var use_daemon = s.daemon_refresh_count != 0 and s.daemon_active;
-    if (s.active_session_mounts.items.len == 0 and !use_daemon) {
-        if (daemon_cmd.ensureActiveQuiet(allocator, engine_root, s.debug)) {
-            s.last_daemon_refresh_ms = -state.daemon_refresh_interval_ms;
-            try refreshDaemonTelemetry(allocator, s, std.time.milliTimestamp());
-            use_daemon = s.daemon_active;
-        }
-    }
-    const res = if (chat_response) |cr| blk: {
-        defer allocator.free(cr);
-        var resp_json = std.ArrayList(u8).init(allocator);
-        try resp_json.writer().print("{{\"kind\":\"answerDraft\",\"summary\":{}}}", .{std.json.fmt(cr, .{})});
-        break :blk runner.RunResult{
-            .stdout = try resp_json.toOwnedSlice(),
-            .stderr = try allocator.alloc(u8, 0),
-            .exit_code = 0,
-            .allocator = allocator,
-        };
-    } else if (s.active_session_mounts.items.len != 0) blk: {
-        const bin_path = locator.findEngineBinary(allocator, engine_root, .ghost_gip) catch |err| {
-            try render.renderErrorMessage(writer, style, "Failed to resolve ghost_gip: {}", .{err});
-            return;
-        };
-        defer allocator.free(bin_path);
-
-        var request = std.ArrayList(u8).init(aa);
-        try writeMountedCorpusAskRequest(request.writer(), routed_cmd_text, s);
-
-        const gip_argv = &[_][]const u8{ bin_path, "--stdin" };
-        const result = process.runEngineCommandWithInput(allocator, gip_argv, request.items) catch |err| {
-            try render.renderErrorMessage(writer, style, "Failed to run mounted corpus.ask: {}", .{err});
-            return;
-        };
-        break :blk runner.RunResult{
-            .stdout = result.stdout,
-            .stderr = result.stderr,
-            .exit_code = result.exit_code,
-            .allocator = allocator,
-        };
-    } else if (use_daemon) blk: {
-        var request = std.ArrayList(u8).init(aa);
-        try writeDaemonCorpusAskRequest(request.writer(), routed_cmd_text, s);
-        const response = daemon_client.request(allocator, request.items) catch {
-            s.daemon_active = false;
-            break :blk runner.RunResult{
-                .stdout = try allocator.dupe(u8, process.OFFLINE_ROUTING_ERROR),
-                .stderr = try allocator.alloc(u8, 0),
-                .exit_code = 1,
-                .allocator = allocator,
-            };
-        };
-        break :blk runner.RunResult{
-            .stdout = response,
-            .stderr = try allocator.alloc(u8, 0),
-            .exit_code = 0,
-            .allocator = allocator,
-        };
-    } else blk: {
-        break :blk runner.RunResult{
-            .stdout = try allocator.dupe(u8, process.OFFLINE_ROUTING_ERROR),
-            .stderr = try allocator.alloc(u8, 0),
-            .exit_code = 1,
-            .allocator = allocator,
-        };
+    const raw_output = blk: {
+        var raw = std.ArrayList(u8).init(allocator);
+        errdefer raw.deinit();
+        try sovereign_interface.emitJson(raw.writer(), s.sovereign_mirror);
+        break :blk try raw.toOwnedSlice();
     };
-    defer res.deinit();
+    var turn_owns_output = false;
+    errdefer if (!turn_owns_output) allocator.free(raw_output);
+
+    const rendered_output = try core.explain(allocator, cmd_text);
+    errdefer if (!turn_owns_output) allocator.free(rendered_output);
 
     const elapsed = @as(u64, @intCast(std.time.milliTimestamp() - start_time));
-
-    var rendered_buf = std.ArrayList(u8).init(allocator);
-    defer rendered_buf.deinit();
-
-    var json_ok = false;
-
-    if (s.json_mode) {
-        if (!(try renderTuiChatProjection(allocator, res.stdout, rendered_buf.writer(), s))) {
-            try rendered_buf.appendSlice("No generated response was present in engine output.\n");
-        }
-        json_ok = true;
-    } else if (try renderTuiChatProjection(allocator, res.stdout, rendered_buf.writer(), s)) {
-        json_ok = true;
-    } else if (json_contracts.parseEngineJson(allocator, res.stdout)) |parsed| {
-        s.last_counters = json_contracts.renderCounters(parsed.value);
-        s.recordResponseState(parsed.value);
-        try s.setEngineTrace(traceFromEngineResponse(parsed.value));
-        try writeEngineResponseChat(rendered_buf.writer(), parsed.value);
-        json_ok = true;
-        parsed.deinit();
-    } else |_| {
-        try writeCleanFallbackChat(rendered_buf.writer(), res.stdout, !use_daemon);
-    }
-
-    const rendered_output = try rendered_buf.toOwnedSlice();
-    const output_runes = stats.countRunes(rendered_output);
     const turn = state.Turn{
         .index = s.nextTurnIndex(),
         .input = try allocator.dupe(u8, cmd_text),
         .reasoning = s.reasoning,
         .context_artifact = if (s.context_artifact) |ca| try allocator.dupe(u8, ca) else null,
-        .response = null, // TODO: store response if needed
-        .raw_output = try allocator.dupe(u8, res.stdout),
+        .response = null,
+        .raw_output = raw_output,
         .rendered_output = rendered_output,
         .elapsed_ms = elapsed,
         .input_runes = stats.countRunes(cmd_text),
-        .output_runes = output_runes,
-        .json_ok = json_ok,
+        .output_runes = stats.countRunes(rendered_output),
+        .json_ok = true,
     };
 
     try s.appendTurn(turn);
-
-    if (try diff_viewer.findPatchProposal(allocator, res.stdout)) |proposal| {
-        s.setPendingPatch(proposal);
-        s.last_command_status = "patch approval pending";
-    } else if (try shell.findCommandProposal(allocator, res.stdout)) |proposal| {
-        s.setPendingCommand(proposal);
-        s.last_command_status = "command approval pending";
-    }
-
-    const post_ms = std.time.milliTimestamp();
-    s.refreshRam(post_ms, stats.getCliRamRss);
-    if (s.daemon_refresh_count != 0) try refreshDaemonTelemetry(allocator, s, post_ms);
-    s.last_command_status = if (res.exit_code == 0) "engine response" else "engine error";
-    if (s.pending_patch != null) {
-        s.last_command_status = "patch approval pending";
-    } else if (s.pending_command != null) {
-        s.last_command_status = "command approval pending";
-    }
+    turn_owns_output = true;
+    s.last_command_status = "sovereign response";
     try renderTypewriterTurn(writer, s, turn.index, rendered_output.len, style);
-    if (s.yolo_mode and s.pending_command != null) {
-        try executePendingCommand(allocator, s, writer, style);
+}
+
+pub fn handleSubmit(allocator: std.mem.Allocator, engine_root: ?[]const u8, s: *state.SessionState, cmd_text: []const u8, writer: anytype, style: render.Style) !void {
+    if (s.read_only) {
+        s.last_command_status = "read-only blocked";
+        try render.renderErrorMessage(writer, style, "Read-only mode: local sovereign prompt blocked", .{});
+        return;
     }
+
+    const sovereign_state_path = try resolveSovereignStatePath(allocator, engine_root);
+    defer allocator.free(sovereign_state_path);
+    var core = try sovereign_interface.SovereignCore.init(.{
+        .state_path = sovereign_state_path,
+        .size_bytes = sovereign_interface.default_manifold_bytes,
+    });
+    defer core.deinit();
+    s.sovereign_mirror = core.snapshot();
+    try handleSovereignSubmit(allocator, &core, s, cmd_text, writer, style);
 }
 
 fn executePendingCommand(allocator: std.mem.Allocator, s: *state.SessionState, writer: anytype, style: render.Style) !void {

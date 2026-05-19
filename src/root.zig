@@ -692,7 +692,7 @@ test "TUI resize repaint works after history pruning" {
     s.previous_panel_bottom = 21;
     s.previous_suggestion_height = 4;
 
-    try s.appendTurn(try testTurn(testing.allocator, s.nextTurnIndex(), "old"));
+    try s.appendTurn(try testTurn(testing.allocator, s.nextTurnIndex(), "legacy-pruned-turn"));
     try s.appendTurn(try testTurn(testing.allocator, s.nextTurnIndex(), "new"));
 
     var out_buf = std.ArrayList(u8).init(testing.allocator);
@@ -701,7 +701,7 @@ test "TUI resize repaint works after history pruning" {
 
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "+-- TURN 2") == null);
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "new") != null);
-    try testing.expect(std.mem.indexOf(u8, out_buf.items, "old") == null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "legacy-pruned-turn") == null);
 }
 
 var fake_terminal_refreshes: usize = 0;
@@ -812,11 +812,11 @@ test "TUI read-only mode blocks engine-invoking slash commands and prompts" {
 
     out_buf.clearRetainingCapacity();
     try tui_app.handleSubmit(testing.allocator, mock_root, &s, "hello", out_buf.writer(), .{ .color = false });
-    try testing.expect(std.mem.indexOf(u8, out_buf.items, "Read-only mode: engine prompt blocked") != null);
+    try testing.expect(std.mem.indexOf(u8, out_buf.items, "Read-only mode: local sovereign prompt blocked") != null);
     try testing.expectError(error.FileNotFound, std.fs.cwd().access(prompt_marker, .{}));
 }
 
-test "TUI mounted session prompt routes corpus ask with project shard and mounted packs" {
+test "TUI prompt stays local sovereign even with mounted session state" {
     var s = state.SessionState.init(testing.allocator, "test", null, false);
     defer s.deinit();
     s.terminal_size = .{ .rows = 24, .cols = 80 };
@@ -843,14 +843,10 @@ test "TUI mounted session prompt routes corpus ask with project shard and mounte
 
     try tui_app.handleSubmit(testing.allocator, mock_root, &s, "Is Entity-Delta operating within authorized safety parameters?", out_buf.writer(), .{ .color = false });
 
-    const payload = try std.fs.cwd().readFileAlloc(testing.allocator, payload_path, 4096);
-    defer testing.allocator.free(payload);
-    try testing.expect(std.mem.indexOf(u8, payload, "\"kind\":\"corpus.ask\"") != null);
-    try testing.expect(std.mem.indexOf(u8, payload, "\"projectShard\":\"sovereign-project-shard\"") != null);
-    try testing.expect(std.mem.indexOf(u8, payload, "\"mountedPacks\":[{\"packId\":\"sensor-data-pack\",\"packVersion\":\"1.0.0\"}]") != null);
-    try testing.expect(std.mem.indexOf(u8, payload, "\"requireCitations\":true") != null);
+    try testing.expectError(error.FileNotFound, std.fs.cwd().access(payload_path, .{}));
     try testing.expectEqual(@as(usize, 1), s.history.items.len);
-    try testing.expect(std.mem.indexOf(u8, s.history.items[0].raw_output, "conflicting_evidence") != null);
+    try testing.expect(std.mem.indexOf(u8, s.history.items[0].raw_output, "\"fieldBytes\"") != null);
+    try testing.expect(std.mem.indexOf(u8, s.history.items[0].rendered_output, "I have reached") != null);
 }
 
 test "TUI read-only mode allows local session commands" {
@@ -882,7 +878,7 @@ test "TUI slash status handles terminal newline" {
     try testing.expect(std.mem.indexOf(u8, out_buf.items, "Not a valid command") == null);
 }
 
-test "TUI chat requires daemon and keeps offline errors conversational" {
+test "TUI chat uses local sovereign core without daemon" {
     var s = state.SessionState.init(testing.allocator, "test", null, false);
     defer s.deinit();
     s.terminal_size = .{ .rows = 24, .cols = 80 };
@@ -902,9 +898,9 @@ test "TUI chat requires daemon and keeps offline errors conversational" {
 
     try tui_app.handleSubmit(testing.allocator, mock_root, &s, "hello", out_buf.writer(), .{ .color = false });
     try testing.expectEqual(@as(usize, 1), s.history.items.len);
-    try testing.expect(std.mem.indexOf(u8, s.history.items[0].rendered_output, "System offline. Unable to establish semantic routing.") != null);
-    try testing.expect(std.mem.indexOf(u8, s.history.items[0].rendered_output, "Pending Obligations:") == null);
-    try testing.expect(std.mem.indexOf(u8, s.history.items[0].rendered_output, "missing retained evidence") == null);
+    try testing.expect(std.mem.indexOf(u8, s.history.items[0].rendered_output, "I have reached") != null);
+    try testing.expect(std.mem.indexOf(u8, s.history.items[0].raw_output, "\"peakVoxel\"") != null);
+    try testing.expect(std.mem.indexOf(u8, s.history.items[0].rendered_output, "System offline") == null);
 
     out_buf.clearRetainingCapacity();
     _ = try tui_app.handleSlash(testing.allocator, mock_root, &s, "/details on", out_buf.writer(), .{ .color = false });
@@ -913,9 +909,8 @@ test "TUI chat requires daemon and keeps offline errors conversational" {
     out_buf.clearRetainingCapacity();
     try tui_app.handleSubmit(testing.allocator, mock_root, &s, "hello", out_buf.writer(), .{ .color = false });
     try testing.expectEqual(@as(usize, 2), s.history.items.len);
-    try testing.expect(std.mem.indexOf(u8, s.history.items[1].rendered_output, "System offline. Unable to establish semantic routing.") != null);
-    try testing.expect(std.mem.indexOf(u8, s.history.items[1].rendered_output, "Pending Obligations:") == null);
-    try testing.expect(std.mem.indexOf(u8, s.history.items[1].rendered_output, "missing retained evidence") == null);
+    try testing.expect(std.mem.indexOf(u8, s.history.items[1].rendered_output, "I have reached") != null);
+    try testing.expect(std.mem.indexOf(u8, s.history.items[1].rendered_output, "System offline") == null);
 }
 
 test "TUI slash command suggestions use prefix and fuzzy matching" {

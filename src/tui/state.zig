@@ -3,6 +3,7 @@ const json_contracts = @import("../engine/json_contracts.zig");
 const shell = @import("../engine/shell.zig");
 const diff_viewer = @import("diff_viewer.zig");
 const terminal = @import("terminal.zig");
+const sovereign_interface = @import("sovereign_interface");
 
 pub const default_max_history_turns: usize = 500;
 pub const terminal_refresh_interval_ms: i64 = 250;
@@ -141,6 +142,7 @@ pub const SessionState = struct {
     constraint_autocomplete: ConstraintAutocomplete,
     file_target_finder: FileTargetFinder,
     proof_slots: [MAX_PROOF_CONSTRAINTS]ProofSlotStatus,
+    sovereign_mirror: sovereign_interface.Snapshot,
 
     pub fn init(allocator: std.mem.Allocator, version: []const u8, engine_root_label: ?[]const u8, compact: bool) SessionState {
         return initWithLimit(allocator, version, engine_root_label, compact, default_max_history_turns);
@@ -212,6 +214,7 @@ pub const SessionState = struct {
             .constraint_autocomplete = .{},
             .file_target_finder = .{},
             .proof_slots = [_]ProofSlotStatus{.empty} ** MAX_PROOF_CONSTRAINTS,
+            .sovereign_mirror = sovereign_interface.emptySnapshot(),
         };
     }
 
